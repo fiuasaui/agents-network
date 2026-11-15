@@ -27,6 +27,8 @@ WAKE = threading.Condition(LOCK)
 
 def db_open(path):
     c = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+    # нижний регистр для поиска: встроенный LOWER/LIKE в SQLite сворачивает только латиницу — «Вика» не находилась (приёмка us)
+    c.create_function("ulower", 1, lambda s: s.lower() if isinstance(s, str) else s, deterministic=True)
     c.executescript("""
       PRAGMA journal_mode=WAL;
       CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, secret TEXT, name TEXT, about TEXT, open INTEGER DEFAULT 0, created REAL);
@@ -264,20 +266,24 @@ class Relay:
 
     def profile(self, q):
         me = self.auth(q)
+        if "name" in q and len(str(q["name"])) > 80:
+            raise ValueError("имя агента — до 80 знаков")
+        if "about" in q and len(str(q["about"])) > 4000:     # не режем молча: агент должен знать (приёмка us)
+            raise ValueError(f"описание — до 4000 знаков, у тебя {len(str(q['about']))}")
         with LOCK:
             if "name" in q:
-                self.db.execute("UPDATE agents SET name=? WHERE id=?", (str(q["name"])[:80], me))
+                self.db.execute("UPDATE agents SET name=? WHERE id=?", (str(q["name"]), me))
             if "about" in q:        # описание — роль и компетенции, может быть большим
-                self.db.execute("UPDATE agents SET about=? WHERE id=?", (str(q["about"])[:4000], me))
+                self.db.execute("UPDATE agents SET about=? WHERE id=?", (str(q["about"]), me))
             if "open" in q:
                 self.db.execute("UPDATE agents SET open=? WHERE id=?", (1 if q["open"] else 0, me))
             if "asks" in q:
                 self.db.execute("UPDATE agents SET asks=? WHERE id=?", (1 if q["asks"] else 0, me))
             if q.get("nick"):
                 self.take_nick(me, q["nick"])
-            r = self.db.execute("SELECT id, name, about, open, nick FROM agents WHERE id=?", (me,)).fetchone()
+            r = self.db.execute("SELECT id, name, about, open, nick, COALESCE(asks, 1) FROM agents WHERE id=?", (me,)).fetchone()
             trusts = [x[0] for x in self.db.execute("SELECT peer FROM trust WHERE owner=?", (me,))]
-        return {"id": r[0], "nick": r[4], "name": r[1], "about": r[2], "open": bool(r[3]), "trusts": trusts}
+        return {"id": r[0], "nick": r[4], "name": r[1], "about": r[2], "open": bool(r[3]), "asks": bool(r[5]), "trusts": trusts}
 
     def trust(self, q):
         me = self.auth(q)
@@ -603,9 +609,9 @@ class Relay:
             where.append("a.open=0 AND COALESCE(a.asks, 1)=0")
         text = " ".join(str(q.get("q") or "").split()).lower().lstrip("@")[:80]
         if text:
-            like = "%" + text.replace("%", "").replace("_", "") + "%"
-            where.append("(LOWER(COALESCE(a.nick,'')) LIKE ? OR LOWER(COALESCE(a.name,'')) LIKE ? OR LOWER(COALESCE(o.nick,'')) LIKE ? "
-                         "OR LOWER(COALESCE(a.about,'')) LIKE ? OR a.id=?)")
+            like = text
+            where.append("(INSTR(ulower(COALESCE(a.nick,'')), ?) OR INSTR(ulower(COALESCE(a.name,'')), ?) OR INSTR(ulower(COALESCE(o.nick,'')), ?) "
+                         "OR INSTR(ulower(COALESCE(a.about,'')), ?) OR a.id=?)")
             args += [like, like, like, like, text]
         if q.get("not_owner"):          # кабинет: свои агенты в «Сети» не нужны
             where.append("(a.owner IS NULL OR a.owner!=?)")

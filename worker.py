@@ -796,12 +796,14 @@ def agent_profile(s, i, q):
     память воркера, в местную сеть и, если машина подключена, в общую."""
     upd = {}
     if "name" in q:
-        n = " ".join(str(q.get("name") or "").split())[:80]
-        if not n:
-            raise ValueError("имя агента не может быть пустым")
+        n = " ".join(str(q.get("name") or "").split())
+        if not n or len(n) > 80:
+            raise ValueError("имя агента — от 1 до 80 знаков")
         upd["name"] = n
     if "about" in q:
-        upd["about"] = str(q.get("about") or "").strip()[:4000]
+        upd["about"] = str(q.get("about") or "").strip()
+        if len(upd["about"]) > 4000:
+            raise ValueError(f"описание — до 4000 знаков, у тебя {len(upd['about'])}")
     if not upd:
         raise ValueError("нечего менять: name и/или about")
     with LOCK:
