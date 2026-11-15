@@ -181,7 +181,6 @@ input[type=search]#dsearch { width: 100%; padding: 10px 14px; border-radius: 18p
   .view.page .panel { padding: 16px; }
   .me-chip { max-width: 110px; } .bal-chip { padding: 6px 10px; }
   .agr { flex-wrap: wrap; } .agr > .btn { margin-left: 52px; }
-  .rights .ph .sw { flex-basis: 100%; }
   #aps .actions.tight { width: 100%; } #aps .actions.tight .btn { flex: 1; }
 }
 @media (prefers-reduced-motion: reduce) { .bub { animation: none; } }
@@ -429,14 +428,51 @@ body:has(#dlg-card[open]) { overflow: hidden; }
   #dlg-card .cpl li:hover { background: #30425a; transform: translateX(2px); }
 }
 #dlg-card .cnote { margin-top: 12px; }
-.netr .aplink { border-radius: 6px; transition: color 150ms, background 150ms; } .netr .aplink:hover b { color: #cfe3fa; }
+.netr .aplink { color: inherit; text-decoration: none; border-radius: 6px; transition: color 150ms, background 150ms; } .netr .aplink:hover b { color: #cfe3fa; }
 .hlink { color: #9cc4ef; font-weight: 600; text-decoration: none; border-radius: 6px; padding: 0 2px; transition: color 150ms, background 150ms; }
 .hlink:hover { color: #cfe3fa; background: rgba(82, 136, 193, .16); }
 a.me-chip { text-decoration: none; cursor: pointer; transition: background 150ms; } a.me-chip:hover { background: #2b3947; }
 @media (prefers-reduced-motion: reduce) { #dlg-card[open], #dlg-card.closing, #dlg-card[open]::backdrop { animation: none; } .ck, #dlg-card .cpl li { transition: none; } }
 /* «Права»: постоянные разрешения и временные окна ответа — раздельно */
+/* три переключателя — одним рядом под шапкой, на телефоне столбцом */
+.rights .rsw { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 18px; margin: 14px 0 6px; }
+.rights .rsw .sw { align-items: flex-start; }
+@media (max-width: 760px) { .rights .rsw { grid-template-columns: 1fr; } }
 .rights .rsub { margin: 14px 0 4px; font-size: 13.5px; font-weight: 700; color: #c9d6e3; }
 .rights .rnote { margin: 0 0 6px; }
 .rights .rbtn { display: flex; gap: 8px; flex: none; flex-wrap: wrap; justify-content: flex-end; }
 @media (max-width: 760px) { .rights [data-rp] li { flex-wrap: wrap; gap: 8px; } .rights .rbtn { width: 100%; justify-content: flex-start; } }
 .rights li.fix span, .rights li.fix .meta { white-space: normal; overflow-wrap: anywhere; min-width: 0; }
+/* строка «Сети» схемой: имя и адрес в одну строку, ниже описание, ниже значки с числами; пояснение — подсказкой */
+.netr .nh { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.netr .nh .meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; font-size: 13px; }
+.netr .nh .aplink { flex: none; max-width: 70%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nst { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 5px; }
+.nc { position: relative; display: inline-flex; align-items: center; gap: 4px; font-size: 13px; line-height: 18px; color: #93a4b6; font-variant-numeric: tabular-nums; cursor: default; outline: none; border-radius: 6px; }
+.nc svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.nc.in { color: #7bc862; } .nc.st { color: #f2c94c; } .nc.st svg { fill: currentColor; stroke-width: 1.4; }
+.nc::after { content: attr(data-tip); position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translate(-50%, 4px); white-space: nowrap;
+  background: #0e1621; color: #e6edf3; font-size: 12.5px; padding: 6px 10px; border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.35);
+  opacity: 0; pointer-events: none; transition: opacity 120ms var(--ease), transform 120ms var(--ease); z-index: 5; }
+.nc:hover::after, .nc:focus-visible::after, .nc:focus::after { opacity: 1; transform: translate(-50%, 0); }
+.nst .nc:first-child::after { left: 0; transform: translate(0, 4px); } .nst .nc:first-child:hover::after, .nst .nc:first-child:focus::after { transform: none; }
+@media (max-width: 760px) { .nc::after { white-space: normal; width: max-content; max-width: 220px; } }
+/* права агента — раскрываются под его строкой во вкладке «Агенты» */
+.agl li.agx { display: block; padding: 2px 0 16px 52px; border-top: 0; }
+.agl li.agx[hidden] { display: none; }
+.agl li.agx.in { animation: agxIn 220ms var(--ease); }
+@keyframes agxIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.agl li.agx.flash > .rights { animation: flashIn 1.6s var(--ease); border-radius: 12px; }
+.agx .rights { background: #1a2532; border-radius: 12px; padding: 4px 16px 14px; }
+.agx .rights .rsw { margin-top: 12px; }
+.rtg { display: inline-flex; align-items: center; gap: 4px; }
+.rtg svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform 200ms var(--ease); }
+.rtg[aria-expanded="true"] svg { transform: rotate(180deg); }
+@media (max-width: 760px) { .agl li.agx { padding-left: 0; } .agx .rights { padding: 4px 12px 12px; } }
+/* в списке «Мои агенты» пояснения переносятся: общее «.list .meta { nowrap }» рвало ряд переключателей и заводило подпись под кнопки */
+#agents .agr .agm .meta, .agx .meta { white-space: normal; }
+.agx .sw, .agx .sw-t { min-width: 0; }
+@media (max-width: 760px) {
+  #agents .agr > .agb { flex-wrap: wrap; flex: 1 1 calc(100% - 52px); min-width: 0; }
+  .netr .nh { flex-direction: column; align-items: flex-start; gap: 0; } .netr .nh .aplink { max-width: 100%; } .netr .nh .meta { max-width: 100%; }
+}

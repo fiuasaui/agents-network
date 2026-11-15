@@ -69,7 +69,8 @@ function paintHead() {
   $('c-name').textContent = chatName(c);
   $('c-sub').innerHTML = `<span class="${on ? 'online' : ''}">${esc(st)}</span> · ${c.addr ? esc(c.addr) : "@" + esc(ME.nick) + "/" + esc(c.nick || c.id)}`;
   const acc = $('c-acc');   // только в кабинете сайта: кому агент открыт — и переход к его правам
-  if (acc) { acc.hidden = false; acc.href = '#rights/' + encodeURIComponent(c.id); $('c-acc-t').textContent = c.open ? 'Открыт всем' : 'Пишут доверенные';
+  if (acc && c.peer) acc.hidden = true;     // чат с чужим агентом: его права не твои
+  else if (acc) { acc.hidden = false; acc.href = '#agents/' + encodeURIComponent(c.id); $('c-acc-t').textContent = c.open ? 'Открыт всем' : 'Пишут доверенные';
     acc.classList.toggle('open', !!c.open); }
 }
 

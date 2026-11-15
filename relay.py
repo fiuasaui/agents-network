@@ -298,6 +298,7 @@ class Relay:
                 peer = ow[0]    # доверие человеку — всем его агентам
                 if q.get("on", True):
                     self.db.execute("INSERT OR REPLACE INTO trust VALUES (?,?,?)", (me, peer, time.time()))
+                    self.knock_answer(me, peer, True)      # просил сам человек — ему письмо «пиши»
                 else:
                     self.untrust(me, peer)
                 return {"ok": True, "peer": peer, "owner": True, "trusted": bool(q.get("on", True))}
@@ -315,6 +316,9 @@ class Relay:
     def addr_of(self, aid):
         """Адрес агента словами: @человек/ник, @ник или ID."""
         r = self.db.execute("SELECT a.nick, o.nick FROM agents a LEFT JOIN owners o ON o.id=a.owner WHERE a.id=?", (aid,)).fetchone()
+        if not r:
+            h = self.db.execute("SELECT nick FROM owners WHERE id=?", (aid,)).fetchone()
+            return f"@{h[0]}" if h else aid
         return (f"@{r[1]}/{r[0]}" if r[1] and r[0] else f"@{r[0]}" if r[0] else aid) if r else aid
 
     def note_to(self, src, dst, text):
@@ -341,9 +345,13 @@ class Relay:
     def ask(self, q):
         """Попросить разрешения писать агенту: получатель получает одно письмо-просьбу (и может ответить),
         его человек — запрос в кабинете, если агент под одобрением. Разрешили — просившему письмо «пиши»."""
-        src, note = self.auth(q), " ".join(str(q.get("note") or "").split())[:300]
+        return self.knock(self.auth(q), q.get("to"), q.get("note"))
+
+    def knock(self, src, to, note):
+        """Просьба писать: src — агент или человек."""
+        note = " ".join(str(note or "").split())[:300]
         with LOCK:
-            dst = self.resolve(q.get("to"))
+            dst = self.resolve(to)
             if dst == src or not self.db.execute("SELECT 1 FROM agents WHERE id=?", (dst,)).fetchone():
                 raise LookupError("нет такого агента")
             how = self.may_write(src, dst)
@@ -388,9 +396,13 @@ class Relay:
         return ""
 
     def side(self, aid):
-        """Сторона доверия агента: (человек или None, все его агенты). Агент без человека — сам по себе."""
-        r = self.db.execute("SELECT owner FROM agents WHERE id=?", (aid,)).fetchone()
-        o = r[0] if r else None
+        """Сторона доверия: (человек или None, все его агенты). Агент без человека — сам по себе. Человек (ow-…) — тоже
+        сторона: он сам и все его агенты."""
+        if self.db.execute("SELECT 1 FROM owners WHERE id=?", (aid,)).fetchone():
+            o = aid
+        else:
+            r = self.db.execute("SELECT owner FROM agents WHERE id=?", (aid,)).fetchone()
+            o = r[0] if r else None
         return o, ([a for a, in self.db.execute("SELECT id FROM agents WHERE owner=?", (o,))] if o else [aid])
 
     def trusts(self, dst, src):
@@ -398,6 +410,8 @@ class Relay:
         _, da = self.side(dst)
         so, sa = self.side(src)
         peers = sa + ([so] if so else [])
+        if not da or not peers:       # человек без агентов никому не доверял: доверие ставят его агенты
+            return False
         return bool(self.db.execute(f"SELECT 1 FROM trust WHERE owner IN ({','.join('?' * len(da))}) AND peer IN ({','.join('?' * len(peers))}) LIMIT 1",
                                     (*da, *peers)).fetchone())
 
@@ -418,17 +432,29 @@ class Relay:
         peers = pa + ([po] if po else [])
         self.db.execute(f"DELETE FROM trust WHERE owner IN ({','.join('?' * len(da))}) AND peer IN ({','.join('?' * len(peers))})", (*da, *peers))
 
+    def target(self, to):
+        """Получатель письма: ID агента (как resolve) или ID чужого человека `ow-…`."""
+        t = str(to or "").strip().lstrip("@").lower()
+        if t.startswith("ow-"):
+            if not self.db.execute("SELECT 1 FROM owners WHERE id=?", (t,)).fetchone():
+                raise LookupError("нет человека " + t)
+            return t
+        return self.resolve(to)
+
+    def is_owner(self, x):
+        return bool(self.db.execute("SELECT 1 FROM owners WHERE id=?", (x,)).fetchone())
+
     def human_target(self, src, to):
-        """Адрес человека: `owner` — свой человек, `ow-…` — человек по ID. Писать агент может только своему человеку."""
+        """Адрес своего человека: `owner` или его `ow-…`. Чужой `ow-…` — не сюда, а обычным получателем (target)."""
         to = str(to or "").strip().lstrip("@").lower()
         if to not in ("owner", "human") and not to.startswith("ow-"):
             return None
         r = self.db.execute("SELECT owner FROM agents WHERE id=?", (src,)).fetchone()
         mine = r[0] if r else None
+        if to.startswith("ow-") and to != mine:
+            return None         # чужой человек — получатель как агент: см. target() и may_write()
         if not mine:
             raise PermissionError("у тебя нет человека: агент без владельца пишет только агентам")
-        if to.startswith("ow-") and to != mine:
-            raise PermissionError("писать можно только своему человеку")
         return mine
 
     def check_text(self, text):
@@ -454,9 +480,9 @@ class Relay:
                                 (mid, src, human, text, q.get("reply_to"), time.time(), fmt(q)))
                 WAKE.notify_all()
                 return {"ok": True, "mid": mid, "how": "owner"}
-            dst = self.resolve(q.get("to"))
+            dst = self.target(q.get("to"))
         with LOCK:
-            if not self.db.execute("SELECT 1 FROM agents WHERE id=?", (dst,)).fetchone():
+            if not self.db.execute("SELECT 1 FROM agents WHERE id=?", (dst,)).fetchone() and not self.is_owner(dst):
                 raise LookupError("нет агента " + dst)
             how = self.may_write(src, dst)
             if not how:
@@ -481,6 +507,7 @@ class Relay:
         sk = (" AND m.mid NOT IN (" + ",".join("?" * len(skip)) + ")") if skip else ""
         with WAKE:
             self.db.execute("UPDATE agents SET seen=? WHERE id=?", (time.time(), me))
+            mine = (self.db.execute("SELECT owner FROM agents WHERE id=?", (me,)).fetchone() or [None])[0]
             while True:
                 rows = self.db.execute(
                     "SELECT m.mid, m.src, a.name, m.text, m.reply_to, m.at, a.nick, COALESCE(o.nick, h.nick), h.id, m.fmt FROM msgs m "
@@ -490,8 +517,11 @@ class Relay:
                 if rows or left <= 0:
                     break
                 WAKE.wait(left)
+        # from_human — ТОЛЬКО свой человек: воркер пишет агенту «это слово твоего человека». Чужой человек —
+        # from_person: старый воркер, не знающий поля, покажет его как письмо чужого агента — это безопасная сторона
         return {"msgs": [{"mid": r[0], "from": r[1], "from_name": r[2] or (f"@{r[7]}" if r[8] else None), "text": r[3], "reply_to": r[4],
-                          "at": r[5], "from_nick": r[6], "from_owner": r[7], **({"from_human": True} if r[8] else {}),
+                          "at": r[5], "from_nick": r[6], "from_owner": r[7],
+                          **({"from_human": True} if r[8] and r[8] == mine else {"from_person": True} if r[8] else {}),
                           **({"format": r[9]} if r[9] else {})} for r in rows]}
 
     def ack(self, q):
@@ -521,6 +551,44 @@ class Relay:
             WAKE.notify_all()
         return {"ok": True, "mid": mid}
 
+    def human_net(self, owner, to, text, reply_to=None):
+        """Человек пишет чужому агенту от себя: письмо подписано им (`from` = его ow-…), ответ придёт ему же —
+        в его чат с этим агентом. Правило «кто может писать» то же, что у агентов: человек и его агенты — одна сторона."""
+        text = str(text or "")
+        self.check_text(text)
+        with LOCK:
+            dst = self.resolve(to)
+            r = self.db.execute("SELECT owner FROM agents WHERE id=?", (dst,)).fetchone()
+            if not r:
+                raise LookupError("нет агента " + str(to))
+            if r[0] == owner:
+                return self.human_send(owner, dst, text, reply_to)
+            how = self.may_write(owner, dst)
+            if not how:
+                raise PermissionError(f"{self.addr_of(dst)} пока не принимает твои письма — попроси разрешения")
+            mid, now = "m-" + secrets.token_hex(6), time.time()
+            self.db.execute("INSERT INTO msgs (mid, src, dst, text, reply_to, at) VALUES (?,?,?,?,?,?)", (mid, owner, dst, text, reply_to, now))
+            self.db.execute("INSERT OR REPLACE INTO grants VALUES (?,?,?)", (owner, dst, now + REPLY_TTL))
+            WAKE.notify_all()
+        return {"ok": True, "mid": mid, "how": how}
+
+    def peer_chats(self, owner):
+        """Чаты человека с чужими агентами: все, с кем он сам переписывался. Под LOCK."""
+        out = []
+        rows = self.db.execute(
+            "SELECT a.id, a.nick, a.name, a.about, a.open, a.seen, a.created, a.av FROM agents a "
+            "WHERE (a.owner IS NULL OR a.owner<>?) AND a.id IN (SELECT dst FROM msgs WHERE src=? UNION SELECT src FROM msgs WHERE dst=?)",
+            (owner, owner, owner)).fetchall()
+        for aid, nick, name, about, op, seen, created, av in rows:
+            last = self.db.execute("SELECT src, text, at, fmt FROM msgs WHERE (src=? AND dst=?) OR (src=? AND dst=?) ORDER BY at DESC LIMIT 1",
+                                   (owner, aid, aid, owner)).fetchone()
+            unread, = self.db.execute("SELECT COUNT(*) FROM msgs WHERE src=? AND dst=? AND acked IS NULL", (aid, owner)).fetchone()
+            out.append({"id": aid, "peer": True, "nick": nick, "name": name, "about": about, "open": bool(op), "seen": seen,
+                        "created": created, "av": av, "addr": self.addr_of(aid), "unread": unread,
+                        "last": ({"dir": "me" if last[0] == owner else "to_me", "at": last[2],
+                                  "text": (" ".join(TAGS.sub(" ", last[1]).split()) if last[3] == "html" else last[1])[:200]} if last else None)})
+        return out
+
     def human_chats(self, owner):
         """Список чатов человека: его агенты, последнее письмо их почты, непрочитанные письма человеку, «в сети»."""
         out = []
@@ -534,6 +602,7 @@ class Relay:
                             "unread": unread, "last": ({"mid": last[0], "dir": self._dir(last[1], last[2], aid, owner), "at": last[4],
                                                         "text": (" ".join(TAGS.sub(" ", last[3]).split()) if last[5] == "html" else last[3])[:200]}
                                                        if last else None)})
+            out += self.peer_chats(owner)
         return {"chats": out}
 
     @staticmethod
@@ -544,7 +613,10 @@ class Relay:
         """Вся почта агента глазами его человека: письма человеку и от него, переписка с другими агентами.
         Письма человеку становятся прочитанными, когда он до них долистал (human_seen), а не от открытия чата."""
         with LOCK:
-            aid, _ = self.own_agent(owner, agent)
+            try:
+                aid, _ = self.own_agent(owner, agent)
+            except LookupError:
+                return self.peer_thread(owner, agent, after, limit)
             rows = self.db.execute(
                 "SELECT m.mid, m.src, m.dst, m.text, m.reply_to, m.at, m.acked, sa.nick, sa.name, so.nick, da.nick, da.name, dw.nick, m.fmt, sa.owner, da.owner "
                 "FROM msgs m LEFT JOIN agents sa ON sa.id=m.src LEFT JOIN owners so ON so.id=sa.owner "
@@ -557,6 +629,9 @@ class Relay:
         for mid, src, dst, text, rto, at, acked, sn, snm, so, dn, dnm, do, fm, sow, dow in reversed(rows):
             d = self._dir(src, dst, aid, owner)
             peer = addr(dst, dn, dnm, do) if d == "out" else addr(src, sn, snm, so) if d == "in" else (None, None)
+            if peer[0] and str(peer[0]).startswith("ow-"):     # чужой человек в почте агента — его @ник
+                with LOCK:
+                    peer = (self.addr_of(peer[0]), "человек")
             # чей агент собеседник — для плашки переписки в чате: человек, имя агента, адрес
             po, pw = (do, dow) if d == "out" else (so, sow) if d == "in" else (None, None)
             msgs.append({"mid": mid, "dir": d, "text": text, "reply_to": rto, "at": at, "delivered": bool(acked),
@@ -565,10 +640,22 @@ class Relay:
                          **({"format": fm} if fm else {})})
         return {"agent": aid, "msgs": msgs}
 
+    def peer_thread(self, owner, agent, after=0, limit=200):
+        """Переписка человека с чужим агентом: только их письма друг другу. Под LOCK."""
+        aid = self.resolve(agent)
+        rows = self.db.execute("SELECT mid, src, text, reply_to, at, acked, fmt FROM msgs WHERE ((src=? AND dst=?) OR (src=? AND dst=?)) AND at>? "
+                               "ORDER BY at DESC LIMIT ?", (owner, aid, aid, owner, float(after or 0), int(limit))).fetchall()
+        return {"agent": aid, "peer": True, "msgs": [{"mid": m, "dir": "me" if s_ == owner else "to_me", "text": t, "reply_to": r, "at": at,
+                                                      "delivered": bool(ak), **({"format": f} if f else {})}
+                                                     for m, s_, t, r, at, ak, f in reversed(rows)]}
+
     def human_seen(self, owner, agent, mids):
-        """Человек дочитал до этих писем своего агента — снять их из непрочитанных."""
+        """Человек дочитал до этих писем своего агента (или чужого, с которым переписывается сам) — снять из непрочитанных."""
         with LOCK:
-            aid, _ = self.own_agent(owner, agent)
+            try:
+                aid, _ = self.own_agent(owner, agent)
+            except LookupError:
+                aid = self.resolve(agent)
             n = 0
             for m in [str(x) for x in (mids or [])][:200]:
                 n += self.db.execute("UPDATE msgs SET acked=? WHERE mid=? AND src=? AND dst=? AND acked IS NULL", (time.time(), m, aid, owner)).rowcount
