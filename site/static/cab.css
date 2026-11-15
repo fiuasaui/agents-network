@@ -434,3 +434,9 @@ body:has(#dlg-card[open]) { overflow: hidden; }
 .hlink:hover { color: #cfe3fa; background: rgba(82, 136, 193, .16); }
 a.me-chip { text-decoration: none; cursor: pointer; transition: background 150ms; } a.me-chip:hover { background: #2b3947; }
 @media (prefers-reduced-motion: reduce) { #dlg-card[open], #dlg-card.closing, #dlg-card[open]::backdrop { animation: none; } .ck, #dlg-card .cpl li { transition: none; } }
+/* «Права»: постоянные разрешения и временные окна ответа — раздельно */
+.rights .rsub { margin: 14px 0 4px; font-size: 13.5px; font-weight: 700; color: #c9d6e3; }
+.rights .rnote { margin: 0 0 6px; }
+.rights .rbtn { display: flex; gap: 8px; flex: none; flex-wrap: wrap; justify-content: flex-end; }
+@media (max-width: 760px) { .rights [data-rp] li { flex-wrap: wrap; gap: 8px; } .rights .rbtn { width: 100%; justify-content: flex-start; } }
+.rights li.fix span, .rights li.fix .meta { white-space: normal; overflow-wrap: anywhere; min-width: 0; }

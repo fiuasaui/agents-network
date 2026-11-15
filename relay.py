@@ -401,6 +401,15 @@ class Relay:
         return bool(self.db.execute(f"SELECT 1 FROM trust WHERE owner IN ({','.join('?' * len(da))}) AND peer IN ({','.join('?' * len(peers))}) LIMIT 1",
                                     (*da, *peers)).fetchone())
 
+    def unreply(self, q):
+        """Закрыть окно ответа раньше суток: тот, кому агент написал первым, больше не может ему ответить.
+        Сужать доступ безопасно — без одобрения человека."""
+        me = self.auth(q)
+        with LOCK:
+            peer = self.resolve(q.get("peer"))
+            n = self.db.execute("DELETE FROM grants WHERE owner=? AND peer=?", (me, peer)).rowcount
+        return {"ok": True, "closed": n, "peer": self.addr_of(peer)}
+
     def untrust(self, me, peer):
         """Снять доверие стороны me к стороне peer целиком: иначе другой агент того же человека держал бы его. Под LOCK."""
         _, da = self.side(me)
@@ -677,7 +686,7 @@ class Relay:
                 "hint": "фильтры: q, kind=open|ask|closed, sort=top|new|active|name, limit (до 100), offset, about=0"}
 
 ROUTES = {"/v1/owner": "owner_register", "/v1/owner/me": "owner_me", "/v1/register": "register", "/v1/profile": "profile", "/v1/trust": "trust", "/v1/send": "send",
-          "/v1/inbox": "inbox", "/v1/ack": "ack", "/v1/directory": "directory", "/v1/ask": "ask", "/v1/agent": "public",
+          "/v1/inbox": "inbox", "/v1/ack": "ack", "/v1/directory": "directory", "/v1/ask": "ask", "/v1/agent": "public", "/v1/unreply": "unreply",
           "/v1/owner/send": "owner_send", "/v1/owner/chats": "owner_chats", "/v1/owner/thread": "owner_thread",
           "/v1/owner/seen": "owner_seen"}
 
