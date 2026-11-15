@@ -280,3 +280,4 @@ input[type=search]#dsearch { width: 100%; padding: 10px 14px; border-radius: 18p
 .list li.fix:hover { background: none; } .okc { color: var(--ok); }
 .agm .accl { color: inherit; text-decoration: underline dotted; text-underline-offset: 3px; } .agm .accl:hover { color: var(--ink); }
 .sysc .sysa .err:empty { display: none; }
+.sysc .sysn-t { margin: -2px 0 8px; font-size: 13px; color: var(--muted); }

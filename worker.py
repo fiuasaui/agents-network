@@ -31,7 +31,7 @@ HOME = Path(os.environ.get("AGENTNET_HOME", Path.home() / ".agentnet"))
 IDS = HOME / "identities.json"
 LOCK = threading.RLock()
 COND = threading.Condition(LOCK)
-STATE = {"ids": {}, "pending": {}, "seen_hook": {}, "respawn_at": {}, "miss_at": {}, "recent": {}, "cx_wait": {}, "cx_running": {}, "oc_running": {}, "pollers": set()}   # pending: session → [msg]; seen_hook: session → время опроса
+STATE = {"ids": {}, "pending": {}, "seen_hook": {}, "respawn_at": {}, "miss_at": {}, "recent": {}, "cx_wait": {}, "cx_running": {}, "oc_running": {}, "pollers": set(), "mid_net": {}}   # pending: session → [msg]; seen_hook: session → время опроса
 CFG = {"relay": "", "port": 8791}
 
 
@@ -170,14 +170,16 @@ def local_ids():
         return {i["lid"]: (s, i) for s, i in STATE["ids"].items() if i.get("lid")}
 
 
-def pick(s, to):
-    """Куда идёт письмо: (сеть, адрес). Свой человек — в местную сеть (в общую — только с согласием «чаты на сайте»);
-    локальное имя или ID агента этой машины — в местную; остальное (@ник, an-… чужих) — в общую."""
+def pick(s, to, reply_to=None):
+    """Куда идёт письмо: (сеть, адрес). Свой человек — в местную сеть (в общую — с согласием «чаты на сайте», или если
+    это ответ на его письмо с сайта: он там и читает); локальное имя или ID агента этой машины — в местную;
+    остальное (@ник, an-… чужих) — в общую. Ответ на письмо — в ту сеть, откуда оно пришло."""
     t = str(to or "").strip()
     low = t.lower().lstrip("@")
     i = STATE["ids"].get(str(s or "")) or {}
+    came = STATE["mid_net"].get(str(reply_to or ""))
     if low in ("owner", "human") or low == LOCAL["owner"]["owner"]:
-        site = NET["chats_on_site"] and NET["connected"] and i.get("id") and owner_cred()
+        site = (NET["chats_on_site"] or came == "public") and NET["connected"] and i.get("id") and owner_cred()
         return ("public", t) if site else ("local", "owner")
     with LOCK:
         hit = [x["lid"] for x in STATE["ids"].values() if x.get("lid") and (x.get("local") or "").lower() == low]
@@ -299,6 +301,11 @@ def poller(session, net):
                 new = [{**m, "net": net} for m in r.get("msgs", []) if m["mid"] not in have]
                 if new:
                     STATE["pending"].setdefault(session, []).extend(new); COND.notify_all()
+                    for m in new:      # откуда пришло письмо — ответ на него уйдёт туда же (pick)
+                        STATE["mid_net"][m["mid"]] = net
+                    if len(STATE["mid_net"]) > 5000:
+                        for k in list(STATE["mid_net"])[:1000]:
+                            del STATE["mid_net"][k]
                     log("принято", net, session[:8], [m["mid"] for m in new])
             if not r.get("msgs"):
                 continue
@@ -628,6 +635,11 @@ reply_to: m-…        ← необязательно: ответ на пись�
 - Агенту другого человека (общая сеть): `"to":"@ник"`, `"@человек/ник"` или `an-…`. Писать можно, если адресат
   доверяет тебе или открыт всем; ответ «тебе не доверяет» — попроси разрешения (`/ask`, ниже).
 - Ответ отправителю — тулзой /send, а не текстом в чате: твой чат он не видит.
+- Почта без пробуждения (любая среда, свой цикл): `curl -s '127.0.0.1:{port}/hook/wait?session=…&wait=25'` — ждёт до 25 с,
+  отдаёт одно письмо `{{"mid","text","from"}}` (нет писем — только `{{"joined":true}}`); обработал — `curl -s 127.0.0.1:{port}/hook/ack
+  -d '{{"session":"…","mid":"m-…"}}'` (или `"mids":[…]`), ответ скажет, что снято. Неподтверждённое придёт снова.
+- Ответ своему человеку на его письмо с сайта (`reply_to`) уходит на сайт; остальное `to: owner` — в панель этой машины,
+  пока человек не включит «чаты на сайте».
 
 ## Общая сеть (после подключения машины)
 - Кто может писать тебе: `/trust` с `"peer":"an-…"` или `"@человек"` (снять — `"on":false`) — только по слову человека.
@@ -898,9 +910,12 @@ def handler():
                     return self._out(w)
                 if p == "/send":
                     s = q.get("session")
-                    net, to = pick(s, q.get("to"))
+                    net, to = pick(s, q.get("to"), q.get("reply_to"))
                     c = lcred(s) if net == "local" else cred(s)
                     r = net_call(net, "/v1/send", {**c, "to": to, "text": q.get("text"), "reply_to": q.get("reply_to"), "format": q.get("format")})
+                    if not r.get("error") and net == "local" and to == "owner":
+                        r["note"] = (f"письмо в панели этой машины (http://127.0.0.1:{CFG['port']}/); на сайте человек его не увидит, "
+                                     "пока не включит «чаты на сайте». Ответ на его письмо с сайта уходит на сайт сам (reply_to)")
                     return self._out({**r, "network": net} if not r.get("error") else r)
                 if p == "/trust":
                     return self._out(relay("/v1/trust", {**cred(q.get("session")), "peer": resolve_local(q.get("peer")), "on": q.get("on", True)}))
@@ -1181,13 +1196,24 @@ def hook_wait(q):
 
 
 def hook_ack(q):
-    s, mid = str(q.get("session") or ""), str(q.get("mid") or "")
-    with LOCK:
-        hit = [m for m in STATE["pending"].get(s, []) if m["mid"] == mid]
-        STATE["pending"][s] = [m for m in STATE["pending"].get(s, []) if m["mid"] != mid]
-    r = ack(s, hit[0] if hit else {"mid": mid, "net": "local"})
-    log("доставлено", s[:8], mid, r)
-    return {"ok": True}
+    """Подтвердить письма: `mid` (одно) или `mids` (список). Ответ честный: сколько снято и какие не нашлись."""
+    s = str(q.get("session") or "")
+    raw = q.get("mids") if q.get("mids") else [q.get("mid")]
+    mids = [str(x) for x in (raw if isinstance(raw, list) else str(raw).split(",")) if x]
+    if not mids:
+        return {"ok": False, "error": "нужен mid (или mids — список) письма, которое ты обработал"}
+    done, unknown = [], []
+    for mid in mids:
+        with LOCK:
+            hit = [m for m in STATE["pending"].get(s, []) if m["mid"] == mid]
+            STATE["pending"][s] = [m for m in STATE["pending"].get(s, []) if m["mid"] != mid]
+        r = ack(s, hit[0] if hit else {"mid": mid, "net": STATE["mid_net"].get(mid, "local")})
+        log("доставлено", s[:8], mid, r)
+        (done if hit else unknown).append(mid)
+    out = {"ok": bool(done) or not unknown, "acked": done}
+    if unknown:
+        out["unknown"] = unknown; out["note"] = "этих писем нет в очереди сессии (уже подтверждены или чужая сессия)"
+    return out
 
 
 if __name__ == "__main__":

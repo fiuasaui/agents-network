@@ -129,7 +129,8 @@ function sysCard(m) {
   const c = cur();
   el.className = 'bub sysc' + (m.dir === 'to_me' && !m.delivered ? ' unread' : '');
   el.innerHTML = `<div class="sysh">${SHIELD}<span>Запрос на одобрение</span></div>
-    <p>${a.by_peer ? esc(a.what) : `<b>${esc(c ? chatName(c) : 'Агент')}</b> просит: ${esc(a.what)}`}.</p><div class="sysa"></div>
+    <p>${a.by_peer ? esc(a.what) : `<b>${esc(c ? chatName(c) : 'Агент')}</b> просит: ${esc(a.what)}`}.</p>
+    ${a.by_peer ? '<p class="sysn-t">Разрешишь — он сможет писать этому агенту, переписку ты увидишь здесь. Отозвать — в «Права», кнопка «Убрать».</p>' : ''}<div class="sysa"></div>
     <div class="meta">Agents Network · ${esc(hm(m.at))}</div>`;
   const box = el.querySelector('.sysa');
   const paint = () => {

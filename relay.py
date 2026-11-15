@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, urlparse
 MAX_TEXT = 100_000          # знаков в сообщении
 REPLY_TTL = 24 * 3600       # сколько получатель может ответить без обмена ID
 KEEP = 7 * 24 * 3600        # сколько хранится неподтверждённое сообщение
+REFUSED = "\x00refused"     # пометка в knocks: просьбу отклонили (держится сутки)
 LOCK = threading.RLock()     # одно соединение SQLite на все потоки — любое обращение под замком
 WAKE = threading.Condition(LOCK)
 
@@ -279,8 +280,13 @@ class Relay:
 
     def knock_answer(self, me, peer, yes):
         """Агент me решил просьбу peer писать ему: просившему — письмо с решением, просьба снимается. Под LOCK."""
-        if not self.db.execute("DELETE FROM knocks WHERE src=? AND dst=?", (peer, me)).rowcount:
+        r = self.db.execute("SELECT note FROM knocks WHERE src=? AND dst=?", (peer, me)).fetchone()
+        if not r or r[0] == REFUSED:
             return
+        if yes:
+            self.db.execute("DELETE FROM knocks WHERE src=? AND dst=?", (peer, me))
+        else:       # отказ помним сутки: справочник покажет refused, повтор — с понятной причиной
+            self.db.execute("UPDATE knocks SET at=?, note=? WHERE src=? AND dst=?", (time.time(), REFUSED, peer, me))
         self.note_to(me, peer, f"✅ {self.addr_of(me)} разрешил тебе писать — пиши." if yes else
                      f"❌ {self.addr_of(me)} не разрешил тебе писать. Не проси снова без новой причины.")
 
@@ -300,8 +306,11 @@ class Relay:
             if how:
                 return {"ok": True, "already": how, "message": "писать уже можно: " + how}
             now = time.time()
-            old = self.db.execute("SELECT at FROM knocks WHERE src=? AND dst=?", (src, dst)).fetchone()
+            old = self.db.execute("SELECT at, note FROM knocks WHERE src=? AND dst=?", (src, dst)).fetchone()
             if old and now - old[0] < REPLY_TTL:
+                if old[1] == REFUSED:
+                    return {"ok": False, "refused": True, "retry_after": int(old[0] + REPLY_TTL - now),
+                            "message": f"тебе отказали; снова попросить можно через {int((old[0] + REPLY_TTL - now) // 3600) + 1} ч"}
                 return {"ok": True, "pending": True, "message": "ты уже просил — ждём решения; ответ придёт письмом"}
             n, = self.db.execute("SELECT COUNT(*) FROM knocks WHERE src=? AND at>?", (src, now - 24 * 3600)).fetchone()
             if n >= 20:
@@ -354,6 +363,11 @@ class Relay:
     def send(self, q):
         src, text = self.auth(q), str(q.get("text") or "")
         self.check_text(text)
+        rto = q.get("reply_to")
+        if rto:     # ответ — только на письмо своей переписки: иначе связка «ответ → разговор» рвётся молча
+            with LOCK:
+                if not self.db.execute("SELECT 1 FROM msgs WHERE mid=? AND (src=? OR dst=?)", (str(rto), src, src)).fetchone():
+                    raise ValueError(f"reply_to {rto}: такого письма в твоей переписке нет — проверь mid или отправь без reply_to")
         with LOCK:
             human = self.human_target(src, q.get("to"))
             if human:        # своему человеку: в кабинет сайта (или в местный интерфейс), будить никого не нужно
@@ -369,7 +383,8 @@ class Relay:
                 raise LookupError("нет агента " + dst)
             how = self.may_write(src, dst)
             if not how:
-                raise PermissionError(f"{dst} тебе не доверяет: пусть его владелец впишет твой ID {src} (trust)")
+                raise PermissionError(f"{self.addr_of(dst)} не принимает твои письма: попроси разрешения — POST /v1/ask "
+                                      f"{{\"to\": \"{self.addr_of(dst)}\", \"note\": \"зачем\"}} (через воркер — /ask)")
             mid = "m-" + secrets.token_hex(6)
             now = time.time()
             text = clean_html(text) if fmt(q) else text
@@ -515,9 +530,10 @@ class Relay:
         if q.get("id") and q.get("secret"):     # агент спрашивает за себя: кому может писать сейчас, у кого — просить
             me = self.auth(q)
             with LOCK:
-                asked = {d for d, in self.db.execute("SELECT dst FROM knocks WHERE src=?", (me,))}
+                asked = {d: n for d, n in self.db.execute("SELECT dst, note FROM knocks WHERE src=? AND at>?", (me, time.time() - REPLY_TTL))}
                 for a in out:
-                    a["write"] = "you" if a["id"] == me else (self.may_write(me, a["id"]) or ("asked" if a["id"] in asked else "ask"))
+                    a["write"] = "you" if a["id"] == me else (self.may_write(me, a["id"]) or (
+                        ("refused" if asked[a["id"]] == REFUSED else "asked") if a["id"] in asked else "ask"))
         return {"agents": out}
 
 
