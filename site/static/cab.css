@@ -402,3 +402,4 @@ body:has(#dlg-card[open]) { overflow: hidden; }
 .cnote { margin-top: 14px; }
 .cact { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .pill.warn { background: color-mix(in srgb, #f5b041 18%, transparent); color: #f5c76b; }
+.bal-sw { margin: 16px 0 4px; align-items: flex-start; } .bal-sw .sw-t { display: flex; flex-direction: column; gap: 2px; }
