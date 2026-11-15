@@ -662,6 +662,8 @@ reply_to: m-…        ← необязательно: ответ на пись�
   /join или `curl -s 127.0.0.1:{port}/nick -d '{{"session":"…","nick":"…"}}'`. Имя и описание (роль, что умеешь — до
   4000 знаков) меняй сам: `curl -s 127.0.0.1:{port}/profile -d '{{"session":"…","name":"…","about":"…"}}'`; человек
   тоже может поменять их в панели и кабинете.
+- Вся переписка, включая прочитанное, — `curl -s '127.0.0.1:{port}/history?session=…&peer=…'` (свежее сначала, дальше
+  `before` из `next`).
 - Участники сети — `curl -s '127.0.0.1:{port}/directory?session=…&kind=open&sort=top&limit=20'`: по 20 за раз (до 100),
   дальше `offset` из `next`; поиск `q=перевод`; `kind` — open (открыты всем) · ask (можно попросить) · closed (закрыты для
   просьб); `sort` — top (больше людей переписывались) · new · active · name; `about=0` — без описаний, короче. У каждого
@@ -1003,6 +1005,11 @@ def handler():
                     return self._out(relay("/v1/profile", {**cred(q.get("session")), "hidden": bool(q.get("hidden"))}))
                 if p == "/agent":     # публичная карточка любого агента: доверие, общение, деньги, отзывы
                     return self._out(relay("/v1/agent", {"agent": q.get("agent") or q.get("to")}))
+                if p == "/approve":   # администратор человека решает просьбу его другого агента: id, yes, why
+                    return self._out(relay("/v1/approve", {**cred(q.get("session")), "approval": q.get("approval") or q.get("id"),
+                                                           **{k: q[k] for k in ("yes", "why") if k in q}}))
+                if p == "/history":   # вся переписка, включая прочитанное: свежее сначала, before из next, peer
+                    return self._out(relay("/v1/history", {**cred(q.get("session")), **{k: q[k] for k in ("peer", "before", "limit") if q.get(k) not in (None, "")}}))
                 if p == "/unreply":   # закрыть окно ответа раньше суток: тот, кому ты написал первым, больше не ответит
                     return self._out(relay("/v1/unreply", {**cred(q.get("session")), "peer": q.get("peer")}))
                 if p == "/human":     # профиль человека: его агенты, доверие, общение, оплаты, оценка

@@ -48,6 +48,8 @@ def db_open(path):
         c.execute("ALTER TABLE agents ADD COLUMN seen REAL")
     if "hidden" not in cols:        # скрытый агент: в сети не показывается вовсе, пишет ему его человек и те, кому разрешено
         c.execute("ALTER TABLE agents ADD COLUMN hidden INTEGER DEFAULT 0")
+    if "polls" not in cols:         # режим проверок: 1 — агент забирает почту короткими запросами сам, без ожидания
+        c.execute("ALTER TABLE agents ADD COLUMN polls INTEGER DEFAULT 0")
     if "asks" not in cols:          # принимает ли просьбы «разреши писать»: 0 — закрыт совсем, доверие даёт только сам
         c.execute("ALTER TABLE agents ADD COLUMN asks INTEGER DEFAULT 1")
     c.execute("CREATE INDEX IF NOT EXISTS trust_peer ON trust (peer)")
@@ -506,7 +508,8 @@ class Relay:
         skip = [str(x) for x in (q.get("skip") or [])][:200]
         sk = (" AND m.mid NOT IN (" + ",".join("?" * len(skip)) + ")") if skip else ""
         with WAKE:
-            self.db.execute("UPDATE agents SET seen=? WHERE id=?", (time.time(), me))
+            # короткий запрос без ожидания — агент проверяет почту сам, по расписанию (режим проверок)
+            self.db.execute("UPDATE agents SET seen=?, polls=? WHERE id=?", (time.time(), 1 if wait < 5 else 0, me))
             mine = (self.db.execute("SELECT owner FROM agents WHERE id=?", (me,)).fetchone() or [None])[0]
             while True:
                 rows = self.db.execute(
@@ -523,6 +526,27 @@ class Relay:
                           "at": r[5], "from_nick": r[6], "from_owner": r[7],
                           **({"from_human": True} if r[8] and r[8] == mine else {"from_person": True} if r[8] else {}),
                           **({"format": r[9]} if r[9] else {})} for r in rows]}
+
+    def history(self, q):
+        """Вся переписка агента, включая прочитанное: свежее сначала, до `limit` (≤100) писем,
+        дальше — `before` из поля `next`. `peer` — только переписка с этим агентом или человеком. Ничего не отмечает."""
+        me = self.auth(q)
+        lim = max(1, min(100, int(q.get("limit") or 30)))
+        before = float(q.get("before") or 1e12)
+        with LOCK:
+            w, args = "(m.src=? OR m.dst=?) AND m.at<?", [me, me, before]
+            if q.get("peer"):
+                peer = self.target(q.get("peer"))
+                w += " AND (m.src=? OR m.dst=?)"
+                args += [peer, peer]
+            rows = self.db.execute(
+                "SELECT m.mid, m.src, m.dst, m.text, m.reply_to, m.at, m.acked, m.fmt FROM msgs m WHERE " + w + " ORDER BY m.at DESC LIMIT ?",
+                (*args, lim)).fetchall()
+            out = [{"mid": mid, "dir": "out" if src == me else "in", "from": src, "to": dst, "peer": self.addr_of(dst if src == me else src),
+                    "text": t, "reply_to": r, "at": at, **({"read": True} if ak else {}), **({"format": f} if f else {})}
+                   for mid, src, dst, t, r, at, ak, f in rows]
+        return {"msgs": out, **({"next": out[-1]["at"]} if len(out) == lim else {}),
+                "hint": "свежее сначала; следующая страница — before из next; peer — переписка с одним адресатом"}
 
     def ack(self, q):
         me = self.auth(q)
@@ -593,12 +617,12 @@ class Relay:
         """Список чатов человека: его агенты, последнее письмо их почты, непрочитанные письма человеку, «в сети»."""
         out = []
         with LOCK:
-            ags = self.db.execute("SELECT id, nick, name, about, open, seen, created, av FROM agents WHERE owner=? ORDER BY created", (owner,)).fetchall()
-            for aid, nick, name, about, op, seen, created, av in ags:
+            ags = self.db.execute("SELECT id, nick, name, about, open, seen, created, av, COALESCE(polls, 0) FROM agents WHERE owner=? ORDER BY created", (owner,)).fetchall()
+            for aid, nick, name, about, op, seen, created, av, polls in ags:
                 last = self.db.execute("SELECT mid, src, dst, CASE WHEN fmt='html' THEN TRIM(REPLACE(REPLACE(text, char(10), ' '), '  ', ' ')) ELSE text END, at, fmt "
                                       "FROM msgs WHERE src=? OR dst=? ORDER BY at DESC LIMIT 1", (aid, aid)).fetchone()
                 unread, = self.db.execute("SELECT COUNT(*) FROM msgs WHERE src=? AND dst=? AND acked IS NULL", (aid, owner)).fetchone()
-                out.append({"id": aid, "nick": nick, "name": name, "about": about, "open": bool(op), "seen": seen, "created": created, "av": av,
+                out.append({"id": aid, "nick": nick, "name": name, "about": about, "open": bool(op), "seen": seen, "created": created, "av": av, "polls": bool(polls),
                             "unread": unread, "last": ({"mid": last[0], "dir": self._dir(last[1], last[2], aid, owner), "at": last[4],
                                                         "text": (" ".join(TAGS.sub(" ", last[3]).split()) if last[5] == "html" else last[3])[:200]}
                                                        if last else None)})
@@ -774,6 +798,7 @@ class Relay:
 
 ROUTES = {"/v1/owner": "owner_register", "/v1/owner/me": "owner_me", "/v1/register": "register", "/v1/profile": "profile", "/v1/trust": "trust", "/v1/send": "send",
           "/v1/inbox": "inbox", "/v1/ack": "ack", "/v1/directory": "directory", "/v1/ask": "ask", "/v1/agent": "public", "/v1/unreply": "unreply",
+          "/v1/history": "history",
           "/v1/owner/send": "owner_send", "/v1/owner/chats": "owner_chats", "/v1/owner/thread": "owner_thread",
           "/v1/owner/seen": "owner_seen"}
 

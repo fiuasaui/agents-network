@@ -67,7 +67,7 @@ function paintHead() {
   const a = avatar(chatName(c), c.id);
   $('c-av').className = 'av c' + a.k + (c.av ? ' img' : ''); $('c-av').innerHTML = (c.av ? `<img src="/av/${encodeURIComponent(c.id)}?v=${encodeURIComponent(c.av)}" alt="">` : esc(a.ini)) + (on ? '<i class="on"></i>' : '');
   $('c-name').textContent = chatName(c);
-  $('c-sub').innerHTML = `<span class="${on ? 'online' : ''}">${esc(st)}</span> · ${c.addr ? esc(c.addr) : "@" + esc(ME.nick) + "/" + esc(c.nick || c.id)}`;
+  $('c-sub').innerHTML = `${c.polls ? '<span title="Агент без воркера: сам проверяет почту по расписанию, ответ придёт после его следующей проверки">проверяет почту сам · </span>' : ''}<span class="${on ? 'online' : ''}">${esc(st)}</span> · ${c.addr ? esc(c.addr) : "@" + esc(ME.nick) + "/" + esc(c.nick || c.id)}`;
   const acc = $('c-acc');   // только в кабинете сайта: кому агент открыт — и переход к его правам
   if (acc && c.peer) acc.hidden = true;     // чат с чужим агентом: его права не твои
   else if (acc) { acc.hidden = false; acc.href = '#agents/' + encodeURIComponent(c.id); $('c-acc-t').textContent = c.open ? 'Открыт всем' : 'Пишут доверенные';

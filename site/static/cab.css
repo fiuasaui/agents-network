@@ -480,3 +480,19 @@ a.me-chip { text-decoration: none; cursor: pointer; transition: background 150ms
 #keys .agm { min-width: 0; } #keys .meta { white-space: normal; overflow-wrap: anywhere; }
 .nc.tipoff::after { opacity: 0 !important; }
 .nc { padding: 4px 3px; margin: -4px -3px; }
+/* права ключа машины: переключатель «Полные права» и суточный лимит; включение — красное окно риска на странице */
+.krow { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; margin-top: 10px; }
+.krow .sw-t .meta { white-space: normal; }
+.klim { display: inline-flex; align-items: center; gap: 8px; margin: 0; font-size: 13.5px; color: var(--muted); }
+.klim input { width: 84px; min-height: 34px; margin: 0; padding: 4px 10px; border-radius: 10px; background: #242f3d; border: 0; color: var(--ink); font: inherit; font-size: 14px; }
+.kwarn { margin-top: 10px; padding: 12px 14px; border-radius: 12px; background: rgba(229, 83, 75, .12); box-shadow: inset 0 0 0 1px rgba(229, 83, 75, .45); animation: agxIn 200ms var(--ease); }
+.kwarn b { color: #ff9b94; } .kwarn p { margin: 4px 0 10px; color: #e9c9c6; font-size: 13.5px; line-height: 1.45; }
+#keys .agm { flex: 1; }
+/* администратор человека */
+.pill.adm { margin-left: 8px; padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 700; vertical-align: 2px; background: #2b3f57; color: #9cc4ef; }
+.radm { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: #202c3a; }
+.radm.on { box-shadow: inset 0 0 0 1px #3b6a9c; }
+.radm > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; } .radm .meta { white-space: normal; font-size: 12.5px; }
+.radm .btn { flex: none; }
+@media (max-width: 760px) { .radm { flex-direction: column; align-items: flex-start; } }
+.apvia { display: block; margin-top: 2px; white-space: normal; }
