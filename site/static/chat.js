@@ -124,7 +124,9 @@ function bubble(m) {
   const tick = m.dir === 'me' ? `<span class="tick ${m.delivered ? 'ok' : ''}" title="${m.delivered ? 'агент получил' : 'ждёт, пока агент заберёт почту'}">${m.delivered ? '✓✓' : '✓'}</span>` : '';
   const long = m.text.length > 700 || m.text.split('\n').length > 14;
   const html = m.format === 'html';
-  el.innerHTML = `${hd}<div class="tx${html ? ' rep-html' : ''}${long ? ' clamp' : ''}">${html ? '' : linkify(m.text)}</div>${long ? '<button class="more" type="button">Показать целиком</button>' : ''}<div class="meta">${esc(hm(m.at))}${tick}</div>`;
+  // письмо агента — Markdown: структура вместо простыни; свои письма человека — как набрал
+  const md = !html && m.dir !== 'me' && typeof window.renderMarkdown === 'function';
+  el.innerHTML = `${hd}<div class="tx${html || md ? ' rep-html' : ''}${md ? ' md' : ''}${long ? ' clamp' : ''}">${html ? '' : md ? window.renderMarkdown(m.text) : linkify(m.text)}</div>${long ? '<button class="more" type="button">Показать целиком</button>' : ''}<div class="meta">${esc(hm(m.at))}${tick}</div>`;
   if (html) repHtml(el.querySelector('.tx'), m.text);
   if (long) el.querySelector('.more').onclick = (e) => { const t = el.querySelector('.tx'); t.classList.toggle('clamp');
     e.target.textContent = t.classList.contains('clamp') ? 'Показать целиком' : 'Свернуть'; };
@@ -226,7 +228,7 @@ async function sendChat(e) {
   const el = bubble(tmp); el.classList.add('pending'); el.querySelector('.meta').innerHTML = '<span class="spin sm" aria-hidden="true"></span> отправляю';
   const box = $('msgs'); const te = box.querySelector('.thread-empty'); if (te) te.remove();
   box.appendChild(el); box.scrollTop = box.scrollHeight;
-  ta.value = ''; grow();
+  ta.value = ''; grow(); slot();
   try {
     const r = await api('/api/chat-send', { agent: CH.sel, text });
     el.dataset.mid = r.mid;
@@ -234,7 +236,7 @@ async function sendChat(e) {
     await pullThread(false);
   } catch (err) {
     el.classList.add('failed'); el.querySelector('.meta').innerHTML = `<span class="fail">не отправлено: ${esc(err.message)}</span> <button class="retry" type="button">Повторить</button>`;
-    el.querySelector('.retry').onclick = () => { el.remove(); ta.value = text; grow(); ta.focus(); };
+    el.querySelector('.retry').onclick = () => { el.remove(); ta.value = text; grow(); slot(); ta.focus(); };
   }
   CH.sending = false; $('csend').disabled = false;
 }
@@ -242,7 +244,92 @@ async function sendChat(e) {
 function grow() { const ta = $('ctext'); ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 200) + 'px'; }
 
 $('composer').onsubmit = sendChat;
-$('ctext').addEventListener('input', grow);
+$('ctext').addEventListener('input', () => { grow(); slot(); });
+
+// ---------- голосовое: запись в браузере → расшифровка на сайте → текст в поле ----------
+// Пустое поле — на месте самолётика микрофон (как в Telegram). Запись не дольше CH.voiceMax; × — отменить, ■ — текст в
+// поле, ➤ — сразу отправить. Тишину и записи короче секунды не шлём: модель на тишине выдумывает текст.
+CH.voice = false; CH.voiceMax = 120;
+function setVoice(on, max) { CH.voice = !!on; CH.voiceMax = max || 120; $('rec-max').textContent = ' / ' + Math.floor(CH.voiceMax / 60) + ':' + String(CH.voiceMax % 60).padStart(2, '0'); slot(); }
+function slot() { const empty = !$('ctext').value.trim(); $('cmic').hidden = !(CH.voice && empty); $('csend').hidden = CH.voice && empty; }
+function hint(t) { const ta = $('ctext'), was = 'Сообщение агенту…'; ta.placeholder = t; clearTimeout(hint.t); hint.t = setTimeout(() => { ta.placeholder = was; }, 4000); }
+const REC = { mr: null, chunks: [], t0: 0, timer: null, stream: null, cancel: false, send: false, ctx: null, an: null, levels: [], n: 0, step: 100, top: 0 };
+$('cmic').onclick = async () => {
+  if (REC.mr) return;
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { hint('Браузер не умеет записывать звук'); return; }
+  try { REC.stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) { hint('Нет доступа к микрофону — разреши его в браузере'); return; }
+  const type = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4', 'audio/webm'].find((t) => MediaRecorder.isTypeSupported(t)) || '';
+  REC.mr = new MediaRecorder(REC.stream, type ? { mimeType: type } : {});
+  REC.chunks = []; REC.cancel = false; REC.send = false; REC.t0 = Date.now(); REC.top = 0;
+  REC.mr.ondataavailable = (e) => { if (e.data.size) REC.chunks.push(e.data); };
+  REC.mr.onstop = recStopped;
+  REC.mr.start(1000);
+  $('rec').hidden = false; $('rec').classList.remove('busy'); $('composer').classList.add('recording');
+  const cv = $('rec-wave'), dpr = window.devicePixelRatio || 1;
+  cv.width = Math.max(1, Math.round(cv.clientWidth * dpr)); cv.height = Math.round(32 * dpr);
+  REC.n = Math.max(20, Math.floor(cv.clientWidth / 4)); REC.step = 30000 / REC.n; REC.levels = []; REC.peak = 0; REC.last = performance.now();
+  recTick(); REC.timer = setInterval(recTick, 250);
+  try { REC.ctx = new AudioContext(); REC.an = REC.ctx.createAnalyser(); REC.an.fftSize = 256; REC.ctx.createMediaStreamSource(REC.stream).connect(REC.an); } catch (e) { REC.an = null; }
+  REC.raf = requestAnimationFrame(recFrame);
+};
+function recTick() {
+  const sec = Math.floor((Date.now() - REC.t0) / 1000);
+  $('rec-t').textContent = Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
+  if (sec >= CH.voiceMax) recStop(false);
+}
+function recFrame(now) {
+  if (!REC.mr) return;
+  if (REC.an) {
+    const d = new Uint8Array(REC.an.fftSize); REC.an.getByteTimeDomainData(d);
+    let sum = 0; for (const v of d) sum += (v - 128) * (v - 128);
+    REC.peak = Math.max(REC.peak, Math.min(1, Math.sqrt(sum / d.length) / 40)); REC.top = Math.max(REC.top, REC.peak);
+  }
+  while (now - REC.last >= REC.step) { REC.levels.push(REC.peak); REC.peak = 0; REC.last += REC.step; if (REC.levels.length > REC.n) REC.levels.shift(); }
+  recDraw(Math.min(1, (now - REC.last) / REC.step));
+  REC.raf = requestAnimationFrame(recFrame);
+}
+function recDraw(frac) {
+  const cv = $('rec-wave'), g = cv.getContext('2d'), dpr = window.devicePixelRatio || 1, W = cv.width, H = cv.height;
+  g.clearRect(0, 0, W, H);
+  const bw = 2 * dpr, step = 4 * dpr, shift = frac * step, empty = REC.n - REC.levels.length;
+  const bar = (x, l) => { const h = Math.max(2 * dpr, l * (H - 2 * dpr)); g.beginPath(); g.roundRect ? g.roundRect(x, (H - h) / 2, bw, h, bw / 2) : g.rect(x, (H - h) / 2, bw, h); g.fill(); };
+  g.fillStyle = '#6c7883'; g.globalAlpha = .45;
+  for (let i = 0; i < empty; i++) g.fillRect(W - (REC.n - i) * step - shift, H / 2 - dpr / 2, bw, dpr);
+  g.fillStyle = '#e4ecf2'; g.globalAlpha = 1;
+  for (let i = empty; i < REC.n; i++) bar(W - (REC.n - i) * step - shift, REC.levels[i - empty]);
+  bar(W - shift, REC.peak);
+}
+function recStop(cancel, sendNow) {
+  if (!REC.mr) return;
+  REC.cancel = cancel; REC.send = !!sendNow; clearInterval(REC.timer); cancelAnimationFrame(REC.raf);
+  if (REC.mr.state !== 'inactive') REC.mr.stop();
+  REC.stream.getTracks().forEach((t) => t.stop());
+  try { REC.ctx && REC.ctx.close(); } catch (e) {}
+}
+$('rec-x').onclick = () => recStop(true);
+$('rec-stop').onclick = () => recStop(false);
+$('rec-send').onclick = () => recStop(false, true);
+function recClose() { $('rec').hidden = true; $('rec').classList.remove('busy'); $('composer').classList.remove('recording'); }
+async function recStopped() {
+  const type = (REC.mr.mimeType || 'audio/webm').split(';')[0], blob = new Blob(REC.chunks, { type });
+  const dur = (Date.now() - REC.t0) / 1000; REC.mr = null;
+  if (REC.cancel || !blob.size) { recClose(); return; }
+  if (dur < 1 || (REC.an && REC.top < 0.05)) { recClose(); hint('Речь не услышали — попробуй ещё раз'); return; }
+  $('rec-t').textContent = 'Расшифровываю…'; $('rec-max').hidden = true; $('rec').classList.add('busy');
+  let text = '';
+  try {
+    const r = await fetch('/api/transcribe', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': type }, body: blob });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || 'ошибка ' + r.status);
+    text = (d.text || '').trim();
+    if (!text) hint('Не удалось расшифровать — попробуй ещё раз');
+  } catch (e) { hint(e.message || 'Не удалось расшифровать'); }
+  recClose(); $('rec-max').hidden = false;
+  const ta = $('ctext');
+  if (text) ta.value = (ta.value.trim() ? ta.value.trimEnd() + ' ' : '') + text;
+  grow(); slot(); ta.focus();
+  if (REC.send && text && !CH.sending) $('composer').requestSubmit();
+}
 $('ctext').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('composer').requestSubmit(); } });
 $('back').onclick = closeChat;
 $('csearch').oninput = (e) => { CH.q = e.target.value; paintRows(); };

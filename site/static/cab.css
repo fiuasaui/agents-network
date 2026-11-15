@@ -117,6 +117,24 @@ body.cab-page.in-app { height: 100dvh; overflow: hidden; background: #0e1621; fo
 .send { appearance: none; border: 0; width: 44px; height: 44px; border-radius: 50%; background: #5288c1; color: #fff; display: grid; place-items: center; cursor: pointer;
         flex: none; transition: transform 120ms var(--ease), background 150ms var(--ease); }
 .send:hover { background: #5f95ce; } .send:active { transform: scale(.94); } .send[disabled] { opacity: .5; cursor: progress; }
+/* композер как в Telegram: плоские иконки справа, без кругов; пустое поле — микрофон, есть текст — самолётик */
+.composer { align-items: center; }
+.composer .ib { appearance: none; border: 0; background: none; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center;
+                cursor: pointer; flex: none; color: #6c7883; transition: color 150ms var(--ease), background 150ms var(--ease), transform 120ms var(--ease); }
+.composer .ib:hover { color: #8b98a5; background: rgba(255,255,255,.04); }
+.composer .ib:active { transform: scale(.92); }
+.composer .ib svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.composer .send-ic { color: #5288c1; } .composer .send-ic:hover { color: #6ea0d6; }
+.composer .send-ic svg { fill: currentColor; stroke: none; width: 26px; height: 26px; }
+.composer .ib[disabled] { opacity: .5; cursor: progress; } .composer .ib[hidden] { display: none; }
+.composer.recording textarea, .composer.recording #cmic, .composer.recording #csend { display: none; }
+.rec { flex: 1; display: flex; align-items: center; gap: 6px; min-height: 44px; min-width: 0; font-variant-numeric: tabular-nums; }
+.rec[hidden] { display: none; }
+.rec-wave { flex: 1; min-width: 0; height: 32px; display: block; }
+.rec-time { color: var(--ink); font-size: 14px; white-space: nowrap; }
+.rec-max { color: var(--muted); }
+.rec-stop svg { fill: #e5534b; stroke: none; }
+.rec.busy .rec-wave, .rec.busy #rec-stop, .rec.busy #rec-send { opacity: .35; pointer-events: none; }
 
 /* агенты и права */
 .agl li.agr, .list li.agr { justify-content: flex-start; align-items: flex-start; }
@@ -184,6 +202,8 @@ input[type=search]#dsearch { width: 100%; padding: 10px 14px; border-radius: 18p
 .rep-html h2 { font-size: 18px; margin: 14px 0 8px; } .rep-html h3 { font-size: 16px; margin: 12px 0 6px; }
 .rep-html h4 { font-size: 13px; margin: 12px 0 6px; color: var(--muted); }
 .rep-html p { margin: 0 0 10px; } .rep-html ul, .rep-html ol { margin: 0 0 10px; padding-left: 22px; } .rep-html li { margin: 3px 0; }
+/* пузырь тоже .tx — снимаем стиль строк кошелька (.tx li в style.css), иначе у списков письма нет точек и есть линии */
+.rep-html li { display: list-item; padding: 0; border: 0; border-radius: 0; } .rep-html li:hover { background: none; }
 .rep-html .lead { font-size: 16px; color: #f5f8fc; }
 .rep-html .note, .rep-html .warn, .rep-html .ok, .rep-html .bad { padding: 10px 14px; border-radius: 12px; margin: 10px 0; background: rgba(106, 169, 255, .08); }
 .rep-html .warn { background: rgba(227, 179, 65, .10); } .rep-html .ok { background: rgba(63, 182, 122, .10); } .rep-html .bad { background: rgba(240, 98, 90, .10); }
@@ -225,3 +245,12 @@ input[type=search]#dsearch { width: 100%; padding: 10px 14px; border-radius: 18p
 .cmi { display: flex; align-items: center; width: 100%; padding: 8px 12px; border: 0; border-radius: 8px; background: none; color: #e6edf5;
   font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
 .cmi:hover, .cmi:focus-visible { background: rgba(255, 255, 255, .07); outline: none; }
+/* письмо агента в Markdown (md.js): заголовки скромнее, чем в HTML-отчёте, код и цитата — как в Telegram */
+.rep-html.md { font-size: 15px; } .rep-html.md p { margin: 0 0 6px; }
+.rep-html.md h1, .rep-html.md h2 { font-size: 16px; margin: 10px 0 6px; } .rep-html.md h3, .rep-html.md h4 { font-size: 15px; margin: 8px 0 4px; }
+.rep-html.md pre { background: #0e1621; border-radius: 8px; padding: 8px 10px; overflow-x: auto; margin: 6px 0; font-size: 13px; }
+.rep-html.md code { background: rgba(255,255,255,.06); border-radius: 4px; padding: 0 4px; font-size: 13.5px; } .rep-html.md pre code { background: none; padding: 0; }
+.rep-html.md blockquote { border-left: 2px solid #5288c1; margin: 6px 0; padding: 2px 0 2px 10px; color: #c9d4de; }
+.rep-html.md table { border-collapse: collapse; margin: 6px 0; font-size: 14px; display: block; overflow-x: auto; }
+.rep-html.md th, .rep-html.md td { border: 1px solid #2b3946; padding: 4px 8px; text-align: left; }
+.rep-html.md hr { border: 0; border-top: 1px solid #2b3946; margin: 8px 0; }
