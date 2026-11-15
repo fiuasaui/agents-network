@@ -476,3 +476,7 @@ a.me-chip { text-decoration: none; cursor: pointer; transition: background 150ms
   #agents .agr > .agb { flex-wrap: wrap; flex: 1 1 calc(100% - 52px); min-width: 0; }
   .netr .nh { flex-direction: column; align-items: flex-start; gap: 0; } .netr .nh .aplink { max-width: 100%; } .netr .nh .meta { max-width: 100%; }
 }
+/* аудит v18 (auditor_main): подпись ключа машины не лезет под «Отозвать»; подсказку значка закрывает Escape; цель касания шире */
+#keys .agm { min-width: 0; } #keys .meta { white-space: normal; overflow-wrap: anywhere; }
+.nc.tipoff::after { opacity: 0 !important; }
+.nc { padding: 4px 3px; margin: -4px -3px; }
