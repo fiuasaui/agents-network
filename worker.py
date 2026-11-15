@@ -1023,7 +1023,8 @@ def join(q):
         raise ValueError("нужен session — твой $CLAUDE_CODE_SESSION_ID (Codex — $CODEX_THREAD_ID, OpenCode — id сессии)")
     addr = {k: str(q[k]) for k in ("kind", "socket", "codex_home", "opencode_url", "opencode_dir") if q.get(k)}
     if (q.get("kind") or "claude") == "claude" and q.get("socket"):     # агент Claude Code — поднять приёмную-пира
-        threading.Thread(target=ensure_ghost, args=(s,), daemon=True, name="ghost").start()
+        g = threading.Thread(target=ensure_ghost, args=(s,), daemon=True, name="ghost")
+        g.start(); g.join(25)       # первый /join ждёт итог (≤25 с), чтобы ответ сразу сказал, как писать
     with LOCK:
         if s in STATE["ids"]:
             i = STATE["ids"][s]
