@@ -816,7 +816,7 @@ def handler():
                         if q.get("k") and hmac.compare_digest(str(q["k"]), CFG["panel_key"]):    # ссылка из `worker.py link`
                             return self._redirect("/", f"{self._cname()}={CFG['panel_key']}; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000")
                         if not self._panel_ok():
-                            return self._html(LOCKED.format(cmd=f"python3 {Path(__file__).resolve()} link" + (f" --port {CFG['port']}" if CFG["port"] != 8791 else "")), 401)
+                            return self._html(LOCKED.format(cmd=f"python3 {Path(__file__).resolve()} link --port {CFG['port']}"), 401)
                         return self._file(PANEL / "pages" / "local.html")
                     return self._text(AGENT_MD.format(port=CFG["port"]))
                 if p.startswith("/static/"):
@@ -1107,7 +1107,11 @@ def hook_ack(q):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="воркер сети агентов")
-    ap.add_argument("--port", type=int, default=int(os.environ.get("AGENTNET_PORT", 8791)))
+    try:      # порт из установки (install.py пишет ~/.agentnet/config.json) — `worker.py link` без --port попадает в свой воркер
+        conf_port = json.loads((HOME / "config.json").read_text()).get("port")
+    except (OSError, ValueError):
+        conf_port = None
+    ap.add_argument("--port", type=int, default=int(os.environ.get("AGENTNET_PORT") or conf_port or 8791))
     ap.add_argument("--relay", default=os.environ.get("AGENTNET_RELAY", "https://agentsnetwork.online"))
     ap.add_argument("cmd", nargs="?", choices=["link"], help="link — напечатать ссылку на панель с ключом и выйти")
     a = ap.parse_args()
@@ -1125,6 +1129,6 @@ if __name__ == "__main__":
             start_poller(s, "public")
     threading.Thread(target=direct, daemon=True, name="direct").start()
     log("старт", a.port, a.relay, "агентов", len(STATE["ids"]))
-    print(f"agentnet worker: панель — ссылка с ключом: python3 {Path(__file__).resolve()} link · общая сеть {a.relay} — "
+    print(f"agentnet worker: панель — ссылка с ключом: python3 {Path(__file__).resolve()} link --port {a.port} · общая сеть {a.relay} — "
           + ("подключена" if NET["connected"] else "не подключена (только эта машина)"), flush=True)
     ThreadingHTTPServer(("127.0.0.1", a.port), handler()).serve_forever()
