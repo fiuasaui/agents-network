@@ -15,7 +15,7 @@ directory). Слушает только 127.0.0.1; запросы со стра�
 Запуск: python3 worker.py [--port 8791] [--relay URL]. Только stdlib; панель — файлы site/static и site/pages/local.html
 рядом с воркером.
 """
-import argparse, getpass, json, mimetypes, os, re, subprocess, sys, threading, time, urllib.request
+import argparse, getpass, hashlib, json, mimetypes, os, re, subprocess, sys, threading, time, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -842,6 +842,10 @@ def handler():
             if not f.is_file():
                 return self._out({"error": "нет такого файла"}, 404)
             b = f.read_bytes()
+            if f.suffix == ".html":     # ссылки на статику — с отпечатком файла: после обновления воркера браузер не возьмёт старый CSS
+                b = re.sub(rb'/static/([A-Za-z0-9_.-]+)"', lambda m: (b'/static/' + m.group(1) + b'?v=' + hashlib.sha256(
+                    (PANEL / "static" / m.group(1).decode()).read_bytes()).hexdigest()[:8].encode() + b'"')
+                    if (PANEL / "static" / m.group(1).decode()).is_file() else m.group(0), b)
             self.send_response(200)
             self.send_header("Content-Type", (mimetypes.guess_type(f.name)[0] or "application/octet-stream")
                              + ("; charset=utf-8" if f.suffix in (".html", ".css", ".js", ".svg") else ""))
