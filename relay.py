@@ -46,6 +46,8 @@ def db_open(path):
         c.execute("ALTER TABLE msgs ADD COLUMN fmt TEXT")
     if "seen" not in cols:          # когда агент последний раз забирал почту — «в сети» в кабинете
         c.execute("ALTER TABLE agents ADD COLUMN seen REAL")
+    if "hidden" not in cols:        # скрытый агент: в сети не показывается вовсе, пишет ему его человек и те, кому разрешено
+        c.execute("ALTER TABLE agents ADD COLUMN hidden INTEGER DEFAULT 0")
     if "asks" not in cols:          # принимает ли просьбы «разреши писать»: 0 — закрыт совсем, доверие даёт только сам
         c.execute("ALTER TABLE agents ADD COLUMN asks INTEGER DEFAULT 1")
     c.execute("CREATE INDEX IF NOT EXISTS trust_peer ON trust (peer)")
@@ -279,11 +281,13 @@ class Relay:
                 self.db.execute("UPDATE agents SET open=? WHERE id=?", (1 if q["open"] else 0, me))
             if "asks" in q:
                 self.db.execute("UPDATE agents SET asks=? WHERE id=?", (1 if q["asks"] else 0, me))
+            if "hidden" in q:
+                self.db.execute("UPDATE agents SET hidden=? WHERE id=?", (1 if q["hidden"] else 0, me))
             if q.get("nick"):
                 self.take_nick(me, q["nick"])
-            r = self.db.execute("SELECT id, name, about, open, nick, COALESCE(asks, 1) FROM agents WHERE id=?", (me,)).fetchone()
+            r = self.db.execute("SELECT id, name, about, open, nick, COALESCE(asks, 1), COALESCE(hidden, 0) FROM agents WHERE id=?", (me,)).fetchone()
             trusts = [x[0] for x in self.db.execute("SELECT peer FROM trust WHERE owner=?", (me,))]
-        return {"id": r[0], "nick": r[4], "name": r[1], "about": r[2], "open": bool(r[3]), "asks": bool(r[5]), "trusts": trusts}
+        return {"id": r[0], "nick": r[4], "name": r[1], "about": r[2], "open": bool(r[3]), "asks": bool(r[5]), "hidden": bool(r[6]), "trusts": trusts}
 
     def trust(self, q):
         me = self.auth(q)
@@ -589,6 +593,37 @@ class Relay:
             raise PermissionError("нужны owner и owner_secret")
         return self.human_thread(o, q.get("agent"), q.get("after") or 0)
 
+    def public(self, q):
+        """Публичная карточка агента: кто он и насколько живой — сколько людей ему доверились и скольким он,
+        со сколькими людьми переписывался, сколько писем. Кто конкретно — не показываем. Скрытый агент — «нет такого»."""
+        with LOCK:
+            aid = self.resolve(q.get("agent") or q.get("to"))
+            r = self.db.execute("SELECT a.id, a.nick, a.name, a.about, a.open, COALESCE(a.asks, 1), COALESCE(a.hidden, 0), a.seen, a.created, a.av, a.owner, o.nick "
+                                "FROM agents a LEFT JOIN owners o ON o.id=a.owner WHERE a.id=?", (aid,)).fetchone()
+            if not r or (r[6] and not q.get("_owner_view")):
+                raise LookupError("нет такого агента")
+            st = self.agent_stats(aid)
+        return {"id": r[0], "address": self.addr_of(r[0]), "nick": r[1], "name": r[2], "about": r[3], "open": bool(r[4]),
+                "kind": "open" if r[4] else "ask" if r[5] else "closed", "hidden": bool(r[6]), "seen": r[7], "created": r[8],
+                **({"av": r[9]} if r[9] else {}), "human": r[11], **st}
+
+    def agent_stats(self, aid):
+        """Счётчики агента для публичной карточки. Стороны — люди (или агент без человека). Под LOCK."""
+        o, mine = self.side(aid)
+        ph = ",".join("?" * len(mine))
+        peers = mine + ([o] if o else [])
+        pp = ",".join("?" * len(peers))
+        key = "COALESCE(z.owner, z.id)"
+        trusted_by, = self.db.execute(f"SELECT COUNT(DISTINCT {key}) FROM trust t JOIN agents z ON z.id=t.owner WHERE t.peer IN ({pp}) "
+                                      f"AND z.id NOT IN ({ph})", (*peers, *mine)).fetchone()
+        trusts, = self.db.execute(f"SELECT COUNT(DISTINCT COALESCE(z.owner, z.id, t.peer)) FROM trust t LEFT JOIN agents z ON z.id=t.peer "
+                                  f"WHERE t.owner IN ({ph})", mine).fetchone()
+        sent, = self.db.execute("SELECT COUNT(*) FROM msgs m JOIN agents z ON z.id=m.dst WHERE m.src=? AND (z.owner IS NULL OR z.owner IS NOT ?)", (aid, o)).fetchone()
+        got, = self.db.execute("SELECT COUNT(*) FROM msgs m JOIN agents z ON z.id=m.src WHERE m.dst=? AND (z.owner IS NULL OR z.owner IS NOT ?)", (aid, o)).fetchone()
+        talked, = self.db.execute(f"SELECT COUNT(DISTINCT {key}) FROM msgs m JOIN agents z ON z.id = CASE WHEN m.src=? THEN m.dst ELSE m.src END "
+                                  f"WHERE (m.src=? OR m.dst=?) AND z.id NOT IN ({ph})", (aid, aid, aid, *mine)).fetchone()
+        return {"trusted_by": trusted_by, "trusts": trusts, "talked_with": talked, "msgs_sent": sent, "msgs_got": got}
+
     DIR_SORT = {"top": "score DESC, a.created DESC", "new": "a.created DESC", "active": "COALESCE(a.seen, 0) DESC", "name": "LOWER(COALESCE(a.name, a.nick, a.id))"}
 
     def directory(self, q):
@@ -600,7 +635,7 @@ class Relay:
         off = max(0, int(q.get("offset") or 0))
         kind = str(q.get("kind") or "all")
         sort = self.DIR_SORT.get(str(q.get("sort") or "top"), self.DIR_SORT["top"])
-        where, args = [], []
+        where, args = ["COALESCE(a.hidden, 0)=0"], []
         if kind == "open":
             where.append("a.open=1")
         elif kind == "ask":
@@ -642,7 +677,7 @@ class Relay:
                 "hint": "фильтры: q, kind=open|ask|closed, sort=top|new|active|name, limit (до 100), offset, about=0"}
 
 ROUTES = {"/v1/owner": "owner_register", "/v1/owner/me": "owner_me", "/v1/register": "register", "/v1/profile": "profile", "/v1/trust": "trust", "/v1/send": "send",
-          "/v1/inbox": "inbox", "/v1/ack": "ack", "/v1/directory": "directory", "/v1/ask": "ask",
+          "/v1/inbox": "inbox", "/v1/ack": "ack", "/v1/directory": "directory", "/v1/ask": "ask", "/v1/agent": "public",
           "/v1/owner/send": "owner_send", "/v1/owner/chats": "owner_chats", "/v1/owner/thread": "owner_thread",
           "/v1/owner/seen": "owner_seen"}
 
@@ -653,6 +688,7 @@ def handler(relay):
             fn = ROUTES.get(urlparse(self.path).path)
             if not fn:
                 return self._out(404, {"error": "нет такого пути"})
+            q = {k: v for k, v in q.items() if not str(k).startswith("_")}    # служебные поля (_owner_view, _ip) снаружи не принимаем
             try:
                 self._out(200, getattr(relay, fn)(q))
             except RateLimit as e:
