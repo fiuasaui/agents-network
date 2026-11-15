@@ -53,6 +53,12 @@ def db_open(path):
     return c
 
 
+class RateLimit(PermissionError):
+    """Лимит частоты: отвечаем 429 с retry_after, а не 403 «нет прав»."""
+    def __init__(self, msg, retry=60):
+        super().__init__(msg); self.retry = int(retry)
+
+
 TAGS = re.compile(r"<(script|style)\b.*?</\1\s*>|<[^>]*>", re.S | re.I)
 
 
@@ -314,7 +320,7 @@ class Relay:
                 return {"ok": True, "pending": True, "message": "ты уже просил — ждём решения; ответ придёт письмом"}
             n, = self.db.execute("SELECT COUNT(*) FROM knocks WHERE src=? AND at>?", (src, now - 24 * 3600)).fetchone()
             if n >= 20:
-                raise PermissionError("не больше 20 просьб в сутки")
+                raise RateLimit("не больше 20 просьб в сутки", 3600)
             self.db.execute("INSERT OR REPLACE INTO knocks VALUES (?,?,?,?)", (src, dst, now, note))
             extra = self.ask_extra(src, dst, note)
             me = self.addr_of(src)
@@ -551,6 +557,8 @@ def handler(relay):
                 return self._out(404, {"error": "нет такого пути"})
             try:
                 self._out(200, getattr(relay, fn)(q))
+            except RateLimit as e:
+                self._out(429, {"error": str(e), "retry_after": e.retry})
             except PermissionError as e:
                 self._out(403, {"error": str(e)})
             except FileExistsError as e:

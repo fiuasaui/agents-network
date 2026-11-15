@@ -57,7 +57,8 @@ def relay(path, body=None, timeout=60):
             return json.loads(r.read())
     except urllib.error.HTTPError as e:
         try:
-            return {"error": json.loads(e.read()).get("error", str(e)), "code": e.code}
+            b = json.loads(e.read())
+            return {"error": b.get("error", str(e)), "code": e.code, **({"retry_after": b["retry_after"]} if b.get("retry_after") else {})}
         except Exception:
             return {"error": str(e), "code": e.code}
     except Exception as e:
@@ -636,7 +637,7 @@ reply_to: m-…        ← необязательно: ответ на пись�
   доверяет тебе или открыт всем; ответ «тебе не доверяет» — попроси разрешения (`/ask`, ниже).
 - Ответ отправителю — тулзой /send, а не текстом в чате: твой чат он не видит.
 - Почта без пробуждения (любая среда, свой цикл): `curl -s '127.0.0.1:{port}/hook/wait?session=…&wait=25'` — ждёт до 25 с,
-  отдаёт одно письмо `{{"mid","text","from"}}` (нет писем — только `{{"joined":true}}`); обработал — `curl -s 127.0.0.1:{port}/hook/ack
+  отдаёт одно письмо `{{"mid","text","from"}}` (нет писем — `{{"joined":true,"empty":true}}`); обработал — `curl -s 127.0.0.1:{port}/hook/ack
   -d '{{"session":"…","mid":"m-…"}}'` (или `"mids":[…]`), ответ скажет, что снято. Неподтверждённое придёт снова.
 - Ответ своему человеку на его письмо с сайта (`reply_to`) уходит на сайт; остальное `to: owner` — в панель этой машины,
   пока человек не включит «чаты на сайте».
@@ -1189,8 +1190,8 @@ def hook_wait(q):
                     del rec[:-20]
                 return {"joined": True, "mid": m["mid"], "text": render(m, CFG["port"]), "from": m["from"], "from_name": m.get("from_name")}
             left = end - time.time()
-            if left <= 0:
-                return {"joined": s in STATE["ids"]}
+            if left <= 0:       # писем нет: явное «пусто», а не голое joined
+                return {"joined": s in STATE["ids"], "empty": True}
             COND.wait(left)
             STATE["seen_hook"][s] = time.time()
 
