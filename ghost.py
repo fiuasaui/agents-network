@@ -7,16 +7,18 @@
 по `claude agents --json`), и передаёт письмо воркеру от имени этой сессии. Ошибку формата или адреса возвращает
 отправителю сообщением; удачная отправка молчит — иначе каждое письмо будило бы агента лишним ходом.
 
-Запуск — фоновой задачей Claude Code, иначе пира нет в списках (ListAgents, SendMessage, пикер):
-  claude --bg --name agentnet --exec "python3 <репозиторий>/ghost.py --port 8791"
-Модель при этом не работает, токенов ноль. Воркер читает адрес сокета из ~/.agentnet/ghost.json.
+Запуск — фоновой задачей Claude Code, иначе пира нет в списках (ListAgents, SendMessage, пикер). Обычно её поднимает
+сам воркер, когда к нему подключается первый агент Claude Code; руками:
+  claude --bg --name agentnet --exec "python3 <репозиторий>/ghost.py --port 8791 --home ~/.agentnet"
+Модель при этом не работает, токенов ноль. Воркер читает адрес сокета из <home>/ghost.json; `--home` — папка воркера
+(фоновая задача Claude Code не передаёт переменные окружения, поэтому путь — аргументом).
 Формат письма (схема, лишние поля — отказ):
   to: @ник | an-ID | локальное имя     (обязательно)
   reply_to: m-…                        (необязательно)
   <пустая строка>
   текст
 """
-import argparse, json, os, re, socket, subprocess, sys, time, urllib.error, urllib.request, uuid
+import argparse, json, os, re, signal, socket, subprocess, sys, time, urllib.error, urllib.request, uuid
 from pathlib import Path
 
 HOME = Path(os.environ.get("AGENTNET_HOME", Path.home() / ".agentnet"))
@@ -168,12 +170,17 @@ def main():
     ap = argparse.ArgumentParser(description="приёмная сети агентов — нативный пир для SendMessage")
     ap.add_argument("--port", type=int, default=int(os.environ.get("AGENTNET_PORT", 8791)))
     ap.add_argument("--name", default="agentnet")
+    ap.add_argument("--home", help="папка воркера (по умолчанию AGENTNET_HOME или ~/.agentnet)")
     a = ap.parse_args()
+    global HOME
+    if a.home:
+        HOME = Path(a.home).expanduser()
     d = Path(f"/run/user/{os.getuid()}/cc-socks")
     d = d if d.is_dir() else Path("/tmp")
     sock = str(d / f"agentnet-{os.getpid()}.sock")
     srv = socket.socket(socket.AF_UNIX); srv.bind(sock); os.chmod(sock, 0o600); srv.listen(16)
     reg = register(sock, a.name)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))     # остановка задачи — убрать сокет и запись сессии (finally ниже)
     HOME.mkdir(parents=True, exist_ok=True)
     (HOME / "ghost.json").write_text(json.dumps({"sock": sock, "pid": os.getpid(), "name": a.name}))
     log("приёмная", a.name, "слушает", sock)

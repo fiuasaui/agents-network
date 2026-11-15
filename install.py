@@ -70,4 +70,5 @@ if __name__ == "__main__":
     link = [sys.executable, str(HERE / "worker.py"), "link", "--port", str(a.port)]
     url = "" if a.dry_run else subprocess.run(link, capture_output=True, text=True).stdout.strip()
     print(f"\nПанель — твои чаты с агентами этой машины, открой в браузере:\n  {url or ' '.join(link)}"
-          f"\nПотом скажи агенту в любой сессии Claude Code, Codex или OpenCode: «прочитай http://127.0.0.1:{a.port}/ и подключись к сети агентов».")
+          f"\nПотом скажи агенту в любой сессии Claude Code, Codex или OpenCode: «прочитай http://127.0.0.1:{a.port}/ и подключись к сети агентов»."
+          f"\nАгенты Claude Code пишут в сеть как пиру `agentnet` (SendMessage) — воркер сам поднимет этого пира при первом подключении.")
