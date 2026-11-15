@@ -403,3 +403,34 @@ body:has(#dlg-card[open]) { overflow: hidden; }
 .cact { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .pill.warn { background: color-mix(in srgb, #f5b041 18%, transparent); color: #f5c76b; }
 .bal-sw { margin: 16px 0 4px; align-items: flex-start; } .bal-sw .sw-t { display: flex; flex-direction: column; gap: 2px; }
+/* карточка агента — плавно: выплывает за ~0,45 с, уходит за ~0,17 с; фон темнеет вместе с ней */
+#dlg-card[open] { animation: cardUp 460ms cubic-bezier(.16, 1, .3, 1); }
+#dlg-card[open]::backdrop { animation: cardFog 360ms ease-out; }
+#dlg-card.closing { animation: cardDown 170ms cubic-bezier(.4, 0, 1, 1) forwards; }
+#dlg-card.closing::backdrop { animation: cardFogOut 170ms ease-in forwards; }
+@keyframes cardUp { from { opacity: 0; transform: translateY(14px) scale(.95); } }
+@keyframes cardDown { to { opacity: 0; transform: translateY(8px) scale(.97); } }
+@keyframes cardFog { from { background: rgba(5, 10, 16, 0); } }
+@keyframes cardFogOut { to { background: rgba(5, 10, 16, 0); } }
+#dlg-card .ch1-t { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+#dlg-card .ch1 .av { width: 56px; height: 56px; font-size: 20px; }
+#dlg-card .pill.mine { background: rgba(82, 136, 193, .22); color: #b9d6f5; }
+#dlg-card .cact { margin-top: 14px; }
+/* цифры агента — четыре живых блока 2×2 */
+.cks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
+.ck { display: flex; flex-direction: column; gap: 2px; padding: 11px 13px; border-radius: 14px; background: #1f2b38; min-width: 0;
+  transition: background 220ms cubic-bezier(.16, 1, .3, 1), transform 220ms cubic-bezier(.16, 1, .3, 1), box-shadow 220ms; }
+.ck b { font-size: 16px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; } .ck span { font-size: 12.5px; color: var(--muted); }
+#dlg-card .csec { margin-top: 10px; padding: 12px 14px; border: 0; border-radius: 14px; background: #1f2b38; transition: background 220ms cubic-bezier(.16, 1, .3, 1); }
+#dlg-card .cpl li { background: #283746; transition: background 200ms cubic-bezier(.16, 1, .3, 1), transform 200ms cubic-bezier(.16, 1, .3, 1); }
+@media (hover: hover) {
+  .ck:hover { background: #283849; transform: translateY(-2px); box-shadow: 0 8px 20px -12px rgba(0, 0, 0, .7), inset 0 0 0 1px rgba(255, 255, 255, .05); }
+  #dlg-card .csec:hover { background: #233140; }
+  #dlg-card .cpl li:hover { background: #30425a; transform: translateX(2px); }
+}
+#dlg-card .cnote { margin-top: 12px; }
+.netr .aplink { border-radius: 6px; transition: color 150ms, background 150ms; } .netr .aplink:hover b { color: #cfe3fa; }
+.hlink { color: #9cc4ef; font-weight: 600; text-decoration: none; border-radius: 6px; padding: 0 2px; transition: color 150ms, background 150ms; }
+.hlink:hover { color: #cfe3fa; background: rgba(82, 136, 193, .16); }
+a.me-chip { text-decoration: none; cursor: pointer; transition: background 150ms; } a.me-chip:hover { background: #2b3947; }
+@media (prefers-reduced-motion: reduce) { #dlg-card[open], #dlg-card.closing, #dlg-card[open]::backdrop { animation: none; } .ck, #dlg-card .cpl li { transition: none; } }

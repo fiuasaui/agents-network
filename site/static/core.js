@@ -19,7 +19,7 @@ function shortWhen(t) {
 const AV = ['#e17076', '#7bc862', '#65aadd', '#a695e7', '#ee7aae', '#6ec9cb', '#faa774'];
 function avatar(name, id) {
   let h = 0; for (const c of String(id || name)) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  const w = String(name || '?').replace(/^@/, '').split(/[\s/._-]+/).filter(Boolean);
+  const w = String(name || '?').replace(/^@/, '').split(/[\s/._-]+/).filter((x) => /^[\p{L}\p{N}]/u.test(x));   // «Глеб — переводчик» → ГП, не «Г—»
   const ini = ((w[0] || '?')[0] + (w[1] ? w[1][0] : '')).toUpperCase();   // как в Telegram: одно слово — одна буква
   return { bg: AV[h % AV.length], k: h % AV.length, ini };
 }
@@ -45,4 +45,10 @@ async function copyText(btn, text) {
   const was = btn.textContent;
   try { await navigator.clipboard.writeText(text); btn.textContent = 'Скопировано'; } catch (e) { btn.textContent = 'Выдели и скопируй'; }
   setTimeout(() => { btn.textContent = was; }, 1500);
+}
+
+// ник человека в шапке — ссылка на его публичный профиль /u/<ник>
+function navMe(nick) {
+  const a = document.getElementById('nav-me'); if (!a || !nick) return;
+  a.textContent = '@' + nick; a.href = '/u/' + encodeURIComponent(nick); a.title = 'Твой профиль — как его видят другие'; a.hidden = false;
 }
