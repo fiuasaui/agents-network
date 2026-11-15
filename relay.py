@@ -47,6 +47,8 @@ def db_open(path):
     # владелец — человек: свой ник (уникален среди людей) и ключ; агенты привязаны к нему
     c.execute("CREATE TABLE IF NOT EXISTS owners (id TEXT PRIMARY KEY, secret TEXT, nick TEXT UNIQUE, created REAL)")
     c.execute("CREATE UNIQUE INDEX IF NOT EXISTS agents_nick ON agents (nick) WHERE nick IS NOT NULL")
+    # просьбы разрешения писать: кто у кого просил и когда — чтобы не спамить и сообщить просившему решение
+    c.execute("CREATE TABLE IF NOT EXISTS knocks (src TEXT, dst TEXT, at REAL, note TEXT, PRIMARY KEY (src, dst))")
     return c
 
 
@@ -260,9 +262,60 @@ class Relay:
                 raise LookupError("нет агента " + peer)
             if q.get("on", True):
                 self.db.execute("INSERT OR REPLACE INTO trust VALUES (?,?,?)", (me, peer, time.time()))
+                self.knock_answer(me, peer, True)
             else:
                 self.db.execute("DELETE FROM trust WHERE owner=? AND peer=?", (me, peer))
         return {"ok": True, "peer": peer, "trusted": bool(q.get("on", True))}
+
+    def addr_of(self, aid):
+        """Адрес агента словами: @человек/ник, @ник или ID."""
+        r = self.db.execute("SELECT a.nick, o.nick FROM agents a LEFT JOIN owners o ON o.id=a.owner WHERE a.id=?", (aid,)).fetchone()
+        return (f"@{r[1]}/{r[0]}" if r[1] and r[0] else f"@{r[0]}" if r[0] else aid) if r else aid
+
+    def note_to(self, src, dst, text):
+        """Служебное письмо сети между агентами — мимо правила «кто может писать» (ответ на просьбу разрешения)."""
+        self.db.execute("INSERT INTO msgs (mid, src, dst, text, at) VALUES (?,?,?,?,?)", ("m-" + secrets.token_hex(6), src, dst, text, time.time()))
+        WAKE.notify_all()
+
+    def knock_answer(self, me, peer, yes):
+        """Агент me решил просьбу peer писать ему: просившему — письмо с решением, просьба снимается. Под LOCK."""
+        if not self.db.execute("DELETE FROM knocks WHERE src=? AND dst=?", (peer, me)).rowcount:
+            return
+        self.note_to(me, peer, f"✅ {self.addr_of(me)} разрешил тебе писать — пиши." if yes else
+                     f"❌ {self.addr_of(me)} не разрешил тебе писать. Не проси снова без новой причины.")
+
+    def ask_extra(self, src, dst, note):
+        """Что ещё сделать по просьбе (на сайте — запрос человеку получателя). Возвращает строку для письма получателю."""
+        return ""
+
+    def ask(self, q):
+        """Попросить разрешения писать агенту: получатель получает одно письмо-просьбу (и может ответить),
+        его человек — запрос в кабинете, если агент под одобрением. Разрешили — просившему письмо «пиши»."""
+        src, note = self.auth(q), " ".join(str(q.get("note") or "").split())[:300]
+        with LOCK:
+            dst = self.resolve(q.get("to"))
+            if dst == src or not self.db.execute("SELECT 1 FROM agents WHERE id=?", (dst,)).fetchone():
+                raise LookupError("нет такого агента")
+            how = self.may_write(src, dst)
+            if how:
+                return {"ok": True, "already": how, "message": "писать уже можно: " + how}
+            now = time.time()
+            old = self.db.execute("SELECT at FROM knocks WHERE src=? AND dst=?", (src, dst)).fetchone()
+            if old and now - old[0] < REPLY_TTL:
+                return {"ok": True, "pending": True, "message": "ты уже просил — ждём решения; ответ придёт письмом"}
+            n, = self.db.execute("SELECT COUNT(*) FROM knocks WHERE src=? AND at>?", (src, now - 24 * 3600)).fetchone()
+            if n >= 20:
+                raise PermissionError("не больше 20 просьб в сутки")
+            self.db.execute("INSERT OR REPLACE INTO knocks VALUES (?,?,?,?)", (src, dst, now, note))
+            extra = self.ask_extra(src, dst, note)
+            me = self.addr_of(src)
+            self.db.execute("INSERT INTO msgs (mid, src, dst, text, at) VALUES (?,?,?,?,?)", ("m-" + secrets.token_hex(6), src, dst,
+                            f"🔑 {me} просит разрешения писать тебе" + (f": «{note}»." if note else ".") + (f" {extra}" if extra else
+                            f" Разрешить — POST /trust {{\"peer\": \"{me}\"}}; отказать — POST /trust с \"on\": false или просто не отвечать."),
+                            now))
+            self.db.execute("INSERT OR REPLACE INTO grants VALUES (?,?,?)", (src, dst, now + REPLY_TTL))
+            WAKE.notify_all()
+        return {"ok": True, "asked": self.addr_of(dst), "message": "просьба отправлена: решит агент или его человек, ответ придёт письмом"}
 
     def may_write(self, src, dst):
         if self.db.execute("SELECT 1 FROM agents WHERE id=? AND open=1", (dst,)).fetchone():
@@ -453,12 +506,19 @@ class Relay:
         with LOCK:
             rows = self.db.execute("SELECT a.id, a.name, a.about, a.open, a.nick, o.nick FROM agents a LEFT JOIN owners o ON o.id=a.owner "
                                    "ORDER BY a.created DESC LIMIT 500").fetchall()
-        return {"agents": [{"id": r[0], "nick": r[4], "owner": r[5], "address": (f"@{r[5]}/{r[4]}" if r[5] and r[4] else (f"@{r[4]}" if r[4] else r[0])),
-                            "name": r[1], "about": r[2], "open": bool(r[3])} for r in rows]}
+        out = [{"id": r[0], "nick": r[4], "owner": r[5], "address": (f"@{r[5]}/{r[4]}" if r[5] and r[4] else (f"@{r[4]}" if r[4] else r[0])),
+                "name": r[1], "about": r[2], "open": bool(r[3])} for r in rows]
+        if q.get("id") and q.get("secret"):     # агент спрашивает за себя: кому может писать сейчас, у кого — просить
+            me = self.auth(q)
+            with LOCK:
+                asked = {d for d, in self.db.execute("SELECT dst FROM knocks WHERE src=?", (me,))}
+                for a in out:
+                    a["write"] = "you" if a["id"] == me else (self.may_write(me, a["id"]) or ("asked" if a["id"] in asked else "ask"))
+        return {"agents": out}
 
 
 ROUTES = {"/v1/owner": "owner_register", "/v1/owner/me": "owner_me", "/v1/register": "register", "/v1/profile": "profile", "/v1/trust": "trust", "/v1/send": "send",
-          "/v1/inbox": "inbox", "/v1/ack": "ack", "/v1/directory": "directory",
+          "/v1/inbox": "inbox", "/v1/ack": "ack", "/v1/directory": "directory", "/v1/ask": "ask",
           "/v1/owner/send": "owner_send", "/v1/owner/chats": "owner_chats", "/v1/owner/thread": "owner_thread",
           "/v1/owner/seen": "owner_seen"}
 

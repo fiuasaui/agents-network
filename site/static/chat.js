@@ -68,6 +68,9 @@ function paintHead() {
   $('c-av').className = 'av c' + a.k; $('c-av').innerHTML = esc(a.ini) + (on ? '<i class="on"></i>' : '');
   $('c-name').textContent = chatName(c);
   $('c-sub').innerHTML = `<span class="${on ? 'online' : ''}">${esc(st)}</span> · ${c.addr ? esc(c.addr) : "@" + esc(ME.nick) + "/" + esc(c.nick || c.id)}`;
+  const acc = $('c-acc');   // только в кабинете сайта: кому агент открыт — и переход к его правам
+  if (acc) { acc.hidden = false; acc.href = '#rights/' + encodeURIComponent(c.id); $('c-acc-t').textContent = c.open ? 'Открыт всем' : 'Пишут доверенные';
+    acc.classList.toggle('open', !!c.open); }
 }
 
 async function openChat(id) {
@@ -111,7 +114,46 @@ function repHtml(parent, html) {
   walk(tpl.content, parent);
 }
 
+// запрос на одобрение и ответ на него: карточка сети, а не письмо агента; кнопки и статус — из базы одобрений
+const AP_ST = { yes: ['ok', 'Одобрено'], no: ['no', 'Отклонено'], failed: ['bad', 'Одобрено, но не выполнено'], run: ['', 'Выполняется…'] };
+const SHIELD = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg>';
+function sysCard(m) {
+  const a = m.approval, el = document.createElement('div');
+  el.dataset.mid = m.mid;
+  if (m.sys === 'notice') {
+    const k = m.text[0] === '✅' ? 'ok' : m.text[0] === '❌' ? 'no' : 'bad';
+    el.className = 'bub sysn ' + k;
+    el.innerHTML = `<span>${{ ok: 'Ты одобрил', no: 'Ты отклонил', bad: 'Одобрено, но не выполнено' }[k]}: ${esc(a.what)} · агенту сообщено · ${esc(hm(m.at))}</span>`;
+    return el;
+  }
+  const c = cur();
+  el.className = 'bub sysc' + (m.dir === 'to_me' && !m.delivered ? ' unread' : '');
+  el.innerHTML = `<div class="sysh">${SHIELD}<span>Запрос на одобрение</span></div>
+    <p>${a.by_peer ? esc(a.what) : `<b>${esc(c ? chatName(c) : 'Агент')}</b> просит: ${esc(a.what)}`}.</p><div class="sysa"></div>
+    <div class="meta">Agents Network · ${esc(hm(m.at))}</div>`;
+  const box = el.querySelector('.sysa');
+  const paint = () => {
+    if (a.status !== 'wait') { const [k, t] = AP_ST[a.status] || ['', a.status]; box.innerHTML = `<span class="sys-st ${k}">${esc(t)}</span>`; return; }
+    box.innerHTML = '<button class="btn ghost sm" type="button" data-no>Отклонить</button><button class="btn sm" type="button" data-yes>Одобрить</button><span class="err" role="alert"></span>';
+    for (const [sel, yes] of [['[data-yes]', true], ['[data-no]', false]]) {
+      const b = box.querySelector(sel);
+      b.onclick = async () => {
+        box.querySelectorAll('button').forEach((x) => { x.disabled = true; }); b.textContent = yes ? 'Одобряю…' : 'Отклоняю…';
+        try { await api('/api/decide', { id: a.id, yes }); a.status = yes ? 'yes' : 'no'; }
+        catch (e) { if (/нет такого запроса/.test(e.message)) a.status = 'done'; else { a.err = e.message; } }
+        if (a.status === 'done') { box.innerHTML = '<span class="sys-st">Уже решено</span>'; }
+        else if (a.err) { paint(); box.querySelector('.err').textContent = a.err; delete a.err; }
+        else paint();
+        window.dispatchEvent(new Event('approval-decided'));
+      };
+    }
+  };
+  paint();
+  return el;
+}
+
 function bubble(m) {
+  if (m.sys && m.approval) return sysCard(m);
   const el = document.createElement('div');
   const peer = m.dir === 'out' || m.dir === 'in';
   el.className = 'bub ' + (m.dir === 'me' ? 'mine' : peer ? 'peer ' + m.dir : 'ag') + (m.dir === 'to_me' && !m.delivered ? ' unread' : '') + (m.format === 'html' ? ' html' : '');
