@@ -1,0 +1,38 @@
+/* местная панель воркера: дополнения к cab.css — капсула сети, фраза агенту, ступени «Сеть» */
+.local .brand { cursor: default; }
+.net-chip { padding: 6px 12px; border-radius: 999px; background: #202b36; color: var(--muted); font-size: 13.5px; font-weight: 600; white-space: nowrap; text-decoration: none; transition: background 150ms var(--ease); }
+.net-chip::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #8796a8; margin-right: 8px; vertical-align: 1px; }
+.net-chip.on { background: #1e3a2c; color: #9fe0b8; } .net-chip.on::before { background: var(--ok); }
+.net-chip:hover { background: var(--hover); } .net-chip.on:hover { background: #24472f; }
+.net-chip:focus-visible { outline: 2px solid #5288c1; outline-offset: 2px; }
+
+.say { display: flex; align-items: center; gap: 12px; background: var(--code); border-radius: var(--r-s); padding: 12px 12px 12px 16px; margin: 8px 0 12px; }
+.say code { flex: 1; background: none; padding: 0; font-size: 14.5px; line-height: 1.45; word-break: break-word; }
+
+.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 16px; }
+.step { margin: 0; transition: opacity 200ms var(--ease); }
+.step.dim { opacity: 0.55; }
+.st-h { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.st-h > div { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.st-h h2 { margin: 0; } .st-h .meta { color: var(--muted); font-size: 13px; }
+.st-n { width: 32px; height: 32px; border-radius: 50%; background: #202b36; color: var(--accent); display: grid; place-items: center; font-weight: 700; flex: none; }
+.pill:empty { display: none; }
+.pill:not(.ok) { background: #2a3746; color: var(--muted); }
+
+.howto { margin: 4px 0 12px; padding-left: 20px; color: var(--ink); font-size: 14.5px; line-height: 1.6; }
+.keyf label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+.keyf textarea { width: 100%; box-sizing: border-box; resize: vertical; min-height: 72px; background: var(--code); color: var(--ink); border: 1px solid var(--line);
+  border-radius: var(--r-s); padding: 10px 12px; font: 14px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.keyf textarea:focus { outline: none; border-color: #5288c1; }
+.confirm { margin-top: 12px; padding: 12px 16px; border-radius: var(--r-s); background: #2a1f24; }
+.confirm p { margin: 0 0 8px; font-size: 14px; }
+
+.ren { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.ren input { width: 180px; max-width: 100%; background: var(--code); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; font: inherit; font-size: 14px; }
+.ren input:focus { outline: none; border-color: #5288c1; }
+.ren .err:empty { display: none; }
+
+@media (max-width: 760px) {
+  .net-chip { max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+  .say { flex-direction: column; align-items: stretch; }
+}

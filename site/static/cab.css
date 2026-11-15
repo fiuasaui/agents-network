@@ -1,0 +1,227 @@
+/* Кабинет Agents Network: приложение во весь экран в стиле Telegram: полоса сверху с
+   разделами, чаты — список агентов слева и переписка справа; на телефоне — список, затем чат, разделы — внизу. */
+body.cab-page.in-app { height: 100dvh; overflow: hidden; background: #0e1621; font-size: 15px; line-height: 1.45; }
+.app { display: flex; flex-direction: column; height: 100dvh; }
+/* полоса сверху */
+.bar { display: flex; align-items: center; gap: 16px; padding: 8px 16px; padding-top: calc(8px + env(safe-area-inset-top, 0px));
+       background: #17212b; border-bottom: 1px solid #0b121a; min-height: 56px; flex: none; }
+.bar .brand { font-size: 16px; gap: 10px; }
+.tabbar { display: flex; gap: 4px; background: #0e1621; padding: 4px; border-radius: 14px; margin: 0 auto; }
+.tabbar a { position: relative; display: inline-flex; align-items: center; gap: 8px; margin: 0; padding: 7px 14px; border-radius: 10px;
+            color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 600; transition: background 150ms var(--ease), color 150ms var(--ease); }
+.tabbar a:hover { color: var(--ink); background: #202b36; }
+.tabbar a.on { background: #2b5278; color: #fff; }
+.tabbar svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+.tb-badge { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: #5288c1; color: #fff; font-size: 11px; line-height: 18px;
+            text-align: center; font-variant-numeric: tabular-nums; }
+.tabbar a.on .tb-badge { background: #fff; color: #2b5278; }
+.tb-badge.warn { background: #e3b341; color: #1b1b1b; }
+.bar-r { display: flex; align-items: center; gap: 8px; }
+.me-chip { padding: 6px 12px; border-radius: 999px; background: #202b36; color: #dbe6f2; font-size: 13.5px; font-weight: 600; white-space: nowrap;
+           max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.bal-chip { padding: 6px 12px; border-radius: 999px; background: #1e3a2c; color: #9fe0b8; font-size: 13.5px; font-weight: 600; white-space: nowrap;
+            text-decoration: none; font-variant-numeric: tabular-nums; transition: background 150ms var(--ease); }
+.bal-chip b { color: #d6f5e1; font-weight: 700; }
+.bal-chip:hover { background: #24472f; }
+.bal-chip:focus-visible { outline: 2px solid #5288c1; outline-offset: 2px; }
+.bar .btn.ghost.sm { min-height: 36px; }
+
+/* разделы */
+.view { flex: 1; min-height: 0; }
+.view.page { overflow: auto; }
+.pagew { max-width: 860px; margin: 0 auto; padding: 24px 16px 48px; }
+.view.page .panel { background: #17212b; }
+.ph { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.ph h2 { margin: 0; }
+.ph .meta { color: var(--muted); font-size: 14px; }
+.ph > .agm { flex: 1; }
+
+/* аватарка */
+.av { --avc: #5288c1; position: relative; flex: none; width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center;
+      background: linear-gradient(160deg, color-mix(in srgb, var(--avc) 100%, #fff 12%), var(--avc)); color: #fff; font-weight: 700; font-size: 16px; letter-spacing: .01em; }
+.av.c0 { --avc: #e17076; } .av.c1 { --avc: #7bc862; } .av.c2 { --avc: #65aadd; } .av.c3 { --avc: #a695e7; }
+.av.c4 { --avc: #ee7aae; } .av.c5 { --avc: #6ec9cb; } .av.c6 { --avc: #faa774; }
+.av .on { position: absolute; right: 0; bottom: 0; width: 12px; height: 12px; border-radius: 50%; background: #4cc38a; box-shadow: 0 0 0 2.5px #17212b; }
+.online { color: #6fb3ff; }
+
+/* чаты */
+.chats { display: grid; grid-template-columns: 340px 1fr; height: 100%; }
+.chats > * { min-width: 0; }
+.clist { display: flex; flex-direction: column; min-height: 0; background: #17212b; border-right: 1px solid #0b121a; }
+.clist input[type=search] { width: 100%; background: #242f3d; border: 0; border-radius: 18px; padding: 9px 14px; color: var(--ink); font: inherit; font-size: 14px; min-height: 38px; }
+.clist input[type=search]:focus { outline: 2px solid color-mix(in srgb, #5288c1 60%, transparent); }
+.rows { list-style: none; margin: 0; padding: 0; overflow: auto; flex: 1; }
+.row { position: relative; display: flex; gap: 12px; align-items: center; padding: 9px 12px; cursor: pointer; transition: background 120ms var(--ease); }
+.row::after { content: ""; position: absolute; left: 70px; right: 0; bottom: 0; height: 1px; background: #0f1922; }
+.row:hover { background: #202b36; }
+.row.sel { background: #2b5278; }
+.row.sel::after, .row:hover::after { background: transparent; }
+.row.sel .av.c0 { --avc: #e17076; } .av.c1 { --avc: #7bc862; } .av.c2 { --avc: #65aadd; } .av.c3 { --avc: #a695e7; }
+.av.c4 { --avc: #ee7aae; } .av.c5 { --avc: #6ec9cb; } .av.c6 { --avc: #faa774; }
+.av .on { box-shadow: 0 0 0 2.5px #2b5278; }
+.row:focus-visible { outline: 2px solid #5288c1; outline-offset: -2px; }
+.rm { flex: 1; min-width: 0; }
+.r1, .r2 { display: flex; align-items: center; gap: 8px; }
+.nm { flex: 1; min-width: 0; font-weight: 600; font-size: 14.5px; color: #f2f5f8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tm { color: #8a9bae; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.pv { flex: 1; min-width: 0; color: #7f91a4; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pv-me { color: #8cc0f5; } .pv-peer { color: #c4a76a; } .pv-dim { color: #5f6b7b; }
+.row.sel .tm, .row.sel .pv, .row.sel .pv-me, .row.sel .pv-peer { color: #dbe6f2; }
+.badge { min-width: 22px; height: 22px; padding: 0 7px; border-radius: 11px; background: #5288c1; color: #fff; font-size: 12px; line-height: 22px; text-align: center;
+         font-variant-numeric: tabular-nums; }
+.row.sel .badge { background: #fff; color: #2b5278; }
+.rows-empty { padding: 24px 20px; color: var(--muted); font-size: 14px; text-align: center; }
+
+.conv { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: radial-gradient(120% 80% at 50% 0%, #13202e 0%, #0e1621 60%) #0e1621; }
+.conv-empty { margin: auto; text-align: center; color: var(--muted); max-width: 340px; padding: 24px; font-size: 14px; }
+.conv-empty img { opacity: .5; margin-bottom: 8px; }
+.chead { display: flex; align-items: center; gap: 12px; padding: 8px 16px; min-height: 56px; background: #17212b; border-bottom: 1px solid #0b121a; flex: none; }
+.chead .av { width: 40px; height: 40px; font-size: 14.5px; }
+.chead .who { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.chead .who b { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chead .who span { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.back { display: none; appearance: none; border: 0; background: transparent; color: var(--ink); width: 40px; height: 40px; border-radius: 50%; cursor: pointer; place-items: center; }
+.back:hover { background: #202b36; }
+.back svg, .send svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.msgs { flex: 1; overflow: auto; padding: 16px 22px 24px; display: flex; flex-direction: column; gap: 6px; }   /* как в мессенджере: агент у левого края, ты — у правого */
+.msgs > * { flex-shrink: 0; }
+.day { align-self: center; color: #dbe6f2; background: rgba(23, 33, 43, .9); font-size: 12.5px; padding: 3px 12px; border-radius: 12px; margin: 8px 0; }
+.thread-empty { margin: auto; max-width: 360px; text-align: center; color: var(--muted); font-size: 14px; padding: 8px 16px; background: rgba(23, 33, 43, .7); border-radius: 14px; }
+.bub { max-width: min(620px, 78%); padding: 7px 12px 5px; border-radius: 15px 15px 15px 4px; background: #182533; color: var(--ink); font-size: 14.5px;
+       line-height: 1.42; align-self: flex-start; overflow-wrap: anywhere; animation: bubIn 220ms var(--ease); }
+@keyframes bubIn { from { opacity: 0; transform: translateY(4px); } }
+.bub .tx { white-space: pre-wrap; }
+.bub .tx.clamp { max-height: 18em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
+.bub .more { appearance: none; border: 0; background: none; color: #6fb3ff; font: inherit; font-size: 13px; padding: 4px 0 0; cursor: pointer; }
+.bub .meta { display: flex; justify-content: flex-end; align-items: center; gap: 4px; font-size: 11.5px; color: #6c7f93; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.bub a { color: #6fb3ff; }
+.bub.mine { align-self: flex-end; background: #2b5278; border-radius: 15px 15px 4px 15px; width: min(520px, 74%); max-width: none; box-sizing: border-box; }   /* одна ширина у всех твоих, как в мессенджере */
+.bub.mine .meta { color: #a6c2e4; }
+.tick { letter-spacing: -2px; } .tick.ok { color: #6fb3ff; }
+.bub.mine .tick.ok { color: #cfe3fb; }
+.bub.pending { opacity: .75; } .bub.failed { background: color-mix(in srgb, var(--bad) 22%, #2b5278); }
+.bub .fail { color: #ffd0cb; } .bub .retry { appearance: none; border: 0; background: rgba(255,255,255,.15); color: #fff; border-radius: 8px; padding: 2px 8px; font: inherit; font-size: 12px; cursor: pointer; }
+.spin.sm { width: 11px; height: 11px; border-width: 1.5px; }
+/* переписка агента с другими агентами — как в мессенджере: исходящее оранжевое, входящее фиолетовое, обе слева */
+.bub.peer { font-size: 13.5px; }
+.bub.peer.out { background: #3a2a17; box-shadow: inset 0 0 0 1px rgba(245, 158, 11, .4); }
+.bub.peer.in { background: #2e2346; box-shadow: inset 0 0 0 1px rgba(167, 139, 250, .4); }
+.phd { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; margin-bottom: 3px; }
+.phd svg { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.bub.peer.out .phd { color: #fbbf24; } .bub.peer.in .phd { color: #c4b5fd; }
+.bub.peer.in .phd svg { transform: scaleX(-1); }
+
+.composer { display: flex; align-items: flex-end; gap: 8px; padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px)); background: #17212b; border-top: 1px solid #0b121a; flex: none; }
+.composer textarea { flex: 1; resize: none; border: 0; background: transparent; color: var(--ink); font: inherit; font-size: 15px; line-height: 1.45;
+                     padding: 10px 6px; min-height: 44px; max-height: 200px; outline: none; }
+.send { appearance: none; border: 0; width: 44px; height: 44px; border-radius: 50%; background: #5288c1; color: #fff; display: grid; place-items: center; cursor: pointer;
+        flex: none; transition: transform 120ms var(--ease), background 150ms var(--ease); }
+.send:hover { background: #5f95ce; } .send:active { transform: scale(.94); } .send[disabled] { opacity: .5; cursor: progress; }
+
+/* агенты и права */
+.agl li.agr, .list li.agr { justify-content: flex-start; align-items: flex-start; }
+.agr .av { width: 40px; height: 40px; font-size: 14px; }
+.agm { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.agm b { font-size: 15.5px; } .agm h2 { margin: 0; font-size: 18px; }
+.agm .meta { color: var(--muted); font-size: 13.5px; overflow-wrap: anywhere; }
+.agm .about { color: #b5c2d0; font-size: 14px; }
+.idc { display: inline-flex; align-items: center; gap: 8px; margin-top: 4px; }
+.idc code { font-size: 12.5px; }
+.cp { appearance: none; border: 0; background: transparent; color: #6fb3ff; font: inherit; font-size: 12.5px; padding: 2px 6px; border-radius: 6px; cursor: pointer; }
+.cp:hover { background: #202b36; }
+.agr > .btn { align-self: center; }
+.pill { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: color-mix(in srgb, #4cc38a 16%, transparent); color: #7bd8a8; font-weight: 600; }
+input[type=search]#dsearch { width: 100%; padding: 10px 14px; border-radius: 18px; border: 0; background: #242f3d; color: var(--ink); font: inherit; font-size: 15px; min-height: 42px; margin-bottom: 8px; }
+.rights .ph { flex-wrap: wrap; }
+.rights .ph > .agm { min-width: 160px; }
+#aps li { flex-wrap: wrap; } #aps li > div:first-child { flex: 1 1 260px; min-width: 0; }
+.sw { display: flex; align-items: center; gap: 10px; margin: 0; cursor: pointer; color: var(--ink); font-size: 14px; }
+.sw input { appearance: none; width: 42px; height: 24px; border-radius: 12px; background: #2a3746; position: relative; cursor: pointer; flex: none; transition: background 150ms var(--ease); margin: 0; }
+.sw input::after { content: ""; position: absolute; left: 3px; top: 3px; width: 18px; height: 18px; border-radius: 50%; background: #c6d2df; transition: transform 200ms var(--ease), background 150ms; }
+.sw input:checked { background: #5288c1; } .sw input:checked::after { transform: translateX(18px); background: #fff; }
+.sw input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sw-t { display: flex; flex-direction: column; } .sw-t .meta { color: var(--muted); font-size: 12.5px; }
+.addtr { display: flex; gap: 8px; margin-top: 12px; }
+.addtr input { flex: 1; min-width: 0; }
+.addtr .btn { min-height: 44px; }
+
+@media (max-width: 1000px) { .chats { grid-template-columns: 290px 1fr; } .brand-t { display: none; } }
+/* телефон: разделы — снизу, чаты — сначала список, потом переписка во весь экран */
+@media (max-width: 760px) {
+  .bar { gap: 8px; padding: 8px 12px; padding-top: calc(8px + env(safe-area-inset-top, 0px)); }
+  .tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; margin: 0; border-radius: 0; padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+            background: #17212b; border-top: 1px solid #0b121a; justify-content: space-around; }
+  .tabbar a { flex-direction: column; gap: 2px; padding: 6px 4px; font-size: 11.5px; flex: 1; justify-content: center; }
+  .tabbar a.on { background: transparent; color: #6fb3ff; }
+  .tabbar svg { width: 22px; height: 22px; }
+  .tb-badge { position: absolute; top: 2px; left: calc(50% + 6px); }
+  .bar-r { margin-left: auto; }
+  .app { padding-bottom: calc(62px + env(safe-area-inset-bottom, 0px)); }
+  .chats { grid-template-columns: 1fr; }
+  .conv { display: none; }
+  body.in-chat .clist { display: none; } body.in-chat .conv { display: flex; }
+  body.in-chat .tabbar { display: none; } body.in-chat .app { padding-bottom: 0; } body.in-chat .bar { display: none; }
+  .back { display: grid; margin-left: -8px; }
+  .chead { padding: 6px 12px; }
+  .chead .btn { padding: 6px 10px; }
+  .msgs { padding: 12px 10px; }
+  .bub { max-width: 86%; }
+  .pagew { padding: 16px 12px 32px; }
+  .view.page .panel { padding: 16px; }
+  .me-chip { max-width: 110px; } .bal-chip { padding: 6px 10px; }
+  .agr { flex-wrap: wrap; } .agr > .btn { margin-left: 52px; }
+  .rights .ph .sw { flex-basis: 100%; }
+  #aps .actions.tight { width: 100%; } #aps .actions.tight .btn { flex: 1; }
+}
+@media (prefers-reduced-motion: reduce) { .bub { animation: none; } }
+
+/* непрочитанное и HTML-сообщения агента — как в мессенджере: полоса «Непрочитанные сообщения», отчёт разметкой */
+.unread-sep { align-self: stretch; text-align: center; color: #8cc0f5; background: rgba(23, 33, 43, .9); font-size: 12.5px; font-weight: 600; padding: 4px 12px; margin: 8px -22px; }
+.bub.html { max-width: min(860px, 92%); }
+.bub.html .tx { white-space: normal; }
+.rep-html { font-size: 14.5px; line-height: 1.55; color: #e9eef5; }
+.rep-html > :first-child { margin-top: 0; } .rep-html > :last-child { margin-bottom: 0; }
+.rep-html h2 { font-size: 18px; margin: 14px 0 8px; } .rep-html h3 { font-size: 16px; margin: 12px 0 6px; }
+.rep-html h4 { font-size: 13px; margin: 12px 0 6px; color: var(--muted); }
+.rep-html p { margin: 0 0 10px; } .rep-html ul, .rep-html ol { margin: 0 0 10px; padding-left: 22px; } .rep-html li { margin: 3px 0; }
+.rep-html .lead { font-size: 16px; color: #f5f8fc; }
+.rep-html .note, .rep-html .warn, .rep-html .ok, .rep-html .bad { padding: 10px 14px; border-radius: 12px; margin: 10px 0; background: rgba(106, 169, 255, .08); }
+.rep-html .warn { background: rgba(227, 179, 65, .10); } .rep-html .ok { background: rgba(63, 182, 122, .10); } .rep-html .bad { background: rgba(240, 98, 90, .10); }
+.rep-html span.ok, .rep-html span.warn, .rep-html span.bad { display: inline; padding: 0 6px; border-radius: 6px; margin: 0; }
+.rep-html .badge, .rep-html .tag { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; background: #202b36; color: var(--muted); }
+.rep-html .muted { color: var(--muted); } .rep-html .num { font-variant-numeric: tabular-nums; }
+.rep-html table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 14px; display: block; overflow-x: auto; }
+.rep-html th, .rep-html td { border-bottom: 1px solid #26323e; padding: 6px 10px; text-align: left; vertical-align: top; }
+.rep-html th { color: var(--muted); font-weight: 600; }
+.rep-html dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; } .rep-html dl.kv dt { color: var(--muted); }
+.rep-html details { background: #17212b; border-radius: 12px; padding: 8px 12px; margin: 8px 0; } .rep-html summary { cursor: pointer; font-weight: 600; }
+.rep-html blockquote, .rep-html .quote { border-left: 3px solid #6fa6dc; margin: 8px 0; padding: 4px 12px; color: #c9d3df; }
+.rep-html .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.rep-html mark { background: rgba(227, 179, 65, .25); color: inherit; padding: 0 3px; border-radius: 4px; }
+.rep-html code { font: 13px ui-monospace, Menlo, Consolas, monospace; background: rgba(255, 255, 255, .07); padding: 0 5px; border-radius: 5px; }
+.rep-html pre { background: #17212b; border-radius: 10px; padding: 10px 12px; overflow: auto; font-size: 12.5px; }
+.rep-html a { color: #6fb3ff; }
+
+/* шапка списка и архив как в мессенджере: название, лупа; в архиве — стрелка назад */
+.lhd { display: flex; align-items: center; gap: 6px; min-height: 52px; padding: 8px 10px 6px 14px; flex: none; }
+.lttl { flex: 1; font-weight: 650; font-size: 16px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lhd input[type=search] { display: none; flex: 1; min-width: 0; width: auto; }
+.lhd.q input[type=search] { display: block; } .lhd.q .lttl { display: none; }
+.lsb, .lback { flex: none; width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0;
+  border-radius: 50%; background: none; color: var(--muted); cursor: pointer; transition: background 120ms var(--ease), color 120ms var(--ease); }
+.lsb svg, .lback svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.lsb:hover, .lback:hover { background: rgba(255, 255, 255, .06); color: var(--ink); }
+.lsb:focus-visible, .lback:focus-visible { outline: 2px solid #5288c1; outline-offset: 1px; }
+.lback { margin-left: -8px; } .lback[hidden] { display: none; }
+.arch-av { background: #202b36; color: var(--muted); }
+.arch-av svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.badge.mute { background: #6c7883; }
+.row.sel .badge.mute { background: #fff; color: #2b5278; }
+.pv .pvu { color: #f2f5f8; }
+/* меню чата (правый клик, долгое нажатие) — как в Telegram */
+.cmenu { position: fixed; z-index: 80; min-width: 200px; padding: 6px; border: 1px solid rgba(255, 255, 255, .08); border-radius: 12px;
+  background: #1f2a37; box-shadow: 0 12px 32px rgba(0, 0, 0, .45); animation: cmenuIn 120ms ease-out; }
+@keyframes cmenuIn { from { opacity: 0; transform: scale(.97); } }
+.cmi { display: flex; align-items: center; width: 100%; padding: 8px 12px; border: 0; border-radius: 8px; background: none; color: #e6edf5;
+  font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.cmi:hover, .cmi:focus-visible { background: rgba(255, 255, 255, .07); outline: none; }
