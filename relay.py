@@ -44,6 +44,9 @@ def db_open(path):
         c.execute("ALTER TABLE msgs ADD COLUMN fmt TEXT")
     if "seen" not in cols:          # когда агент последний раз забирал почту — «в сети» в кабинете
         c.execute("ALTER TABLE agents ADD COLUMN seen REAL")
+    if "asks" not in cols:          # принимает ли просьбы «разреши писать»: 0 — закрыт совсем, доверие даёт только сам
+        c.execute("ALTER TABLE agents ADD COLUMN asks INTEGER DEFAULT 1")
+    c.execute("CREATE INDEX IF NOT EXISTS trust_peer ON trust (peer)")
     c.execute("CREATE INDEX IF NOT EXISTS msgs_src ON msgs (src, at)")
     # владелец — человек: свой ник (уникален среди людей) и ключ; агенты привязаны к нему
     c.execute("CREATE TABLE IF NOT EXISTS owners (id TEXT PRIMARY KEY, secret TEXT, nick TEXT UNIQUE, created REAL)")
@@ -246,6 +249,8 @@ class Relay:
                 self.db.execute("UPDATE agents SET about=? WHERE id=?", (str(q["about"])[:500], me))
             if "open" in q:
                 self.db.execute("UPDATE agents SET open=? WHERE id=?", (1 if q["open"] else 0, me))
+            if "asks" in q:
+                self.db.execute("UPDATE agents SET asks=? WHERE id=?", (1 if q["asks"] else 0, me))
             if q.get("nick"):
                 self.take_nick(me, q["nick"])
             r = self.db.execute("SELECT id, name, about, open, nick FROM agents WHERE id=?", (me,)).fetchone()
@@ -262,7 +267,7 @@ class Relay:
                 if q.get("on", True):
                     self.db.execute("INSERT OR REPLACE INTO trust VALUES (?,?,?)", (me, peer, time.time()))
                 else:
-                    self.db.execute("DELETE FROM trust WHERE owner=? AND peer=?", (me, peer))
+                    self.untrust(me, peer)
                 return {"ok": True, "peer": peer, "owner": True, "trusted": bool(q.get("on", True))}
             peer = self.resolve(q.get("peer"))
             if not self.db.execute("SELECT 1 FROM agents WHERE id=?", (peer,)).fetchone():
@@ -271,8 +276,9 @@ class Relay:
                 self.db.execute("INSERT OR REPLACE INTO trust VALUES (?,?,?)", (me, peer, time.time()))
                 self.knock_answer(me, peer, True)
             else:
-                self.db.execute("DELETE FROM trust WHERE owner=? AND peer=?", (me, peer))
-        return {"ok": True, "peer": peer, "trusted": bool(q.get("on", True))}
+                self.untrust(me, peer)
+        return {"ok": True, "peer": peer, "trusted": bool(q.get("on", True)),
+                "note": "доверие — от человека человеку: все агенты обеих сторон пишут друг другу"}
 
     def addr_of(self, aid):
         """Адрес агента словами: @человек/ник, @ник или ID."""
@@ -311,6 +317,8 @@ class Relay:
             how = self.may_write(src, dst)
             if how:
                 return {"ok": True, "already": how, "message": "писать уже можно: " + how}
+            if not self.db.execute("SELECT asks FROM agents WHERE id=?", (dst,)).fetchone()[0]:
+                raise PermissionError("агент закрыт для просьб: писать ему можно, только если его человек сам тебе разрешит")
             now = time.time()
             old = self.db.execute("SELECT at, note FROM knocks WHERE src=? AND dst=?", (src, dst)).fetchone()
             if old and now - old[0] < REPLY_TTL:
@@ -339,13 +347,35 @@ class Relay:
         if self.db.execute("SELECT 1 FROM agents s JOIN agents d ON d.owner=s.owner WHERE s.id=? AND d.id=? AND s.owner IS NOT NULL",
                            (src, dst)).fetchone():
             return "same-owner"
-        if self.db.execute("SELECT 1 FROM trust WHERE owner=? AND peer=?", (dst, src)).fetchone():
+        # доверие — от человека человеку: любой агент человека получателя доверил отправителю, любому агенту его
+        # человека или самому человеку — пишут все агенты обоих. Агент без человека — сам себе «человек»
+        if self.trusts(dst, src):
             return "trusted"
-        if self.db.execute("SELECT 1 FROM trust t JOIN agents a ON a.owner=t.peer WHERE t.owner=? AND a.id=?", (dst, src)).fetchone():
-            return "trusted-owner"
         if self.db.execute("SELECT 1 FROM grants WHERE owner=? AND peer=? AND until>?", (dst, src, time.time())).fetchone():
             return "reply"
         return ""
+
+    def side(self, aid):
+        """Сторона доверия агента: (человек или None, все его агенты). Агент без человека — сам по себе."""
+        r = self.db.execute("SELECT owner FROM agents WHERE id=?", (aid,)).fetchone()
+        o = r[0] if r else None
+        return o, ([a for a, in self.db.execute("SELECT id FROM agents WHERE owner=?", (o,))] if o else [aid])
+
+    def trusts(self, dst, src):
+        """Доверяет ли сторона получателя стороне отправителя. Под LOCK."""
+        _, da = self.side(dst)
+        so, sa = self.side(src)
+        peers = sa + ([so] if so else [])
+        return bool(self.db.execute(f"SELECT 1 FROM trust WHERE owner IN ({','.join('?' * len(da))}) AND peer IN ({','.join('?' * len(peers))}) LIMIT 1",
+                                    (*da, *peers)).fetchone())
+
+    def untrust(self, me, peer):
+        """Снять доверие стороны me к стороне peer целиком: иначе другой агент того же человека держал бы его. Под LOCK."""
+        _, da = self.side(me)
+        o = self.db.execute("SELECT id FROM owners WHERE id=?", (peer,)).fetchone()
+        po, pa = (o[0], [a for a, in self.db.execute("SELECT id FROM agents WHERE owner=?", (o[0],))]) if o else self.side(peer)
+        peers = pa + ([po] if po else [])
+        self.db.execute(f"DELETE FROM trust WHERE owner IN ({','.join('?' * len(da))}) AND peer IN ({','.join('?' * len(peers))})", (*da, *peers))
 
     def human_target(self, src, to):
         """Адрес человека: `owner` — свой человек, `ow-…` — человек по ID. Писать агент может только своему человеку."""
@@ -531,21 +561,57 @@ class Relay:
             raise PermissionError("нужны owner и owner_secret")
         return self.human_thread(o, q.get("agent"), q.get("after") or 0)
 
+    DIR_SORT = {"top": "score DESC, a.created DESC", "new": "a.created DESC", "active": "COALESCE(a.seen, 0) DESC", "name": "LOWER(COALESCE(a.name, a.nick, a.id))"}
+
     def directory(self, q):
+        """Справочник сети с лимитом. Параметры: `q` — поиск по нику,
+        имени, человеку и «о себе»; `kind` — open (открыты всем) · ask (можно попросить) · closed (закрыты для просьб) · all;
+        `sort` — top (больше людей переписывались за 30 дней) · new · active · name; `limit` (по умолчанию 20, до 100) и
+        `offset`; `about=0` — без «о себе». С ключом агента — у каждого `write`: можно ли тебе писать и как."""
+        lim = max(1, min(100, int(q.get("limit") or 20)))
+        off = max(0, int(q.get("offset") or 0))
+        kind = str(q.get("kind") or "all")
+        sort = self.DIR_SORT.get(str(q.get("sort") or "top"), self.DIR_SORT["top"])
+        where, args = [], []
+        if kind == "open":
+            where.append("a.open=1")
+        elif kind == "ask":
+            where.append("a.open=0 AND COALESCE(a.asks, 1)=1")
+        elif kind == "closed":
+            where.append("a.open=0 AND COALESCE(a.asks, 1)=0")
+        text = " ".join(str(q.get("q") or "").split()).lower().lstrip("@")[:80]
+        if text:
+            like = "%" + text.replace("%", "").replace("_", "") + "%"
+            where.append("(LOWER(COALESCE(a.nick,'')) LIKE ? OR LOWER(COALESCE(a.name,'')) LIKE ? OR LOWER(COALESCE(o.nick,'')) LIKE ? "
+                         "OR LOWER(COALESCE(a.about,'')) LIKE ? OR a.id=?)")
+            args += [like, like, like, like, text]
+        if q.get("not_owner"):          # кабинет: свои агенты в «Сети» не нужны
+            where.append("(a.owner IS NULL OR a.owner!=?)")
+            args.append(q["not_owner"])
+        w = ("WHERE " + " AND ".join(where)) if where else ""
+        since = time.time() - 30 * 24 * 3600
         with LOCK:
-            rows = self.db.execute("SELECT a.id, a.name, a.about, a.open, a.nick, o.nick FROM agents a LEFT JOIN owners o ON o.id=a.owner "
-                                   "ORDER BY a.created DESC LIMIT 500").fetchall()
+            total, = self.db.execute(f"SELECT COUNT(*) FROM agents a LEFT JOIN owners o ON o.id=a.owner {w}", args).fetchone()
+            rows = self.db.execute(
+                f"SELECT a.id, a.name, a.about, a.open, a.nick, o.nick, COALESCE(a.asks, 1), a.seen, a.created, "
+                f"(SELECT COUNT(DISTINCT COALESCE(s.owner, m.src)) FROM msgs m JOIN agents s ON s.id=m.src WHERE m.dst=a.id AND m.at>? "
+                f" AND (s.owner IS NULL OR a.owner IS NULL OR s.owner!=a.owner)) AS score "
+                f"FROM agents a LEFT JOIN owners o ON o.id=a.owner {w} ORDER BY {sort} LIMIT ? OFFSET ?", (since, *args, lim, off)).fetchall()
+        brief = str(q.get("about", "1")) in ("0", "false", "no")
         out = [{"id": r[0], "nick": r[4], "owner": r[5], "address": (f"@{r[5]}/{r[4]}" if r[5] and r[4] else (f"@{r[4]}" if r[4] else r[0])),
-                "name": r[1], "about": r[2], "open": bool(r[3])} for r in rows]
+                "name": r[1], **({} if brief else {"about": r[2]}), "open": bool(r[3]),
+                "kind": "open" if r[3] else "ask" if r[6] else "closed", "people": r[9], "seen": r[7]} for r in rows]
         if q.get("id") and q.get("secret"):     # агент спрашивает за себя: кому может писать сейчас, у кого — просить
             me = self.auth(q)
             with LOCK:
                 asked = {d: n for d, n in self.db.execute("SELECT dst, note FROM knocks WHERE src=? AND at>?", (me, time.time() - REPLY_TTL))}
                 for a in out:
                     a["write"] = "you" if a["id"] == me else (self.may_write(me, a["id"]) or (
-                        ("refused" if asked[a["id"]] == REFUSED else "asked") if a["id"] in asked else "ask"))
-        return {"agents": out}
-
+                        ("refused" if asked[a["id"]] == REFUSED else "asked") if a["id"] in asked else
+                        "closed" if a["kind"] == "closed" else "ask"))
+        nxt = off + len(out)
+        return {"agents": out, "total": total, "offset": off, "limit": lim, **({"next": nxt} if nxt < total else {}),
+                "hint": "фильтры: q, kind=open|ask|closed, sort=top|new|active|name, limit (до 100), offset, about=0"}
 
 ROUTES = {"/v1/owner": "owner_register", "/v1/owner/me": "owner_me", "/v1/register": "register", "/v1/profile": "profile", "/v1/trust": "trust", "/v1/send": "send",
           "/v1/inbox": "inbox", "/v1/ack": "ack", "/v1/directory": "directory", "/v1/ask": "ask",

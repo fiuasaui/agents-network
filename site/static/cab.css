@@ -320,3 +320,49 @@ input[type=search]#dsearch { width: 100%; padding: 10px 14px; border-radius: 18p
 @media (prefers-reduced-motion: reduce) { .bub.sysc.wait { animation: none; box-shadow: inset 0 0 0 2px #fbbf24; } }
 .bub.sysn { align-self: flex-start; max-width: min(460px, 92%); text-align: left; box-sizing: border-box; }   /* под карточкой запроса, слева */
 .bub.sysc.wait { background: #272414; }   /* ждёт ответа — тёплая подложка, заметна при прокрутке */
+/* «Сеть»: поиск и порядок, секции, форма «написать / попросить» под строкой */
+.netq { display: flex; gap: 8px; margin-top: 10px; }
+.netq input { flex: 1; min-width: 0; margin: 0; }
+.netq select { flex: none; width: auto; margin: 0; }
+.netsec .more { margin-top: 8px; }
+.netr .agm .about { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.netr > .btn, .netr > .meta { flex: none; }
+.meta.bad { color: var(--bad); }
+.netf { list-style: none; padding: 4px 0 12px 52px; }
+.netf form { display: flex; flex-direction: column; gap: 8px; }
+.netf textarea { width: 100%; box-sizing: border-box; margin: 0; resize: vertical; }
+.netf .note { margin: 0; }
+.nf-from { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.nf-from select { width: auto; margin: 0; }
+.nf-act { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.nf-act .err { flex: 1; color: var(--bad); font-size: 13px; }
+.netok { margin: 0; color: var(--ok); font-size: 14px; }
+@media (max-width: 760px) { .netf { padding-left: 0; } .netq select { max-width: 42%; } }
+/* карточка агента — по щелчку на имя в шапке чата */
+#chead .who.click { cursor: pointer; border-radius: 10px; padding: 2px 6px; margin: -2px -6px; transition: background 150ms; }
+#chead .who.click:hover { background: var(--hover); }
+#chead .who.click:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sheet.card { max-height: min(80vh, 720px); overflow: auto; }
+.cardh { display: flex; gap: 12px; align-items: flex-start; }
+.cardh .agm { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.cardh .about { white-space: pre-wrap; color: #c9d6e3; font-size: 14px; }
+.cardst { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 4px; }
+.cardst .pill.ok { color: var(--ok); }
+.cardl li { padding: 8px 0; }
+.cardl li > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cardst .pill { background: rgba(255,255,255,.06); color: var(--muted); } .cardst .pill.ok { background: color-mix(in srgb, #4cc38a 16%, transparent); color: #7bd8a8; }
+.netq input[type=search], .netq select, .nf-from select, .netf textarea { background: #242f3d; border: 0; color: var(--ink); font: inherit; font-size: 15px; border-radius: 18px; }
+.netq input[type=search] { padding: 10px 14px; min-height: 42px; }
+.netq select, .nf-from select { padding: 0 34px 0 14px; min-height: 42px; appearance: none; cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='16' height='16'%3E%3Cpath d='M6 9l6 6 6-6' fill='none' stroke='%238ea1b5' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 12px center; }
+.nf-from select { min-height: 36px; font-size: 14px; }
+.netq input[type=search]:focus, .netq select:focus, .netf textarea:focus { outline: 2px solid color-mix(in srgb, #5288c1 60%, transparent); }
+.netf textarea { padding: 10px 14px; border-radius: 14px; }
+.cardl li { display: block; margin: 0; padding: 8px 0; border-radius: 0; }
+.cardl li:hover { background: none; }
+.cardl .meta { display: block; overflow-wrap: anywhere; }
+.cardl .meta { white-space: normal; }
+@media (max-width: 760px) { .netr { flex-wrap: wrap; } .netr .agm { flex: 1 1 calc(100% - 60px); min-width: 0; } .netr > .btn, .netr > .meta { margin-left: 52px; }
+  .netq select { max-width: 48%; } }
+.netr .agm > .meta { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .netr .agm { min-width: 0; }
