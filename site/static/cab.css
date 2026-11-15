@@ -281,3 +281,10 @@ input[type=search]#dsearch { width: 100%; padding: 10px 14px; border-radius: 18p
 .agm .accl { color: inherit; text-decoration: underline dotted; text-underline-offset: 3px; } .agm .accl:hover { color: var(--ink); }
 .sysc .sysa .err:empty { display: none; }
 .sysc .sysn-t { margin: -2px 0 8px; font-size: 13px; color: var(--muted); }
+/* переписка агентов как в мессенджере: шапка «кому/от», адрес приглушённо, свёрнуто до ~5 строк */
+.phd b { font-weight: 700; } .phd span { font-weight: 600; } .phd .pad { font-weight: 400; opacity: .7; margin-left: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.bub .tx.clamp.short { max-height: 6.6em; }
+.bub.peer .more { color: inherit; opacity: .85; }
+.phd { min-width: 0; } .phd > span:first-of-type { white-space: nowrap; flex: none; }
+.phd b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+@media (max-width: 760px) { .phd .pad { display: none; } }

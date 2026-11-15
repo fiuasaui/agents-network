@@ -7,7 +7,7 @@ function chatPreview(c) {
   if (!c.last) return '<span class="pv-dim">нет сообщений</span>';
   const l = c.last, t = esc(l.text.replace(/\s+/g, ' ').slice(0, 90));
   if (l.dir === 'me') return '<span class="pv-me">Ты:</span> ' + t;
-  if (l.dir === 'out' || l.dir === 'in') return '<span class="pv-peer">' + (l.dir === 'out' ? 'пишет агенту' : 'письмо от агента') + ':</span> ' + t;
+  if (l.dir === 'out' || l.dir === 'in') return '<span class="pv-peer">' + (l.dir === 'out' ? '→ агенту' : '← от агента') + ':</span> ' + t;
   return t;
 }
 function chatName(c) { return c.name && c.name !== 'агент' ? c.name : '@' + (c.nick || c.id); }
@@ -160,16 +160,17 @@ function bubble(m) {
   el.className = 'bub ' + (m.dir === 'me' ? 'mine' : peer ? 'peer ' + m.dir : 'ag') + (m.dir === 'to_me' && !m.delivered ? ' unread' : '') + (m.format === 'html' ? ' html' : '');
   el.dataset.mid = m.mid;
   let hd = '';
-  if (peer) {
-    const who = esc(m.peer_name && m.peer_name !== 'агент' ? m.peer_name + ' · ' + m.peer : m.peer || '');
-    hd = `<div class="phd"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h14M13 6l6 6-6 6"/></svg>${m.dir === 'out' ? 'Агент пишет ' : 'Агенту пишет '}${who}</div>`;
+  if (peer) {   // как в мессенджере: «кому: имя» / «от: имя», адрес приглушённо; без «агент пишет агенту»
+    const nm = m.peer_name && m.peer_name !== 'агент' ? m.peer_name : m.peer || '';
+    hd = `<div class="phd" title="${esc(m.peer || '')}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h14M13 6l6 6-6 6"/></svg><span>${m.dir === 'out' ? 'кому:' : 'от:'}</span> <b>${esc(nm)}</b>${nm !== m.peer && m.peer ? `<span class="pad">${esc(m.peer)}</span>` : ''}</div>`;
   }
   const tick = m.dir === 'me' ? `<span class="tick ${m.delivered ? 'ok' : ''}" title="${m.delivered ? 'агент получил' : 'ждёт, пока агент заберёт почту'}">${m.delivered ? '✓✓' : '✓'}</span>` : '';
-  const long = m.text.length > 700 || m.text.split('\n').length > 14;
+  // переписка агентов свёрнута до нескольких строк — раскрывается кнопкой
+  const long = peer ? (m.text.length > 280 || m.text.split('\n').length > 5) : (m.text.length > 700 || m.text.split('\n').length > 14);
   const html = m.format === 'html';
   // письмо агента — Markdown: структура вместо простыни; свои письма человека — как набрал
   const md = !html && m.dir !== 'me' && typeof window.renderMarkdown === 'function';
-  el.innerHTML = `${hd}<div class="tx${html || md ? ' rep-html' : ''}${md ? ' md' : ''}${long ? ' clamp' : ''}">${html ? '' : md ? window.renderMarkdown(m.text) : linkify(m.text)}</div>${long ? '<button class="more" type="button">Показать целиком</button>' : ''}<div class="meta">${esc(hm(m.at))}${tick}</div>`;
+  el.innerHTML = `${hd}<div class="tx${html || md ? ' rep-html' : ''}${md ? ' md' : ''}${long ? (peer ? ' clamp short' : ' clamp') : ''}">${html ? '' : md ? window.renderMarkdown(m.text) : linkify(m.text)}</div>${long ? '<button class="more" type="button">Показать целиком</button>' : ''}<div class="meta">${esc(hm(m.at))}${tick}</div>`;
   if (html) repHtml(el.querySelector('.tx'), m.text);
   if (long) el.querySelector('.more').onclick = (e) => { const t = el.querySelector('.tx'); t.classList.toggle('clamp');
     e.target.textContent = t.classList.contains('clamp') ? 'Показать целиком' : 'Свернуть'; };
