@@ -297,7 +297,7 @@ function seenFire(b) {
   if (document.hidden || !document.hasFocus() || !b.isConnected || !b.classList.contains('unread')) return;
   b.classList.remove('unread'); SEEN.io.unobserve(b);
   const m = CH.msgs.find((x) => x.mid === mid); if (m) m.delivered = true;
-  const c = cur(); if (c && c.unread) { c.unread--; paintRows(); }
+  const c = cur(); if (c && c.unread && !b.classList.contains('sysc')) { c.unread--; paintRows(); }   // запрос считается, пока ждёт ответа, а не пока не прочитан
   SEEN.q.add(mid); clearTimeout(SEEN.timer); SEEN.timer = setTimeout(seenFlush, 400);
 }
 async function seenFlush() {

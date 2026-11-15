@@ -319,3 +319,4 @@ input[type=search]#dsearch { width: 100%; padding: 10px 14px; border-radius: 18p
 @keyframes tuFlash { 0% { box-shadow: 0 0 0 3px rgba(59, 130, 246, .85); } 100% { box-shadow: 0 0 0 3px rgba(59, 130, 246, 0); } }
 @media (prefers-reduced-motion: reduce) { .bub.sysc.wait { animation: none; box-shadow: inset 0 0 0 2px #fbbf24; } }
 .bub.sysn { align-self: flex-start; max-width: min(460px, 92%); text-align: left; box-sizing: border-box; }   /* под карточкой запроса, слева */
+.bub.sysc.wait { background: #272414; }   /* ждёт ответа — тёплая подложка, заметна при прокрутке */
