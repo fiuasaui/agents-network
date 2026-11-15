@@ -516,22 +516,37 @@ def ghost_sock():
         return None
 
 
-def ensure_ghost():
-    """Приёмная `agentnet` — пир для SendMessage (#po: «для Claude Code предпочтителен пир»): поднимаем её сами, когда к
-    воркеру подключается агент Claude Code, — фоновой задачей Claude Code без модели (токенов ноль). Не чаще раза в 10 мин;
-    выключить — --no-ghost."""
+def ensure_ghost(session=None):
+    """Приёмная `agentnet` — пир для SendMessage («для Claude Code предпочтителен пир»): поднимаем её сами, когда к
+    воркеру подключается агент Claude Code, — фоновой задачей Claude Code без модели (токенов ноль). Запуск — из папки
+    той сессии (Claude Code запускает задачу только в доверенной папке; папка репозитория воркера ею может не быть,
+    находка приёмки us). Успех — только когда появился ghost.json; иначе причина в STATE["ghost_err"] и в /me.
+    Не чаще раза в 10 мин; выключить — --no-ghost."""
     if CFG.get("no_ghost") or ghost_sock() or time.time() - STATE.get("ghost_try", 0) < 600:
         return
     STATE["ghost_try"] = time.time()
     cl = shutil.which("claude")
     if not cl:
+        STATE["ghost_err"] = "на машине нет команды claude"
         return
+    card = next((x for x in list_agents() if x.get("sessionId") == session), None) if session else None
+    cwd = (card or {}).get("cwd") or None
     cmd = f"{shlex.quote(sys.executable)} {shlex.quote(str(Path(__file__).resolve().parent / 'ghost.py'))} --port {CFG['port']} --home {shlex.quote(str(HOME))}"
     try:
-        r = subprocess.run([cl, "--bg", "--name", "agentnet", "--exec", cmd], capture_output=True, text=True, timeout=60)
-        log("приёмная agentnet запущена", (r.stdout or r.stderr).strip()[:160])
+        r = subprocess.run([cl, "--bg", "--name", "agentnet", "--exec", cmd], capture_output=True, text=True, timeout=60,
+                           cwd=cwd if cwd and os.path.isdir(cwd) else None)
+        out = (r.stdout + r.stderr).strip()
     except Exception as e:  # noqa: BLE001 — без приёмной агент пишет тулзой /send, как раньше
-        log("приёмная agentnet не запустилась", e)
+        out = repr(e)
+    for _ in range(20):      # подтверждение — сама приёмная: она пишет ghost.json, когда слушает
+        if ghost_sock():
+            STATE.pop("ghost_err", None)
+            log("приёмная agentnet поднята", "из", cwd or "папки воркера")
+            return
+        time.sleep(1)
+    STATE["ghost_err"] = ("Claude Code не запустил приёмную: " + (out.splitlines() or ["нет ответа"])[0][:200]
+                          + (" — запусти Claude Code в этой папке и прими доверие" if "trust" in out.lower() else ""))
+    log("приёмная agentnet НЕ поднялась", cwd, out[:300])
 
 
 def render(m, port, session=None, native=False):
@@ -1008,7 +1023,7 @@ def join(q):
         raise ValueError("нужен session — твой $CLAUDE_CODE_SESSION_ID (Codex — $CODEX_THREAD_ID, OpenCode — id сессии)")
     addr = {k: str(q[k]) for k in ("kind", "socket", "codex_home", "opencode_url", "opencode_dir") if q.get(k)}
     if (q.get("kind") or "claude") == "claude" and q.get("socket"):     # агент Claude Code — поднять приёмную-пира
-        threading.Thread(target=ensure_ghost, daemon=True, name="ghost").start()
+        threading.Thread(target=ensure_ghost, args=(s,), daemon=True, name="ghost").start()
     with LOCK:
         if s in STATE["ids"]:
             i = STATE["ids"][s]
@@ -1103,7 +1118,9 @@ def who(s):
            "panel": f"http://127.0.0.1:{CFG['port']}/"}
     if (i.get("kind") or "claude") == "claude":
         out["write"] = ("SendMessage на `agentnet` (пир в списке сессий): тело — строка `to: <адрес>`, пустая строка, текст"
-                        if ghost_sock() else "тулзой /send (приёмная `agentnet` для SendMessage поднимается, проверь /me через минуту)")
+                        if ghost_sock() else
+                        f"тулзой /send — приёмная `agentnet` не поднялась: {STATE['ghost_err']}" if STATE.get("ghost_err") else
+                        "тулзой /send (приёмная `agentnet` для SendMessage поднимается, проверь /me через минуту)")
     if i.get("id"):
         out.update(id=i["id"], nick=i.get("nick"))
         pr = relay("/v1/profile", {"id": i["id"], "secret": i["secret"]}, timeout=15)
