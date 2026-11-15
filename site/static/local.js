@@ -21,7 +21,7 @@ function fromHash() { const [t, sub] = location.hash.slice(1).split('/'); showTa
 window.addEventListener('hashchange', fromHash);
 
 async function load() {
-  try { ME = await api('/api/me'); } catch (e) { $('conv-empty-t').textContent = 'Воркер не отвечает: ' + e.message; return; }
+  try { ME = await api('/api/me'); } catch (e) { if (e.status === 401) { location.reload(); return; } $('conv-empty-t').textContent = 'Воркер не отвечает: ' + e.message; return; }
   $('me-chip').textContent = '@' + ME.nick;
   const c = $('net-chip');
   c.textContent = ME.connected ? (ME.site_nick ? 'В сети · @' + ME.site_nick : 'В общей сети') : 'Только эта машина';

@@ -6,11 +6,14 @@
 (вписал его ID у себя) или открыт для всех; получивший сообщение может ответить отправителю 24 часа без обмена ID —
 так чат-бот, написавший агенту, получает ответ в тот же разговор.
 Запуск: python3 relay.py --port 8790 [--db relay.db] [--host 127.0.0.1]. Только stdlib, база — SQLite.
-HTTP JSON, все запросы агента — с его id и secret. Текст сообщения ретранслятор не читает и не меняет.
+HTTP JSON, все запросы агента — с его id и secret. Текст сообщения ретранслятор не читает и не меняет; письмо в HTML
+(`format: html`) при записи проходит белый список тегов (`clean_html`): скрипты, стили, обработчики и чужие схемы ссылок
+вырезаются, чтобы любой клиент мог показать его без своей очистки.
 Человек-владелец тоже участник переписки: пишет своему агенту (`/v1/owner/send`), видит его почту
 (`/v1/owner/chats`, `/v1/owner/thread`); агент пишет своему человеку адресом `owner` (или `ow-…`).
 """
-import re, argparse, json, secrets, sqlite3, threading, time
+import re, argparse, html, json, secrets, sqlite3, threading, time
+from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -50,6 +53,64 @@ def db_open(path):
 TAGS = re.compile(r"<(script|style)\b.*?</\1\s*>|<[^>]*>", re.S | re.I)
 
 
+OK_TAGS = {"p", "br", "b", "strong", "i", "em", "u", "s", "code", "pre", "blockquote", "ul", "ol", "li", "h1", "h2", "h3",
+           "h4", "a", "table", "thead", "tbody", "tr", "th", "td", "hr", "span", "div", "small", "sub", "sup", "details", "summary"}
+DROP_WITH_BODY = {"script", "style", "iframe", "object", "embed", "template", "noscript", "svg", "math", "textarea", "select"}
+VOID = {"br", "hr"}
+
+
+class _Clean(HTMLParser):
+    """Белый список: разрешённые теги без атрибутов, кроме class и title; у ссылок — href только http(s) и mailto."""
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.out, self.skip, self.open = [], 0, []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in DROP_WITH_BODY:
+            self.skip += 1
+            return
+        if self.skip or tag not in OK_TAGS:
+            return
+        if tag in ("li", "p", "tr", "td", "th") and self.open and self.open[-1] == tag:    # <li>a<li>b — соседи, не вложение
+            self.out.append(f"</{self.open.pop()}>")
+        keep = []
+        for k, v in attrs:
+            v = v or ""
+            if k in ("class", "title") or (tag == "a" and k == "href" and re.match(r"(?i)^(https?:|mailto:)", v.strip())):
+                keep.append(f' {k}="{html.escape(v, quote=True)}"')
+        if tag == "a":
+            keep.append(' rel="noopener noreferrer" target="_blank"')
+        self.out.append(f"<{tag}{''.join(keep)}>")
+        if tag not in VOID:
+            self.open.append(tag)
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+        if tag in self.open and tag not in VOID and self.open[-1] == tag:
+            self.open.pop(); self.out.append(f"</{tag}>")
+
+    def handle_endtag(self, tag):
+        if tag in DROP_WITH_BODY:
+            self.skip = max(0, self.skip - 1)
+            return
+        if self.skip or tag not in self.open:
+            return
+        while self.open:
+            t = self.open.pop(); self.out.append(f"</{t}>")
+            if t == tag:
+                break
+
+    def handle_data(self, data):
+        if not self.skip:
+            self.out.append(html.escape(data, quote=False))
+
+
+def clean_html(t):
+    c = _Clean()
+    c.feed(t); c.close()
+    return "".join(c.out) + "".join(f"</{x}>" for x in reversed(c.open))
+
+
 def fmt(q):
     """Формат письма: 'html' — разметка (отчёт агента), иначе текст. Ретранслятор её не читает — рисует получатель."""
     return "html" if str(q.get("format") or "").lower() == "html" else None
@@ -87,6 +148,15 @@ class Relay:
                 raise FileExistsError(f"ник человека @{n} занят")
             self.db.execute("INSERT INTO owners VALUES (?,?,?,?)", (oid, sec, n, time.time()))
         return {"owner": oid, "owner_secret": sec, "nick": n}
+
+    def owner_rename(self, oid, nick):
+        """Ник человека в местной сети воркера: после подключения машины — тот же, что на сайте."""
+        n = norm_nick(nick)
+        with LOCK:
+            if self.db.execute("SELECT 1 FROM owners WHERE nick=? AND id<>?", (n, oid)).fetchone():
+                raise FileExistsError(f"ник человека @{n} занят")
+            self.db.execute("UPDATE owners SET nick=? WHERE id=?", (n, oid))
+        return n
 
     def owner_auth(self, q):
         if not q.get("owner"):
@@ -234,6 +304,7 @@ class Relay:
         with LOCK:
             human = self.human_target(src, q.get("to"))
             if human:        # своему человеку: в кабинет сайта (или в местный интерфейс), будить никого не нужно
+                text = clean_html(text) if fmt(q) else text
                 mid = "m-" + secrets.token_hex(6)
                 self.db.execute("INSERT INTO msgs (mid, src, dst, text, reply_to, at, fmt) VALUES (?,?,?,?,?,?,?)",
                                 (mid, src, human, text, q.get("reply_to"), time.time(), fmt(q)))
@@ -248,6 +319,7 @@ class Relay:
                 raise PermissionError(f"{dst} тебе не доверяет: пусть его владелец впишет твой ID {src} (trust)")
             mid = "m-" + secrets.token_hex(6)
             now = time.time()
+            text = clean_html(text) if fmt(q) else text
             self.db.execute("INSERT INTO msgs (mid, src, dst, text, reply_to, at, fmt) VALUES (?,?,?,?,?,?,?)",
                             (mid, src, dst, text, q.get("reply_to"), now, fmt(q)))
             # получатель может ответить отправителю без обмена ID (чат-бот, разовое обращение)

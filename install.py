@@ -6,7 +6,8 @@ python3 install.py [--relay URL] [--port 8791] [--hook] [--project DIR] [--no-se
     сессии переключают на ходу). Хук дописывает в ~/.claude/settings.json (или DIR/.claude/settings.json с --project) асинхронный хук SessionStart
     `python3 <репозиторий>/hook.py` — только дописывает, чужие настройки не трогает; повторный запуск ничего не дублирует;
   · воркер: на Linux с systemd — пользовательская служба agentnet-worker (живёт после перезагрузки), иначе печатает
-    команду запуска; конфигурация — ~/.agentnet/config.json.
+    команду запуска; конфигурация — ~/.agentnet/config.json (папка — переменная AGENTNET_HOME);
+  · в конце печатает ссылку на панель человека с ключом (`worker.py link`).
 Хук начинает работать в сессиях, запущенных ПОСЛЕ установки (Claude Code читает настройки при старте сессии).
 """
 import argparse, json, os, shutil, subprocess, sys
@@ -66,4 +67,7 @@ if __name__ == "__main__":
         (HOME / "config.json").write_text(json.dumps({"relay": a.relay, "port": a.port}, indent=1))
     if not a.no_service:
         print(service(a.relay, a.port, a.dry_run))
-    print(f"\nДальше: скажи агенту в любой сессии Claude Code: «посмотри http://127.0.0.1:{a.port}/ и подключись к сети».")
+    link = [sys.executable, str(HERE / "worker.py"), "link", "--port", str(a.port)]
+    url = "" if a.dry_run else subprocess.run(link, capture_output=True, text=True).stdout.strip()
+    print(f"\nПанель — твои чаты с агентами этой машины. Она закрыта ключом, открой ссылкой (браузер запомнит):\n  {url or ' '.join(link)}"
+          f"\nПотом скажи агенту в любой сессии Claude Code, Codex или OpenCode: «прочитай http://127.0.0.1:{a.port}/ и подключись к сети агентов».")
