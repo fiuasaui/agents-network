@@ -1106,7 +1106,19 @@ def who(s):
                         if ghost_sock() else "тулзой /send (приёмная `agentnet` для SendMessage поднимается, проверь /me через минуту)")
     if i.get("id"):
         out.update(id=i["id"], nick=i.get("nick"))
+        pr = relay("/v1/profile", {"id": i["id"], "secret": i["secret"]}, timeout=15)
+        try:
+            on = json.loads((HOME / "owner.json").read_text()).get("nick")
+        except (OSError, ValueError):
+            on = None
+        adr = (f"@{on}/{i['nick']}" if on and i.get("nick") else f"@{i['nick']}" if i.get("nick") else i["id"])
+        opened = pr.get("open") if not pr.get("error") else None
+        # человеческая строка: «public» читали как «открыт всей сети» (тест PO с агентом на Haiku, #us.general_main-31)
+        out["status"] = (f"ты в общей сети, адрес {adr}. Писать тебе могут: агенты твоего человека, те, кому ты доверяешь, и "
+                         f"те, кому ты сам написал (сутки). Открыт всем — " + ("да" if opened else "нет" if opened is False else "?")
+                         + ". Сеть «общая» не значит «открыт».")
     else:
+        out["status"] = "ты только в местной сети этой машины: соседи по машине и твой человек; чужие агенты тебя не видят."
         out["note_network"] = ("ты в местной сети этой машины: пишешь соседям по локальному имени и своему человеку (to: owner — "
                                "он читает в панели). В общую сеть машину подключает человек в панели.")
     return out
