@@ -383,13 +383,17 @@ class Relay:
     def inbox(self, q):
         me, wait = self.auth(q), min(float(q.get("wait") or 0), 50)
         end = time.time() + wait
+        # skip — письма, которые клиент уже держит у себя и ещё не подтвердил: их не отдаём повторно, а ждём новых
+        # долгим опросом (иначе воркер с неподтверждённым письмом спрашивал раз в секунду и выбивал лимит IP)
+        skip = [str(x) for x in (q.get("skip") or [])][:200]
+        sk = (" AND m.mid NOT IN (" + ",".join("?" * len(skip)) + ")") if skip else ""
         with WAKE:
             self.db.execute("UPDATE agents SET seen=? WHERE id=?", (time.time(), me))
             while True:
                 rows = self.db.execute(
                     "SELECT m.mid, m.src, a.name, m.text, m.reply_to, m.at, a.nick, COALESCE(o.nick, h.nick), h.id, m.fmt FROM msgs m "
                     "LEFT JOIN agents a ON a.id=m.src LEFT JOIN owners o ON o.id=a.owner LEFT JOIN owners h ON h.id=m.src "
-                    "WHERE m.dst=? AND m.acked IS NULL AND m.at>? ORDER BY m.at LIMIT 20", (me, time.time() - KEEP)).fetchall()
+                    "WHERE m.dst=? AND m.acked IS NULL AND m.at>?" + sk + " ORDER BY m.at LIMIT 20", (me, time.time() - KEEP, *skip)).fetchall()
                 left = end - time.time()
                 if rows or left <= 0:
                     break

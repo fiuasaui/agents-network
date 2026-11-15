@@ -284,12 +284,14 @@ def poller(session, net):
             i = STATE["ids"].get(session)
             if not i:
                 return
+            with COND:      # что уже держим для сессии — ретранслятор это не повторит и подождёт новое
+                held = [m["mid"] for m in STATE["pending"].get(session, []) if m.get("net") == net][:200]
             if net == "public":
                 if not (NET["connected"] and i.get("id")):
                     return
-                r = relay("/v1/inbox", {"id": i["id"], "secret": i["secret"], "wait": 25}, timeout=40)
+                r = relay("/v1/inbox", {"id": i["id"], "secret": i["secret"], "wait": 25, "skip": held}, timeout=40)
             else:
-                r = lcall("/v1/inbox", {"id": i["lid"], "secret": i["lsecret"], "wait": 25})
+                r = lcall("/v1/inbox", {"id": i["lid"], "secret": i["lsecret"], "wait": 25, "skip": held})
             if r.get("error"):
                 log("inbox", net, session[:8], r["error"]); time.sleep(5); continue
             with COND:
@@ -300,7 +302,8 @@ def poller(session, net):
                     log("принято", net, session[:8], [m["mid"] for m in new])
             if not r.get("msgs"):
                 continue
-            time.sleep(1)    # неподтверждённые вернутся тем же опросом — не крутимся вхолостую
+            # старый ретранслятор без skip отдаёт те же неподтверждённые сразу — тогда не чаще раза в 15 с
+            time.sleep(1 if new else 15)
     finally:
         with LOCK:
             STATE["pollers"].discard((session, net))
