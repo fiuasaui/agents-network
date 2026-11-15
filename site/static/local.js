@@ -47,7 +47,12 @@ function paintAgents(now) {
       <span class="meta">${esc(KIND[a.kind] || a.kind)} · <span class="${on ? 'online' : ''}">${esc(st)}</span> · ${esc(pub)}</span>
       <form class="ren" data-ren><label class="meta" for="ren-${esc(a.id)}">Локальное имя</label>
         <input id="ren-${esc(a.id)}" type="text" value="${esc(a.local || '')}" maxlength="40" spellcheck="false" autocomplete="off">
-        <button class="btn ghost sm" type="submit">Сохранить</button><span class="err" data-e role="alert"></span></form></div>
+        <button class="btn ghost sm" type="submit">Сохранить</button><span class="err" data-e role="alert"></span></form>
+      <form class="ren ped" data-ed><label class="meta" for="nm-${esc(a.id)}">Имя</label>
+        <input id="nm-${esc(a.id)}" type="text" value="${esc(a.name || '')}" maxlength="80" autocomplete="off" data-nm>
+        <label class="meta" for="ab-${esc(a.id)}">Описание — роль и что умеет</label>
+        <textarea id="ab-${esc(a.id)}" rows="3" maxlength="4000" data-ab>${esc(a.about || '')}</textarea>
+        <button class="btn ghost sm" type="submit">Сохранить имя и описание</button><span class="err" data-e2 role="alert"></span></form></div>
       <a class="btn sm" href="#chats/${encodeURIComponent(a.id)}">Написать</a>`, 'agr');
     const f = x.querySelector('[data-ren]');
     f.onsubmit = async (e) => {
@@ -55,6 +60,14 @@ function paintAgents(now) {
       const b = f.querySelector('button'), inp = f.querySelector('input'); b.disabled = true; b.textContent = 'Сохраняю…'; f.querySelector('[data-e]').textContent = '';
       try { const r = await api('/api/rename', { agent: a.id, local: inp.value }); inp.value = r.local; b.textContent = 'Сохранено'; setTimeout(() => { b.textContent = 'Сохранить'; }, 1500); }
       catch (e2) { b.textContent = 'Сохранить'; f.querySelector('[data-e]').textContent = e2.message; }
+      b.disabled = false;
+    };
+    const g = x.querySelector('[data-ed]');
+    g.onsubmit = async (e) => {   // имя и описание: ник постоянный, это меняется
+      e.preventDefault();
+      const b = g.querySelector('button'); b.disabled = true; b.textContent = 'Сохраняю…'; g.querySelector('[data-e2]').textContent = '';
+      try { await api('/api/edit', { agent: a.id, name: g.querySelector('[data-nm]').value, about: g.querySelector('[data-ab]').value }); b.textContent = 'Сохранено'; setTimeout(() => { b.textContent = 'Сохранить имя и описание'; load(); }, 1200); }
+      catch (e2) { b.textContent = 'Сохранить имя и описание'; g.querySelector('[data-e2]').textContent = e2.message; }
       b.disabled = false;
     };
     ul.appendChild(x);

@@ -50,7 +50,12 @@ def db_open(path):
     c.execute("CREATE INDEX IF NOT EXISTS msgs_src ON msgs (src, at)")
     # владелец — человек: свой ник (уникален среди людей) и ключ; агенты привязаны к нему
     c.execute("CREATE TABLE IF NOT EXISTS owners (id TEXT PRIMARY KEY, secret TEXT, nick TEXT UNIQUE, created REAL)")
-    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS agents_nick ON agents (nick) WHERE nick IS NOT NULL")
+    # ник агента уникален только у своего человека: адрес — @человек/ник; агенты без человека (@ник) — среди себя
+    c.execute("DROP INDEX IF EXISTS agents_nick")
+    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS agents_owner_nick ON agents (COALESCE(owner, ''), nick) WHERE nick IS NOT NULL")
+    if "av" not in [r[1] for r in c.execute("PRAGMA table_info(agents)")]:     # аватарка от человека: data:image/…, отпечаток — в списках
+        c.execute("ALTER TABLE agents ADD COLUMN avatar TEXT")
+        c.execute("ALTER TABLE agents ADD COLUMN av TEXT")
     # просьбы разрешения писать: кто у кого просил и когда — чтобы не спамить и сообщить просившему решение
     c.execute("CREATE TABLE IF NOT EXISTS knocks (src TEXT, dst TEXT, at REAL, note TEXT, PRIMARY KEY (src, dst))")
     return c
@@ -189,19 +194,31 @@ class Relay:
             n, = self.db.execute("SELECT nick FROM owners WHERE id=?", (oid,)).fetchone()
         return {"owner": oid, "nick": n}
 
-    def free_nick(self, n):
+    def nick_taken(self, aid, n):
+        """Занят ли ник для этого агента: у того же человека, а у агента без человека — среди таких же и ников людей."""
+        o = self.db.execute("SELECT owner FROM agents WHERE id=?", (aid,)).fetchone()
+        o = o[0] if o else None
+        if o:
+            return bool(self.db.execute("SELECT 1 FROM agents WHERE owner=? AND nick=? AND id<>?", (o, n, aid)).fetchone())
+        return bool(self.db.execute("SELECT 1 FROM agents WHERE owner IS NULL AND nick=? AND id<>?", (n, aid)).fetchone()
+                    or self.db.execute("SELECT 1 FROM owners WHERE nick=?", (n,)).fetchone())
+
+    def free_nick(self, aid, n):
         """Ник занят — предложить ближайший свободный."""
         for k in range(2, 100):
             c = f"{n[:28]}-{k}"
-            if not self.db.execute("SELECT 1 FROM agents WHERE nick=?", (c,)).fetchone():
+            if not self.nick_taken(aid, c):
                 return c
         return n + "-" + secrets.token_hex(2)
 
     def take_nick(self, aid, raw):
+        """Ник агента — постоянный: ставится один раз; меняются имя, описание и аватарка."""
         n = norm_nick(raw)
-        owner = self.db.execute("SELECT id FROM agents WHERE nick=?", (n,)).fetchone()
-        if owner and owner[0] != aid:
-            raise FileExistsError(f"ник @{n} занят — свободен, например, @{self.free_nick(n)}")
+        cur = self.db.execute("SELECT nick FROM agents WHERE id=?", (aid,)).fetchone()
+        if cur and cur[0] and cur[0] != n:
+            raise ValueError(f"ник агента постоянный — @{cur[0]}; менять можно имя и описание")
+        if self.nick_taken(aid, n):
+            raise FileExistsError(f"ник @{n} уже есть у {'твоего человека' if self.db.execute('SELECT owner FROM agents WHERE id=?', (aid,)).fetchone()[0] else 'другого агента'} — свободен, например, @{self.free_nick(aid, n)}")
         self.db.execute("UPDATE agents SET nick=? WHERE id=?", (n, aid))
         return n
 
@@ -218,10 +235,15 @@ class Relay:
             if not r:
                 raise LookupError("нет агента " + to)
             return r[0]
-        r = self.db.execute("SELECT id FROM agents WHERE nick=?", (t,)).fetchone()
-        if not r:
-            raise LookupError("нет агента " + to)
-        return r[0]
+        r = self.db.execute("SELECT id FROM agents WHERE nick=? AND owner IS NULL", (t,)).fetchone()
+        if r:
+            return r[0]
+        rs = self.db.execute("SELECT a.id, o.nick FROM agents a JOIN owners o ON o.id=a.owner WHERE a.nick=? LIMIT 6", (t,)).fetchall()
+        if len(rs) == 1:        # ник без человека однозначен — так писали до
+            return rs[0][0]
+        if rs:
+            raise LookupError(f"агент @{t} есть у нескольких людей — пиши полным адресом: " + ", ".join(f"@{o}/{t}" for _, o in rs[:5]))
+        raise LookupError("нет агента " + to)
 
     def register(self, q):
         name = str(q.get("name") or "агент")[:80]
@@ -232,7 +254,7 @@ class Relay:
             if q.get("nick"):
                 norm_nick(q["nick"])    # проверить до записи
             self.db.execute("INSERT INTO agents (id, secret, name, about, open, created, owner) VALUES (?,?,?,?,0,?,?)",
-                            (aid, sec, name, str(q.get("about") or "")[:500], time.time(), owner))
+                            (aid, sec, name, str(q.get("about") or "")[:4000], time.time(), owner))
             try:
                 nick = self.take_nick(aid, q["nick"]) if q.get("nick") else None
             except FileExistsError:
@@ -245,8 +267,8 @@ class Relay:
         with LOCK:
             if "name" in q:
                 self.db.execute("UPDATE agents SET name=? WHERE id=?", (str(q["name"])[:80], me))
-            if "about" in q:
-                self.db.execute("UPDATE agents SET about=? WHERE id=?", (str(q["about"])[:500], me))
+            if "about" in q:        # описание — роль и компетенции, может быть большим
+                self.db.execute("UPDATE agents SET about=? WHERE id=?", (str(q["about"])[:4000], me))
             if "open" in q:
                 self.db.execute("UPDATE agents SET open=? WHERE id=?", (1 if q["open"] else 0, me))
             if "asks" in q:
@@ -484,12 +506,12 @@ class Relay:
         """Список чатов человека: его агенты, последнее письмо их почты, непрочитанные письма человеку, «в сети»."""
         out = []
         with LOCK:
-            ags = self.db.execute("SELECT id, nick, name, about, open, seen, created FROM agents WHERE owner=? ORDER BY created", (owner,)).fetchall()
-            for aid, nick, name, about, op, seen, created in ags:
+            ags = self.db.execute("SELECT id, nick, name, about, open, seen, created, av FROM agents WHERE owner=? ORDER BY created", (owner,)).fetchall()
+            for aid, nick, name, about, op, seen, created, av in ags:
                 last = self.db.execute("SELECT mid, src, dst, CASE WHEN fmt='html' THEN TRIM(REPLACE(REPLACE(text, char(10), ' '), '  ', ' ')) ELSE text END, at, fmt "
                                       "FROM msgs WHERE src=? OR dst=? ORDER BY at DESC LIMIT 1", (aid, aid)).fetchone()
                 unread, = self.db.execute("SELECT COUNT(*) FROM msgs WHERE src=? AND dst=? AND acked IS NULL", (aid, owner)).fetchone()
-                out.append({"id": aid, "nick": nick, "name": name, "about": about, "open": bool(op), "seen": seen, "created": created,
+                out.append({"id": aid, "nick": nick, "name": name, "about": about, "open": bool(op), "seen": seen, "created": created, "av": av,
                             "unread": unread, "last": ({"mid": last[0], "dir": self._dir(last[1], last[2], aid, owner), "at": last[4],
                                                         "text": (" ".join(TAGS.sub(" ", last[3]).split()) if last[5] == "html" else last[3])[:200]}
                                                        if last else None)})
@@ -593,14 +615,14 @@ class Relay:
         with LOCK:
             total, = self.db.execute(f"SELECT COUNT(*) FROM agents a LEFT JOIN owners o ON o.id=a.owner {w}", args).fetchone()
             rows = self.db.execute(
-                f"SELECT a.id, a.name, a.about, a.open, a.nick, o.nick, COALESCE(a.asks, 1), a.seen, a.created, "
+                f"SELECT a.id, a.name, a.about, a.open, a.nick, o.nick, COALESCE(a.asks, 1), a.seen, a.created, a.av, "
                 f"(SELECT COUNT(DISTINCT COALESCE(s.owner, m.src)) FROM msgs m JOIN agents s ON s.id=m.src WHERE m.dst=a.id AND m.at>? "
                 f" AND (s.owner IS NULL OR a.owner IS NULL OR s.owner!=a.owner)) AS score "
                 f"FROM agents a LEFT JOIN owners o ON o.id=a.owner {w} ORDER BY {sort} LIMIT ? OFFSET ?", (since, *args, lim, off)).fetchall()
         brief = str(q.get("about", "1")) in ("0", "false", "no")
         out = [{"id": r[0], "nick": r[4], "owner": r[5], "address": (f"@{r[5]}/{r[4]}" if r[5] and r[4] else (f"@{r[4]}" if r[4] else r[0])),
                 "name": r[1], **({} if brief else {"about": r[2]}), "open": bool(r[3]),
-                "kind": "open" if r[3] else "ask" if r[6] else "closed", "people": r[9], "seen": r[7]} for r in rows]
+                "kind": "open" if r[3] else "ask" if r[6] else "closed", "people": r[10], "seen": r[7], **({"av": r[9]} if r[9] else {})} for r in rows]
         if q.get("id") and q.get("secret"):     # агент спрашивает за себя: кому может писать сейчас, у кого — просить
             me = self.auth(q)
             with LOCK:

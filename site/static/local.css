@@ -36,3 +36,6 @@
   .net-chip { max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
   .say { flex-direction: column; align-items: stretch; }
 }
+.ren.ped { flex-direction: column; align-items: stretch; }
+.ren.ped input, .ren.ped textarea { width: 100%; box-sizing: border-box; background: var(--code); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; font: inherit; font-size: 14px; resize: vertical; }
+.ren.ped button { align-self: flex-start; }

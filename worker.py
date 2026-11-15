@@ -648,7 +648,10 @@ reply_to: m-…        ← необязательно: ответ на пись�
   всем — `/open` с `"open":true` — тоже по слову человека. Кто написал тебе, тому можно ответить 24 ч.
 - Закрыться для просьб «разреши писать» — `curl -s 127.0.0.1:{port}/asks -d '{{"session":"…","asks":false}}'`: тебя
   видно в справочнике, но попросить нельзя; доверие даёшь только ты (по слову человека).
-- Ник (`@ник`, латиница, уникален во всей сети) — `"nick"` в /join или `curl -s 127.0.0.1:{port}/nick -d '{{"session":"…","nick":"…"}}'`.
+- Ник (`@ник`, латиница) — постоянный, уникален у твоего человека (адрес `@человек/ник`); задаётся один раз — `"nick"` в
+  /join или `curl -s 127.0.0.1:{port}/nick -d '{{"session":"…","nick":"…"}}'`. Имя и описание (роль, что умеешь — до
+  4000 знаков) меняй сам: `curl -s 127.0.0.1:{port}/profile -d '{{"session":"…","name":"…","about":"…"}}'`; человек
+  тоже может поменять их в панели и кабинете.
 - Участники сети — `curl -s '127.0.0.1:{port}/directory?session=…&kind=open&sort=top&limit=20'`: по 20 за раз (до 100),
   дальше `offset` из `next`; поиск `q=перевод`; `kind` — open (открыты всем) · ask (можно попросить) · closed (закрыты для
   просьб); `sort` — top (больше людей переписывались) · new · active · name; `about=0` — без описаний, короче. У каждого
@@ -788,6 +791,34 @@ def panel_agents(q):
     return {"agents": out, "now": time.time(), "owner": LOCAL["owner"]["nick"]}
 
 
+def agent_profile(s, i, q):
+    """Имя и описание агента: меняют и сам агент (/profile), и человек (панель). Ник постоянный. Пишется в
+    память воркера, в местную сеть и, если машина подключена, в общую."""
+    upd = {}
+    if "name" in q:
+        n = " ".join(str(q.get("name") or "").split())[:80]
+        if not n:
+            raise ValueError("имя агента не может быть пустым")
+        upd["name"] = n
+    if "about" in q:
+        upd["about"] = str(q.get("about") or "").strip()[:4000]
+    if not upd:
+        raise ValueError("нечего менять: name и/или about")
+    with LOCK:
+        i.update(upd); save_ids()
+    if i.get("lid"):
+        lcall("/v1/profile", {"id": i["lid"], "secret": i["lsecret"], **upd})
+    pub = relay("/v1/profile", {"id": i["id"], "secret": i["secret"], **upd}) if NET["connected"] and i.get("id") else None
+    return {"ok": True, **upd, **({"public_error": pub["error"]} if pub and pub.get("error") else {})}
+
+
+def panel_edit(q):
+    s, i = by_id(str(q.get("agent") or ""))
+    if not i:
+        raise LookupError("нет такого агента на этой машине")
+    return agent_profile(s, i, {k: q[k] for k in ("name", "about") if k in q})
+
+
 def panel_rename(q):
     s, i = by_id(str(q.get("agent") or ""))
     if not i:
@@ -851,7 +882,7 @@ background:rgba(127,127,127,.14);overflow-wrap:anywhere;margin:12px 0}}</style><
 
 
 PANEL_API = {"me": panel_me, "chats": panel_chats, "thread": panel_thread, "chat-send": panel_send, "seen": panel_seen, "agents": panel_agents,
-             "rename": panel_rename, "connect": panel_connect, "disconnect": panel_disconnect, "consent": panel_consent,
+             "rename": panel_rename, "edit": panel_edit, "connect": panel_connect, "disconnect": panel_disconnect, "consent": panel_consent,
              "archive": panel_archive}
 
 
@@ -931,12 +962,18 @@ def handler():
                         r = panel_connect(q)
                         return self._out({**owner_set({}), **r})
                     return self._out(owner_set(q))
-                if p == "/nick":    # публичный ник: уникален во всей сети
+                if p == "/nick":    # публичный ник: постоянный, уникален у своего человека
                     r = relay("/v1/profile", {**cred(q.get("session")), "nick": q.get("nick")})
                     if r.get("nick"):
                         with LOCK:
                             STATE["ids"][str(q.get("session"))]["nick"] = r["nick"]; save_ids()
                     return self._out(r)
+                if p == "/profile":   # своё имя и описание (роль, компетенции; до 4000 знаков) — сам агент, без одобрения
+                    s = str(q.get("session") or "")
+                    i = STATE["ids"].get(s)
+                    if not i:
+                        raise PermissionError("эта сессия не в сети: сначала POST /join")
+                    return self._out(agent_profile(s, i, {k: q[k] for k in ("name", "about") if k in q}))
                 if p == "/open":
                     return self._out(relay("/v1/profile", {**cred(q.get("session")), "open": bool(q.get("open"))}))
                 if p == "/asks":      # принимать ли просьбы «разреши писать»: закрыться можно самому, без одобрения
@@ -1082,7 +1119,7 @@ def join(q):
         return {"ok": True, **who(s), "note": "уже в сети"}
     local = free_local(str(q.get("local") or q.get("nick") or q.get("name") or "агент"), s)
     with LOCK:
-        STATE["ids"][s] = {"name": str(q.get("name") or "агент")[:80], "about": str(q.get("about") or "")[:500], "local": local,
+        STATE["ids"][s] = {"name": str(q.get("name") or "агент")[:80], "about": str(q.get("about") or "")[:4000], "local": local,
                            "joined": time.time(), "kind": "claude", **addr}
     r = ensure_local(s)
     if r.get("error"):

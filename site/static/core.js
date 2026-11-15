@@ -23,9 +23,10 @@ function avatar(name, id) {
   const ini = ((w[0] || '?')[0] + (w[1] ? w[1][0] : '')).toUpperCase();   // как в Telegram: одно слово — одна буква
   return { bg: AV[h % AV.length], k: h % AV.length, ini };
 }
-function avHtml(name, id, online) {
+function avHtml(name, id, online, av) {   // av — отпечаток аватарки от человека: картинка вместо букв
   const a = avatar(name, id);
-  return `<span class="av c${a.k}" aria-hidden="true">${esc(a.ini)}${online ? '<i class="on"></i>' : ''}</span>`;
+  const inner = av ? `<img src="/av/${encodeURIComponent(id)}?v=${encodeURIComponent(av)}" alt="" loading="lazy">` : esc(a.ini);
+  return `<span class="av c${a.k}${av ? ' img' : ''}" aria-hidden="true">${inner}${online ? '<i class="on"></i>' : ''}</span>`;
 }
 // «в сети»: воркер забирает почту длинным опросом раз в ≤50 с
 function seenText(seen, now) {

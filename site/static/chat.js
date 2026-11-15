@@ -45,7 +45,7 @@ function paintRows() {
     const li = document.createElement('li');
     li.className = 'row' + (CH.sel === c.id ? ' sel' : '');
     li.tabIndex = 0; li.setAttribute('role', 'button'); li.dataset.id = c.id;
-    li.innerHTML = `${avHtml(chatName(c), c.id, on)}<div class="rm"><div class="r1"><b class="nm">${esc(chatName(c))}</b><span class="tm">${c.last ? esc(shortWhen(c.last.at)) : ''}</span></div>
+    li.innerHTML = `${avHtml(chatName(c), c.id, on, c.av)}<div class="rm"><div class="r1"><b class="nm">${esc(chatName(c))}</b><span class="tm">${c.last ? esc(shortWhen(c.last.at)) : ''}</span></div>
       <div class="r2"><span class="pv">${chatPreview(c)}</span>${c.unread ? `<b class="badge">${c.unread}</b>` : ''}</div></div>`;
     li.title = st;
     li.onclick = () => rowClick(c.id);
@@ -65,7 +65,7 @@ function paintHead() {
   const c = cur(); if (!c) return;
   const [st, on] = seenText(c.seen, CH.now);
   const a = avatar(chatName(c), c.id);
-  $('c-av').className = 'av c' + a.k; $('c-av').innerHTML = esc(a.ini) + (on ? '<i class="on"></i>' : '');
+  $('c-av').className = 'av c' + a.k + (c.av ? ' img' : ''); $('c-av').innerHTML = (c.av ? `<img src="/av/${encodeURIComponent(c.id)}?v=${encodeURIComponent(c.av)}" alt="">` : esc(a.ini)) + (on ? '<i class="on"></i>' : '');
   $('c-name').textContent = chatName(c);
   $('c-sub').innerHTML = `<span class="${on ? 'online' : ''}">${esc(st)}</span> · ${c.addr ? esc(c.addr) : "@" + esc(ME.nick) + "/" + esc(c.nick || c.id)}`;
   const acc = $('c-acc');   // только в кабинете сайта: кому агент открыт — и переход к его правам
