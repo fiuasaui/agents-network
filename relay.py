@@ -475,7 +475,7 @@ class Relay:
         with LOCK:
             aid, _ = self.own_agent(owner, agent)
             rows = self.db.execute(
-                "SELECT m.mid, m.src, m.dst, m.text, m.reply_to, m.at, m.acked, sa.nick, sa.name, so.nick, da.nick, da.name, dw.nick, m.fmt "
+                "SELECT m.mid, m.src, m.dst, m.text, m.reply_to, m.at, m.acked, sa.nick, sa.name, so.nick, da.nick, da.name, dw.nick, m.fmt, sa.owner, da.owner "
                 "FROM msgs m LEFT JOIN agents sa ON sa.id=m.src LEFT JOIN owners so ON so.id=sa.owner "
                 "LEFT JOIN agents da ON da.id=m.dst LEFT JOIN owners dw ON dw.id=da.owner "
                 "WHERE (m.src=? OR m.dst=?) AND m.at>? ORDER BY m.at DESC LIMIT ?", (aid, aid, float(after or 0), int(limit))).fetchall()
@@ -483,11 +483,15 @@ class Relay:
         def addr(i, n, nm, o):
             return (f"@{o}/{n}" if o and n else f"@{n}" if n else i, nm)
         msgs = []
-        for mid, src, dst, text, rto, at, acked, sn, snm, so, dn, dnm, do, fm in reversed(rows):
+        for mid, src, dst, text, rto, at, acked, sn, snm, so, dn, dnm, do, fm, sow, dow in reversed(rows):
             d = self._dir(src, dst, aid, owner)
             peer = addr(dst, dn, dnm, do) if d == "out" else addr(src, sn, snm, so) if d == "in" else (None, None)
+            # чей агент собеседник — для плашки переписки в чате: человек, имя агента, адрес
+            po, pw = (do, dow) if d == "out" else (so, sow) if d == "in" else (None, None)
             msgs.append({"mid": mid, "dir": d, "text": text, "reply_to": rto, "at": at, "delivered": bool(acked),
-                         "peer": peer[0], "peer_name": peer[1], **({"format": fm} if fm else {})})
+                         "peer": peer[0], "peer_name": peer[1],
+                         **({"peer_owner": po, "peer_mine": pw == owner} if d in ("out", "in") else {}),
+                         **({"format": fm} if fm else {})})
         return {"agent": aid, "msgs": msgs}
 
     def human_seen(self, owner, agent, mids):

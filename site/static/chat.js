@@ -5,9 +5,9 @@ const DIRS = { me: 'Ты', to_me: '', out: '→', in: '←' };
 
 function chatPreview(c) {
   if (!c.last) return '<span class="pv-dim">нет сообщений</span>';
-  const l = c.last, t = esc(l.text.replace(/\s+/g, ' ').slice(0, 90));
+  const l = c.last, t = esc(l.text.replace(/[*_`#>]+/g, '').replace(/\s+/g, ' ').trim().slice(0, 90));   // без разметки Markdown
   if (l.dir === 'me') return '<span class="pv-me">Ты:</span> ' + t;
-  if (l.dir === 'out' || l.dir === 'in') return '<span class="pv-peer">' + (l.dir === 'out' ? '→ агенту' : '← от агента') + ':</span> ' + t;
+  if (l.dir === 'out' || l.dir === 'in') return '<span class="pv-peer">' + (l.dir === 'out' ? '← письмо агенту' : '→ письмо от агента') + '</span>';   // текст переписки агентов не показываем
   return t;
 }
 function chatName(c) { return c.name && c.name !== 'агент' ? c.name : '@' + (c.nick || c.id); }
@@ -48,8 +48,8 @@ function paintRows() {
     li.innerHTML = `${avHtml(chatName(c), c.id, on)}<div class="rm"><div class="r1"><b class="nm">${esc(chatName(c))}</b><span class="tm">${c.last ? esc(shortWhen(c.last.at)) : ''}</span></div>
       <div class="r2"><span class="pv">${chatPreview(c)}</span>${c.unread ? `<b class="badge">${c.unread}</b>` : ''}</div></div>`;
     li.title = st;
-    li.onclick = () => openChat(c.id);
-    li.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openChat(c.id); } };
+    li.onclick = () => rowClick(c.id);
+    li.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); rowClick(c.id); } };
     ul.appendChild(li);
   }
 }
@@ -81,6 +81,30 @@ async function openChat(id) {
   try { history.replaceState(null, '', '#chats/' + encodeURIComponent(id)); } catch (e) {}
   await pullThread(true);
   if (window.matchMedia('(min-width: 761px)').matches) $('ctext').focus({ preventScroll: true });
+}
+
+// щелчок по чату в списке, как в мессенджере: открыл — к первому, что ждёт человека (непрочитанное письмо, запрос на
+// одобрение без ответа); щелчок по уже открытому — к следующему, по кругу; ждущего нет — плавно вниз
+async function rowClick(id) {
+  if (CH.sel === id && document.body.classList.contains('in-chat')) return goNext();
+  await openChat(id);
+  if (waiting().length) { CH.tuLast = null; goNext(); }
+}
+function waiting() { return [...$('msgs').querySelectorAll('.bub.unread, .bub.sysc.wait')]; }
+function glideTo(box, to) {
+  const from = box.scrollTop, dist = Math.abs(to - from), dur = Math.max(320, Math.min(750, 300 + dist / 6)), t0 = performance.now();
+  const ease = (k) => k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;   // разгон, потом торможение
+  const step = (now) => { const k = Math.min(1, (now - t0) / dur); box.scrollTop = from + (to - from) * ease(k); if (k < 1) requestAnimationFrame(step); };
+  requestAnimationFrame(step);
+}
+function goNext() {
+  const box = $('msgs'), list = waiting();
+  if (!list.length) { glideTo(box, box.scrollHeight - box.clientHeight); return; }
+  const tgt = list[(list.indexOf(CH.tuLast) + 1) % list.length]; CH.tuLast = tgt;
+  const to = box.scrollTop + tgt.getBoundingClientRect().top - box.getBoundingClientRect().top - 16;
+  glideTo(box, Math.max(0, Math.min(to, box.scrollHeight - box.clientHeight)));
+  tgt.classList.remove('tu-flash'); void tgt.offsetWidth; tgt.classList.add('tu-flash');
+  setTimeout(() => tgt.classList.remove('tu-flash'), 1500);   // иначе мерцание запроса не вернётся
 }
 
 function closeChat() {
@@ -123,17 +147,18 @@ function sysCard(m) {
   if (m.sys === 'notice') {
     const k = m.text[0] === '✅' ? 'ok' : m.text[0] === '❌' ? 'no' : 'bad';
     el.className = 'bub sysn ' + k;
-    el.innerHTML = `<span>${{ ok: 'Ты одобрил', no: 'Ты отклонил', bad: 'Одобрено, но не выполнено' }[k]}: ${esc(a.what)} · агенту сообщено · ${esc(hm(m.at))}</span>`;
+    el.innerHTML = `<span>${{ ok: 'Ты одобрил', no: 'Ты отклонил', bad: 'Одобрено, но не выполнено' }[k]}: ${esc(a.what.length > 110 ? a.what.slice(0, 105).trimEnd() + '…' : a.what)} · агенту сообщено · ${esc(hm(m.at))}</span>`;
     return el;
   }
   const c = cur();
-  el.className = 'bub sysc' + (m.dir === 'to_me' && !m.delivered ? ' unread' : '');
+  el.className = 'bub sysc' + (m.dir === 'to_me' && !m.delivered ? ' unread' : '');   // unread — для отметки «прочитано» при прокрутке
   el.innerHTML = `<div class="sysh">${SHIELD}<span>Запрос на одобрение</span></div>
     <p>${a.by_peer ? esc(a.what) : `<b>${esc(c ? chatName(c) : 'Агент')}</b> просит: ${esc(a.what)}`}.</p>
     ${a.by_peer ? '<p class="sysn-t">Разрешишь — он сможет писать этому агенту, переписку ты увидишь здесь. Отозвать — в «Права», кнопка «Убрать».</p>' : ''}<div class="sysa"></div>
     <div class="meta">Agents Network · ${esc(hm(m.at))}</div>`;
   const box = el.querySelector('.sysa');
   const paint = () => {
+    el.classList.toggle('wait', a.status === 'wait'); el.classList.toggle('done', a.status !== 'wait');   // ждёт — мерцает, решено — гаснет
     if (a.status !== 'wait') { const [k, t] = AP_ST[a.status] || ['', a.status]; box.innerHTML = `<span class="sys-st ${k}">${esc(t)}</span>`; return; }
     box.innerHTML = '<button class="btn ghost sm" type="button" data-no>Отклонить</button><button class="btn sm" type="button" data-yes>Одобрить</button><span class="err" role="alert"></span>';
     for (const [sel, yes] of [['[data-yes]', true], ['[data-no]', false]]) {
@@ -153,8 +178,40 @@ function sysCard(m) {
   return el;
 }
 
+// переписка агентов — свёрнутой плашкой, как в мессенджере: две строки «кому/от + агент» и «человек · адрес · длина»,
+// нажал — письмо целиком под плашкой; раскрытое помнится, пока открыта страница. Исходящее — оранжевое «←», входящее — фиолетовое «→»
+const PEER_OPEN = new Set();
+function plural(n, a, b, c) { const m = n % 10, h = n % 100; return n + ' ' + (m === 1 && h !== 11 ? a : m >= 2 && m <= 4 && (h < 10 || h >= 20) ? b : c); }
+function peerLine(m) {
+  const el = document.createElement('div');
+  el.className = 'bub ptr ' + m.dir;
+  el.dataset.mid = m.mid;
+  const out = m.dir === 'out', addr = m.peer || '';
+  const nm = m.peer_name && m.peer_name !== 'агент' ? m.peer_name : (addr.split('/').pop() || addr).replace(/^@/, '') || 'агент';
+  const who = m.peer_mine ? 'твой агент' : m.peer_owner ? 'человек: ' + m.peer_owner : '';
+  const sub = [who, addr, plural(m.text.length, 'знак', 'знака', 'знаков')].filter(Boolean).map(esc).join(' · ');
+  el.innerHTML = `<button class="ptr-ln" type="button" title="${out ? 'Письмо твоего агента другому агенту' : 'Письмо другого агента твоему'} — нажми, чтобы развернуть">`
+    + `<span class="ptr-i">${out ? '←' : '→'}</span><span class="ptr-x"><span class="ptr-1"><span class="ptr-k">${out ? 'кому:' : 'от:'}</span> <b>${esc(nm)}</b></span>`
+    + `<span class="ptr-2">${sub}</span></span><span class="ptr-t">${esc(hm(m.at))}</span><span class="ptr-c">▾</span></button>`;
+  const set = () => {
+    const on = PEER_OPEN.has(m.mid), ex = el.querySelector(':scope > .ptr-b');
+    el.classList.toggle('open', on);
+    if (on && !ex) {
+      const b = document.createElement('div'), html = m.format === 'html', md = !html && typeof window.renderMarkdown === 'function';
+      b.className = 'ptr-b';
+      b.innerHTML = `<div class="tx${html || md ? ' rep-html' : ''}${md ? ' md' : ''}">${html ? '' : md ? window.renderMarkdown(m.text) : linkify(m.text)}</div>`;
+      if (html) repHtml(b.querySelector('.tx'), m.text);
+      el.append(b);
+    } else if (!on && ex) ex.remove();
+  };
+  el.querySelector('.ptr-ln').onclick = () => { PEER_OPEN.has(m.mid) ? PEER_OPEN.delete(m.mid) : PEER_OPEN.add(m.mid); set(); };
+  set();
+  return el;
+}
+
 function bubble(m) {
   if (m.sys && m.approval) return sysCard(m);
+  if (m.dir === 'out' || m.dir === 'in') return peerLine(m);
   const el = document.createElement('div');
   const peer = m.dir === 'out' || m.dir === 'in';
   el.className = 'bub ' + (m.dir === 'me' ? 'mine' : peer ? 'peer ' + m.dir : 'ag') + (m.dir === 'to_me' && !m.delivered ? ' unread' : '') + (m.format === 'html' ? ' html' : '');
