@@ -1374,7 +1374,7 @@ if __name__ == "__main__":
         if NET["connected"] and STATE["ids"][s].get("id"):
             start_poller(s, "public")
     threading.Thread(target=direct, daemon=True, name="direct").start()
-    threading.Thread(target=nd.loop, args=(HOME, relay, owner_cred, log), daemon=True, name="node").start()
+    threading.Thread(target=nd.loop, args=(HOME, relay, owner_cred, log, CFG["relay"]), daemon=True, name="node").start()
     log("старт", a.port, a.relay, "агентов", len(STATE["ids"]))
     print(f"agentnet worker: панель " + (f"с ключом — ссылка: python3 {Path(__file__).resolve()} link --port {a.port}" if lock
           else f"http://127.0.0.1:{a.port}/") + f" · общая сеть {a.relay} — "
