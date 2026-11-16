@@ -219,6 +219,18 @@ input[type=search]#dsearch { width: 100%; padding: 10px 14px; border-radius: 18p
 .lttl { flex: 1; font-weight: 650; font-size: 16px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lhd input[type=search] { display: none; flex: 1; min-width: 0; width: auto; }
 .lhd.q input[type=search] { display: block; } .lhd.q .lttl { display: none; }
+/* «Мои» и «Чаты» — переключатель, а не секции: занимает строку шапки от края до лупы; в архиве и поиске — прячется */
+.lhd:not(.arch) .lttl { display: none; }
+.lseg { flex: 1; min-width: 0; display: flex; gap: 2px; padding: 3px; border-radius: 12px; background: rgba(255, 255, 255, .05); }
+.lhd.arch .lseg, .lhd.q .lseg { display: none; }
+.lseg button { flex: 1; min-width: 0; height: 32px; border: 0; border-radius: 9px; background: none; color: var(--muted); font: inherit; font-size: 14px;
+  font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  transition: background 160ms var(--ease), color 160ms var(--ease); }
+.lseg button:hover { color: var(--ink); }
+.lseg button[aria-selected="true"] { background: #2b5278; color: #fff; }
+.lseg button:focus-visible { outline: 2px solid #5288c1; outline-offset: 1px; }
+.segn { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: #4f8fd6; color: #fff; font-size: 11.5px; line-height: 18px; }
+.lseg button[aria-selected="true"] .segn { background: #fff; color: #2b5278; }
 .lsb, .lback { flex: none; width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0;
   border-radius: 50%; background: none; color: var(--muted); cursor: pointer; transition: background 120ms var(--ease), color 120ms var(--ease); }
 .lsb svg, .lback svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
@@ -230,7 +242,6 @@ input[type=search]#dsearch { width: 100%; padding: 10px 14px; border-radius: 18p
 .sys-av { background: #2b5278; color: #e8f1fa; }
 .sys-av svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
 .chead .sys-av svg { width: 19px; height: 19px; }
-.rows-h { padding: 12px 16px 4px; font-size: 12.5px; font-weight: 600; color: var(--muted); list-style: none; }
 .badge.mute { background: #6c7883; }
 .row.sel .badge.mute { background: #fff; color: #2b5278; }
 .pv .pvu { color: #f2f5f8; }
