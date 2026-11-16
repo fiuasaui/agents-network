@@ -188,6 +188,7 @@ def loop(home, relay, cred, log, relay_url=""):
             r = relay("/v1/node/calls", {**c, "wait": 50}, 70)
             if r.get("error"):
                 ST["last_error"] = r["error"]; time.sleep(10); continue
+            ST["last_error"] = None      # связь с Сетью есть — прошлая ошибка уже не текущая (симуляция 16.11)
             for call in r.get("calls", []):
                 def go(call=call):
                     if call["tool"] == "__turn__":
