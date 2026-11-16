@@ -22,7 +22,7 @@
 import json, os, subprocess, threading, time, urllib.request
 from pathlib import Path
 
-ST = {"declared": {}, "running": False, "last_error": None, "calls": 0}
+ST = {"declared": {}, "running": False, "last_error": None, "last_error_at": None, "last_ok_at": None, "calls": 0}
 
 
 def kits_dir(home: Path) -> Path:
@@ -187,8 +187,8 @@ def loop(home, relay, cred, log, relay_url=""):
                 declare(home, relay, cred); last_decl = time.time()
             r = relay("/v1/node/calls", {**c, "wait": 50}, 70)
             if r.get("error"):
-                ST["last_error"] = r["error"]; time.sleep(10); continue
-            ST["last_error"] = None      # связь с Сетью есть — прошлая ошибка уже не текущая (симуляция 16.11)
+                ST["last_error"], ST["last_error_at"] = "опрос вызовов: " + str(r["error"])[:200], time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()); time.sleep(10); continue
+            ST["last_error"], ST["last_ok_at"] = None, time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())   # связь с Сетью есть (симуляция 16.11)
             for call in r.get("calls", []):
                 def go(call=call):
                     if call["tool"] == "__turn__":
@@ -206,10 +206,11 @@ def loop(home, relay, cred, log, relay_url=""):
                     relay("/v1/node/result", {**c, "call": call["call"], "ok": ok, "result": res[:50_000]})
                 threading.Thread(target=go, daemon=True).start()
         except Exception as e:  # noqa: BLE001
-            ST["last_error"] = repr(e)[:200]
+            ST["last_error"], ST["last_error_at"] = "цикл узла: " + repr(e)[:200], time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
             time.sleep(10)
 
 
 def status(home):
     return {"toolkits": [public_view(k) | {"declared": ST["declared"].get(n)} for n, k in load(home).items()],
-            "calls_done": ST["calls"], "last_error": ST["last_error"], "dir": str(kits_dir(home))}
+            "calls_done": ST["calls"], "last_error": ST["last_error"], "last_error_at": ST["last_error_at"], "last_ok_at": ST["last_ok_at"],
+            "dir": str(kits_dir(home))}
