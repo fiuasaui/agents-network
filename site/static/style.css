@@ -208,8 +208,3 @@ a.nav-cab { display: inline-flex; align-items: baseline; gap: 8px; margin: 0; pa
 a.nav-cab:hover { background: var(--btn-hover); color: var(--accent-ink); }
 a.nav-cab .nav-sub { font-weight: 400; opacity: .8; }
 @media (max-width: 420px) { a.nav-cab { padding: 10px 14px; } a.nav-cab .nav-sub { display: none; } }
-/* визитка бренда на странице человека: код владельца в изолированной рамке, высоту задаёт он сам */
-iframe.anframe { display: block; width: 100%; border: 0; }
-.upage { padding: 12px; overflow: hidden; }
-.upage iframe.anframe { height: 560px; border-radius: 10px; background: #0e1621; }
-.upage-h { margin: 0 4px 10px; font-size: 12.5px; }

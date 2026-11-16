@@ -227,6 +227,10 @@ input[type=search]#dsearch { width: 100%; padding: 10px 14px; border-radius: 18p
 .lback { margin-left: -8px; } .lback[hidden] { display: none; }
 .arch-av { background: #202b36; color: var(--muted); }
 .arch-av svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.sys-av { background: #2b5278; color: #e8f1fa; }
+.sys-av svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
+.chead .sys-av svg { width: 19px; height: 19px; }
+.rows-h { padding: 12px 16px 4px; font-size: 12.5px; font-weight: 600; color: var(--muted); list-style: none; }
 .badge.mute { background: #6c7883; }
 .row.sel .badge.mute { background: #fff; color: #2b5278; }
 .pv .pvu { color: #f2f5f8; }
