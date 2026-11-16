@@ -64,7 +64,7 @@ body.cab-page.in-app { height: 100dvh; overflow: hidden; background: #0e1621; fo
 .r1, .r2 { display: flex; align-items: center; gap: 8px; }
 .nmw { flex: 1; min-width: 0; display: flex; align-items: center; }
 .nm { flex: 0 1 auto; min-width: 0; font-weight: 600; font-size: 14.5px; color: #f2f5f8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tm { color: #8a9bae; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.tm { margin-left: auto; flex: none; color: #8a9bae; font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .pv { flex: 1; min-width: 0; color: #7f91a4; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pv-me { color: #8cc0f5; } .pv-peer { color: #c4a76a; } .pv-dim { color: #5f6b7b; }
 .row.sel .tm, .row.sel .pv, .row.sel .pv-me, .row.sel .pv-peer { color: #dbe6f2; }
