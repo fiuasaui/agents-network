@@ -521,3 +521,5 @@ a.me-chip { text-decoration: none; cursor: pointer; transition: background 150ms
 .composer { flex-wrap: wrap; } .ib.clip { cursor: pointer; }
 /* «Службы»: описания служб и наборов переносятся — общее «.list .meta { nowrap }» выталкивало их за карточку под кнопку (снимок 16.11) */
 [data-view="services"] .list .meta { white-space: normal; overflow-wrap: anywhere; }
+.tkg { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; } .tkg .pill .x { background: none; border: 0; color: inherit; cursor: pointer; padding: 0 0 0 4px; font: inherit; }
+.tkgf { display: flex; gap: 6px; flex: 1 1 260px; min-width: 0; } .tkgf input { flex: 1; min-width: 0; font: inherit; font-size: 14px; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 5px 9px; }
