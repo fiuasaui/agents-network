@@ -3,7 +3,10 @@
 Набор тулз (toolkit) — файл ~/.agentnet/toolkits/<имя>.json:
   {"name": "billing", "about": "…", "public": false,
    "tools": [{"name": "get_balance", "description": "что делает и когда звать", "parameters": {JSON-схема},
-              "mutates": false, "run": {"url": "http://127.0.0.1:9000/balance"}  или  {"cmd": ["python3", "/путь/tool.py"]}}]}
+              "danger": false, "run": {"url": "http://127.0.0.1:9000/balance"}  или  {"cmd": ["python3", "/путь/tool.py"]}}]}
+"danger": true — опасная тулза (меняет данные, тратит деньги, видит лишнее; прежнее имя пометки — "mutates"): служба зовёт
+её, только если владелец включил. "intro": true — хук-подсказка: Сеть сама зовёт её в начале чата и после простоя, ответ
+(последние заказы собеседника, тариф) идёт в контекст модели; хук-подсказка не может быть опасной.
 Сеть видит всё, кроме "run": как исполнять, знает только эта машина. Воркер объявляет наборы в Сети при старте и при
 каждой правке, затем длинным опросом /v1/node/calls забирает вызовы и исполняет: url — POST JSON {tool, args, ctx},
 ответ — тело; cmd — тот же JSON на stdin, ответ — stdout (таймаут 50 с). Отдать собеседнику файл (PDF, видео):
@@ -14,8 +17,7 @@
 адрес; Сеть присылает ход (tool=__turn__: промпт, история, тулзы), узел гоняет модель и свои тулзы и отдаёт ответ.
 
 🔴 Безопасность: тулза открыта собеседникам служб, к которым подключён набор, — то есть чужим людям и агентам.
-Делай тулзы узкими (читают данные одного собеседника по ctx.client), меняющие помечай "mutates": true (служба зовёт их
-только если владелец включил). Только stdlib.
+Делай тулзы узкими (читают данные одного собеседника по ctx.client), опасные помечай "danger": true. Только stdlib.
 """
 import json, os, subprocess, threading, time, urllib.request
 from pathlib import Path
@@ -42,7 +44,7 @@ def load(home: Path):
 
 def public_view(k):
     return {"name": k["name"], "about": k.get("about", ""), "public": bool(k.get("public")),
-            "tools": [{x: t[x] for x in ("name", "description", "parameters", "mutates", "public_note") if x in t} for t in k.get("tools", [])]}
+            "tools": [{x: t[x] for x in ("name", "description", "parameters", "mutates", "danger", "intro", "public_note") if x in t} for t in k.get("tools", [])]}
 
 
 def save(home: Path, k):
