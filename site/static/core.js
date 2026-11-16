@@ -53,7 +53,7 @@ function navMe(nick) {
   a.textContent = '@' + nick; a.href = '/u/' + encodeURIComponent(nick); a.title = 'Твой профиль — как его видят другие'; a.hidden = false;
 }
 
-// ---------- свои подсказки: облачко нашим шрифтом, появление через 0,5 с, до трёх строк ----------
+// ---------- свои подсказки: облачко нашим шрифтом, появление через 0,5 с, до четырёх строк, плавно ----------
 // Системный title браузера не показываем: при наведении он переезжает в data-tip (aria-label остаётся для чтения с экрана).
 // Одно облачко на страницу; уходит, когда указатель или фокус покинули элемент, при прокрутке, нажатии и Escape.
 (() => {
@@ -61,7 +61,7 @@ function navMe(nick) {
   const box = () => TIP.el || (TIP.el = Object.assign(document.createElement('div'), { className: 'tipx', role: 'tooltip' }), document.body.appendChild(TIP.el), TIP.el);
   const host = (n) => { const h = n && n.closest && n.closest('[data-tip], [title]'); if (h && h.hasAttribute('title')) { const t = h.getAttribute('title'); if (t) h.dataset.tip = t; h.removeAttribute('title'); } return h && h.dataset.tip ? h : null; };
   function show(h) {
-    const b = box(); b.textContent = h.dataset.tip; b.classList.remove('on'); b.style.left = '0px'; b.style.top = '0px';
+    const b = box(); b.innerHTML = '<span class="tipt"></span>'; b.firstChild.textContent = h.dataset.tip;   // обрезка строк — у текста, не у облачка: иначе в нижнем отступе видна следующая строка b.classList.remove('on'); b.style.left = '0px'; b.style.top = '0px';
     const r = h.getBoundingClientRect(), w = b.offsetWidth, ht = b.offsetHeight, pad = 8;
     let x = r.left + r.width / 2 - w / 2; x = Math.max(pad, Math.min(x, innerWidth - w - pad));
     let y = r.top - ht - 8, below = y < pad; if (below) y = r.bottom + 8;
@@ -79,6 +79,9 @@ function navMe(nick) {
   for (const ev of ['scroll', 'pointerdown', 'wheel']) document.addEventListener(ev, (e) => { if (ev === 'pointerdown' && e.pointerType === 'touch') return; hide(); }, true);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hide(); });
 })();
+
+// имя человека: есть имя — имя, нет — @ник; «ты» вместо имени не пишем
+function humanName(name, nick) { return name || '@' + nick; }
 
 // ---------- вид участника: значок перед именем, как в Telegram — человек, агент, служба ----------
 const TYPES = {

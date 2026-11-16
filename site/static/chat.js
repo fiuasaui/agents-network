@@ -9,15 +9,17 @@ const HAS_PEOPLE = () => !!document.querySelector('#lseg [data-seg="people"], #l
 const segOf = (c) => (!c.peer || c.own || c.type === 'mine' ? 'mine' : c.human && HAS_PEOPLE() ? 'people' : 'peer');
 const segKnown = (sg) => !!document.querySelector(`#lseg [data-seg="${sg}"], #lsub [data-seg="${sg}"]`);
 const CH = { as: null, seg: SEG0, sub: SUB0, hasSys: false, sys: { msgs: [], waiting: 0 }, list: [], now: 0, sel: null, folder: 'all', q: '', last: 0, msgs: [], sending: false, timer: null, ltimer: null };
-const DIRS = { me: 'Ты', to_me: '', out: '→', in: '←' };
+const DIRS = { me: 'Я', to_me: '', out: '→', in: '←' };
 
 function chatPreview(c) {
   if (!c.last) return '<span class="pv-dim">нет сообщений</span>';
   const l = c.last, t = esc(l.text.replace(/[*_`#>]+/g, '').replace(/\s+/g, ' ').trim().slice(0, 90));   // без разметки Markdown
-  if (l.dir === 'me') return '<span class="pv-me">' + (CH.as ? 'Агент:' : 'Ты:') + '</span> ' + t;
+  if (l.dir === 'me') return '<span class="pv-me">' + (CH.as ? 'Агент:' : 'Я:') + '</span> ' + t;
   if (l.dir === 'out' || l.dir === 'in') return '<span class="pv-peer">' + (l.dir === 'out' ? '← письмо агенту' : '→ письмо от агента') + '</span>';   // текст переписки агентов не показываем
   return t;
 }
+// вид участника строки чатов: значок у каждого — человек, агент, служба
+function chatType(c) { return c.human || c.type === 'human' ? 'human' : c.service || c.type === 'service' ? 'service' : 'agent'; }
 function chatName(c) { return c.name && c.name !== 'агент' ? c.name : '@' + (c.nick || c.id); }
 
 function paintRows() {
@@ -68,7 +70,7 @@ function paintRows() {
     const li = document.createElement('li');
     li.className = 'row' + (CH.sel === c.id ? ' sel' : '');
     li.tabIndex = 0; li.setAttribute('role', 'button'); li.dataset.id = c.id;
-    li.innerHTML = `${avHtml(chatName(c), c.id, on, c.av)}<div class="rm"><div class="r1">${c.peer && c.type && segOf(c) !== 'mine' ? typeBadge(c.type) : ''}<b class="nm">${esc(chatName(c))}</b><span class="tm">${c.last ? esc(shortWhen(c.last.at)) : ''}</span></div>
+    li.innerHTML = `${avHtml(chatName(c), c.id, on, c.av)}<div class="rm"><div class="r1"><span class="nmw">${typeBadge(chatType(c))}<b class="nm">${esc(chatName(c))}</b></span><span class="tm">${c.last ? esc(shortWhen(c.last.at)) : ''}</span></div>
       <div class="r2"><span class="pv">${chatPreview(c)}</span>${c.unread ? `<b class="badge">${c.unread}</b>` : ''}</div></div>`;
     li.title = st;
     li.onclick = () => rowClick(c.id);
@@ -116,7 +118,7 @@ function paintSys() {
 function asRow(c) {
   const own = c.type === 'owner';
   return { id: c.id, peer: true, type: own ? 'human' : c.type, human: own || c.type === 'human', service: c.type === 'service', own,
-    name: own ? 'Ты, @' + ME.nick : c.name, nick: c.nick, addr: c.peer, av: c.av, seen: c.seen, unread: 0, created: 0,
+    name: own ? humanName(ME.name, ME.nick) : c.name, nick: c.nick, addr: c.peer, av: c.av, seen: c.seen, unread: 0, created: 0,
     last: c.last ? { dir: c.last.dir === 'out' ? 'me' : 'to_me', text: c.last.text, at: c.at } : null };
 }
 // «от чьего имени»: переключатель в шапке между балансом и профилем — я сам или мой серверный агент. Выбрал
@@ -126,16 +128,16 @@ function asPaint() {
   const box = $('as-menu'); if (!box) return;
   const mine = (CH.mine || []).filter((c) => !c.service);
   box.hidden = !mine.length; if (!mine.length) return;
-  const me = { id: '', name: '@' + ME.nick, sub: 'я сам' };
+  const me = { id: '', name: humanName(ME.name, ME.nick), sub: ME.name ? '@' + ME.nick + ' · от своего имени' : 'от своего имени', human: true };
   const items = [me, ...mine.map((c) => ({ id: c.id, name: chatName(c), sub: (c.admin ? 'администратор · ' : '') + '@' + ME.nick + '/' + (c.nick || c.id), av: c.av }))];
   const curI = items.find((x) => x.id === (CH.as || '')) || me;
   const sig = items.map((x) => x.id + x.name + x.sub + (x.av || '')).join('|') + '#' + (CH.as || '');
   box.classList.toggle('on', !!CH.as); document.body.classList.toggle('as-on', !!CH.as);
   if (box.dataset.sig === sig) return; box.dataset.sig = sig;
-  const avOf = (x) => (x.id ? avHtml(x.name, x.id, false, x.av) : `<span class="av me-av" aria-hidden="true">${esc(avatar(ME.nick, ME.nick).ini)}</span>`);
+  const avOf = (x) => (x.id ? avHtml(x.name, x.id, false, x.av) : `<span class="av me-av" aria-hidden="true">${esc(avatar(humanName(ME.name, ME.nick), ME.nick).ini)}</span>`);
   $('as-chip').innerHTML = `${avOf(curI)}<span class="as-t"><small>${CH.as ? 'от имени агента' : 'от своего имени'}</small><b>${esc(curI.name)}</b></span><svg class="as-ch" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg>`;
-  $('as-chip').dataset.tip = CH.as ? `Ты действуешь от имени агента «${curI.name}»: его чаты, его «Система», письма от его имени — с пометкой, что писал ты` : 'Ты действуешь от своего имени. Нажми, чтобы смотреть и писать от имени своего агента';
-  $('as-pop').innerHTML = '<div class="as-h">От чьего имени действовать</div>' + items.map((x) => `<button type="button" role="option" class="as-o${x.id === (CH.as || '') ? ' on' : ''}" data-id="${esc(x.id)}" aria-selected="${x.id === (CH.as || '')}">${avOf(x)}<span class="as-ot"><b>${esc(x.name)}</b><small>${esc(x.sub)}</small></span><svg class="as-tk" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>`).join('')
+  $('as-chip').dataset.tip = CH.as ? `Сейчас — от имени агента «${curI.name}»: его чаты, его «Система», письма от его имени с пометкой, что писал человек` : 'Сейчас — от своего имени. Нажми, чтобы смотреть и писать от имени своего агента';
+  $('as-pop').innerHTML = '<div class="as-h">От чьего имени действовать</div>' + items.map((x) => `<button type="button" role="option" class="as-o${x.id === (CH.as || '') ? ' on' : ''}" data-id="${esc(x.id)}" aria-selected="${x.id === (CH.as || '')}">${avOf(x)}<span class="as-ot"><b>${typeBadge(x.human ? 'human' : 'agent')}${esc(x.name)}</b><small>${esc(x.sub)}</small></span><svg class="as-tk" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>`).join('')
     + '<p class="as-f">От имени службы — позже.</p>';
   for (const b of $('as-pop').querySelectorAll('.as-o')) b.onclick = () => { asOpen(false, true); setAs(b.dataset.id || null); };
 }
@@ -151,7 +153,7 @@ function setAs(id) {
   if (CH.sel) closeChat();
   $('rows').innerHTML = ''; asPaint(); loadChats();
   const et = $('conv-empty-t'); if (et) { et.dataset.t0 = et.dataset.t0 || et.textContent;
-    et.textContent = CH.as ? `Выбери чат слева — переписка агента «${asName(CH.as)}» его глазами. Напишешь — письмо уйдёт от его имени с пометкой, что писал ты.` : et.dataset.t0; }
+    et.textContent = CH.as ? `Выбери чат слева — переписка агента «${asName(CH.as)}» его глазами. Напишешь — письмо уйдёт от его имени с пометкой, что писал человек.` : et.dataset.t0; }
   if (typeof window.netShow === 'function' && document.body.dataset.tab === 'net') window.netShow();
 }
 if ($('as-chip')) {
@@ -219,7 +221,7 @@ function paintHead() {
   const [st, on] = seenText(c.seen, CH.now);
   const a = avatar(chatName(c), c.id);
   $('c-av').className = 'av c' + a.k + (c.av ? ' img' : ''); $('c-av').innerHTML = (c.av ? `<img src="/av/${encodeURIComponent(c.id)}?v=${encodeURIComponent(c.av)}" alt="">` : esc(a.ini)) + (on ? '<i class="on"></i>' : '');
-  $('c-name').textContent = chatName(c);
+  $('c-name').innerHTML = typeBadge(chatType(c)) + esc(chatName(c));
   if (CH.as) {          // глазами агента: письмо уйдёт от его имени
     const me = (CH.mine || []).find((x) => x.id === CH.as);
     $('c-sub').innerHTML = `<span class="as-sub">от имени «${esc(me ? chatName(me) : CH.as)}»</span> · ${esc(c.addr || '')}`;
@@ -330,7 +332,7 @@ function sysCard(m) {
   if (m.sys === 'notice') {
     const k = m.text[0] === '✅' ? 'ok' : m.text[0] === '❌' ? 'no' : 'bad';
     el.className = 'bub sysn ' + k;
-    const by = a.decided_by && a.decided_by.kind === 'agent' ? 'Администратор «' + a.decided_by.name + '»' : a.decided_by && a.decided_by.kind === 'auto' ? 'Само' : 'Ты';
+    const by = a.decided_by && a.decided_by.kind === 'agent' ? 'Администратор «' + a.decided_by.name + '»' : a.decided_by && a.decided_by.kind === 'auto' ? 'Само' : (a.decided_by && a.decided_by.name) || humanName(ME.name, ME.nick);
     el.innerHTML = `<span>${{ ok: by + ' — одобрено', no: by + ' — отклонено', bad: 'Одобрено, но не выполнено' }[k]}: ${esc(a.what.length > 110 ? a.what.slice(0, 105).trimEnd() + '…' : a.what)} · агенту сообщено · ${esc(hm(m.at))}</span>`;
     return el;
   }
@@ -344,7 +346,7 @@ function sysCard(m) {
   const paint = () => {
     el.classList.toggle('wait', a.status === 'wait'); el.classList.toggle('done', a.status !== 'wait');   // ждёт — мерцает, решено — гаснет
     if (a.status !== 'wait') { const [k, t] = AP_ST[a.status] || ['', a.status], d = a.decided_by;    // кто решил
-      const by = !d ? '' : d.kind === 'agent' ? `решил администратор <b>${esc(d.name)}</b>` : d.kind === 'auto' ? 'решилось само: доверие уже было' : `решил ${CH.as ? 'человек' : 'ты'}, <b>${esc(d.name)}</b>`;
+      const by = !d ? '' : d.kind === 'agent' ? `решил администратор <b>${esc(d.name)}</b>` : d.kind === 'auto' ? 'решилось само: доверие уже было' : `решил человек <b>${esc(d.name)}</b>`;
       box.innerHTML = `<span class="sys-st ${k}">${esc(t)}</span>${by ? `<span class="sys-by">${by}</span>` : ''}`; return; }
     if (CH.sel === SYS && CH.sys.can_decide === false) { box.innerHTML = '<span class="sys-st">Ждёт решения человека или администратора</span>'; return; }
     box.innerHTML = '<button class="btn ghost sm" type="button" data-no>Отклонить</button><button class="btn sm" type="button" data-yes>Одобрить</button><span class="err" role="alert"></span>';
@@ -413,7 +415,7 @@ function bubble(m) {
   const long = peer ? (m.text.length > 280 || m.text.split('\n').length > 5) : (m.text.length > 700 || m.text.split('\n').length > 14);
   const html = m.format === 'html';
   // письмо агента — Markdown: структура вместо простыни; свои письма человека — как набрал
-  const md = !html && m.dir !== 'me' && typeof window.renderMarkdown === 'function';
+  const md = !html && (m.dir !== 'me' || (CH.as && !m.by_human)) && typeof window.renderMarkdown === 'function';
   el.innerHTML = `${hd}<div class="tx${html || md ? ' rep-html' : ''}${md ? ' md' : ''}${long ? (peer ? ' clamp short' : ' clamp') : ''}">${html ? '' : md ? window.renderMarkdown(m.text) : linkify(m.text)}</div>${long ? '<button class="more" type="button">Показать целиком</button>' : ''}${chatFiles(m.files)}<div class="meta">${m.by_human ? `<span class="byh" data-tip="Это письмо написал человек ${esc(m.by_human)} от имени агента">✍ ${esc(m.by_human)}</span>` : ''}${esc(hm(m.at))}${tick}</div>`;
   if (html) repHtml(el.querySelector('.tx'), m.text);
   if (long) el.querySelector('.more').onclick = (e) => { const t = el.querySelector('.tx'); t.classList.toggle('clamp');

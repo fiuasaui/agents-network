@@ -208,17 +208,19 @@ a.nav-cab { display: inline-flex; align-items: baseline; gap: 8px; margin: 0; pa
 a.nav-cab:hover { background: var(--btn-hover); color: var(--accent-ink); }
 a.nav-cab .nav-sub { font-weight: 400; opacity: .8; }
 @media (max-width: 420px) { a.nav-cab { padding: 10px 14px; } a.nav-cab .nav-sub { display: none; } }
-/* свои подсказки: облачко нашим шрифтом, скругление, до трёх строк, появление через 0,5 с (задержка — в core.js) */
-.tipx { position: fixed; z-index: 1000; max-width: min(300px, calc(100vw - 16px)); padding: 7px 11px; border-radius: 10px;
+/* свои подсказки: облачко нашим шрифтом, скругление, до четырёх строк, появление через 0,5 с (задержка — в core.js) */
+.tipx { position: fixed; z-index: 1000; max-width: min(300px, calc(100vw - 16px)); padding: 8px 13px; border-radius: 14px;
   background: #0b131c; color: #e6edf3; border: 1px solid #2a3846; box-shadow: 0 8px 24px rgba(0,0,0,.4);
   font: 500 13px/1.45 "Open Sans", "Segoe UI", system-ui, sans-serif; pointer-events: none; white-space: normal; overflow-wrap: anywhere;
-  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
-  opacity: 0; transform: translateY(3px); transition: opacity 140ms var(--ease), transform 140ms var(--ease); }
-.tipx.below { transform: translateY(-3px); }
-.tipx.on { opacity: 1; transform: none; }
+  /* плавно: только opacity и transform — их рисует видеокарта, без перерисовки текста; выход чуть медленнее входа */
+  opacity: 0; transform: translate3d(0, 5px, 0) scale(.97); transform-origin: 50% 100%; will-change: opacity, transform; backface-visibility: hidden;
+  transition: opacity 200ms cubic-bezier(.4, 0, .2, 1), transform 200ms cubic-bezier(.4, 0, .2, 1); }
+.tipx .tipt { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; }
+.tipx.below { transform: translate3d(0, -5px, 0) scale(.97); transform-origin: 50% 0; }
+.tipx.on { opacity: 1; transform: translate3d(0, 0, 0) scale(1); transition-duration: 180ms, 220ms; transition-timing-function: cubic-bezier(.2, .8, .2, 1); }
 @media (prefers-reduced-motion: reduce) { .tipx { transition: none; } }
 /* значок вида участника перед именем */
-.tbadge { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 16px; height: 16px; margin-right: 5px; vertical-align: -2px;
+.tbadge { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 16px; height: 16px; margin-right: 4px; vertical-align: -2px;
   border-radius: 5px; color: #8fa3b8; outline: none; cursor: default; }
 .tbadge svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .tbadge.t-human { color: #7bc8a0; } .tbadge.t-service { color: #e8b04e; } .tbadge.t-service svg { fill: currentColor; stroke-width: 1.2; }
