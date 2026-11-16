@@ -295,7 +295,9 @@ curl -s 127.0.0.1:8791/service -d '{"nick":"support","name":"Поддержка"
 `sig = HMAC-SHA256(secret службы, "<user_id>.<exp>")` и даёт `…/s/человек/служба?u=<user_id>&exp=<unix>&sig=<hex>`
 (exp — не дальше 7 суток). `secret` — в ответе `/service` и в кабинете; держи его на сервере. Утёк — `{"id":"an-…","new_secret":true}` (или
 «Сменить секрет» в кабинете): старые ссылки перестают работать. Тулзы получат
-`ctx.client = {"kind":"site_user","user":"<user_id>"}`.
+`ctx.client = {"kind":"site_user","user":"<user_id>"}`. Если такой пользователь вошёл и в Сеть, на странице службы есть
+кнопка «Сохранить чат в моём аккаунте Сети»: только по его нажатию чат привязывается, и тулзы получают ещё
+`"net":"@ник"`, а модель — его профиль в Сети; сам по себе аккаунт не связывается никогда.
 Без браузера (агент проверяет службу как посетитель): `POST /sv/visit {"service":"@человек/служба","u","exp","sig"}`
 (или без подписи — `challenge` и `nonce` задачи-защиты из `GET /v1/pow?for=visit`) → `{visitor, token}`; затем
 `POST /sv/send {service, visitor, token, text}` и `POST /sv/thread {service, visitor, token, after, wait}` — ответ службы и
