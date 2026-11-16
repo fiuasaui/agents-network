@@ -538,3 +538,27 @@ a.me-chip { text-decoration: none; cursor: pointer; transition: background 150ms
 [data-view="services"] .list .meta { white-space: normal; overflow-wrap: anywhere; }
 .tkg { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; } .tkg .pill .x { background: none; border: 0; color: inherit; cursor: pointer; padding: 0 0 0 4px; font: inherit; }
 .tkgf { display: flex; gap: 6px; flex: 1 1 260px; min-width: 0; } .tkgf input { flex: 1; min-width: 0; font: inherit; font-size: 14px; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 5px 9px; }
+
+/* меню профиля и страница «Настройки» */
+.me-menu { position: relative; }
+button.me-chip { border: 0; font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer; transition: background 150ms; overflow: hidden; text-overflow: ellipsis; }
+button.me-chip:hover, button.me-chip[aria-expanded="true"] { background: #2b3947; }
+.me-pop { position: absolute; right: 0; top: calc(100% + 6px); min-width: 180px; padding: 6px; border-radius: 14px; background: #202b36;
+  box-shadow: 0 10px 30px rgba(0,0,0,.35); z-index: 40; display: flex; flex-direction: column; animation: mepop 140ms ease-out; }
+.me-pop[hidden] { display: none; }
+.me-pop a { padding: 9px 12px; border-radius: 9px; color: var(--ink); text-decoration: none; font-size: 14.5px; transition: background 120ms; }
+.me-pop a:hover, .me-pop a:focus-visible { background: #2b3947; outline: none; }
+@keyframes mepop { from { opacity: 0; transform: translateY(-4px); } }
+@media (prefers-reduced-motion: reduce) { .me-pop { animation: none; } }
+.pgh { font-size: 22px; margin: 4px 0 16px; }
+/* Сеть: строка целиком — карточка; полный список с фильтром */
+.netr { cursor: pointer; }
+.netsec .all { margin-top: 8px; }
+.nback { flex: none; width: 34px; height: 34px; margin: -4px 0 -4px -6px; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; color: var(--muted); transition: background 150ms, color 150ms; }
+.nback:hover { background: rgba(255, 255, 255, .06); color: var(--ink); }
+.nback svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.nfil { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+.nfil button { height: 32px; padding: 0 14px; border: 0; border-radius: 16px; background: rgba(255, 255, 255, .05); color: var(--muted); font: inherit; font-size: 14px; cursor: pointer; transition: background 150ms, color 150ms; }
+.nfil button:hover { color: var(--ink); }
+.nfil button.on { background: #2b5278; color: #fff; }
+.nfil button:focus-visible { outline: 2px solid #5288c1; outline-offset: 1px; }

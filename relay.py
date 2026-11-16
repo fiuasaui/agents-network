@@ -330,7 +330,7 @@ class Relay:
             else:
                 self.untrust(me, peer)
         return {"ok": True, "peer": peer, "trusted": bool(q.get("on", True)),
-                "note": "доверие — от человека человеку: все агенты обеих сторон пишут друг другу"}
+                "note": "доверие — от этого агента: писать можно только ему, остальные агенты твоего человека не открыты; обратно — отдельным разрешением"}
 
     def addr_of(self, aid):
         """Адрес агента словами: @человек/ник, @ник или ID."""
@@ -406,8 +406,8 @@ class Relay:
         if self.db.execute("SELECT 1 FROM agents s JOIN agents d ON d.owner=s.owner WHERE s.id=? AND d.id=? AND s.owner IS NOT NULL",
                            (src, dst)).fetchone():
             return "same-owner"
-        # доверие — от человека человеку: любой агент человека получателя доверил отправителю, любому агенту его
-        # человека или самому человеку — пишут все агенты обоих. Агент без человека — сам себе «человек»
+        # доверие — на уровне агента: получатель (именно этот агент) доверил отправителю или его человеку; доверие
+        # человеку открывает всех его агентов-отправителей, но у получателя открыт только тот агент, что доверил
         if self.trusts(dst, src):
             return "trusted"
         if self.db.execute("SELECT 1 FROM grants WHERE owner=? AND peer=? AND until>?", (dst, src, time.time())).fetchone():
@@ -425,11 +425,15 @@ class Relay:
         return o, ([a for a, in self.db.execute("SELECT id FROM agents WHERE owner=?", (o,))] if o else [aid])
 
     def trusts(self, dst, src):
-        """Доверяет ли сторона получателя стороне отправителя. Под LOCK."""
-        _, da = self.side(dst)
-        so, sa = self.side(src)
-        peers = sa + ([so] if so else [])
-        if not da or not peers:       # человек без агентов никому не доверял: доверие ставят его агенты
+        """Доверяет ли получатель отправителю. Отправитель — сам или через своего человека. Получатель-человек (ow-…) — круг его
+        агентов: человеку пишут, если доверил любой его агент. Под LOCK."""
+        so, _ = self.side(src)
+        peers = [src] + ([so] if so and so != src else [])
+        if self.db.execute("SELECT 1 FROM owners WHERE id=?", (dst,)).fetchone():
+            _, da = self.side(dst)
+        else:
+            da = [dst]
+        if not da:       # человек без агентов никому не доверял: доверие ставят его агенты
             return False
         return bool(self.db.execute(f"SELECT 1 FROM trust WHERE owner IN ({','.join('?' * len(da))}) AND peer IN ({','.join('?' * len(peers))}) LIMIT 1",
                                     (*da, *peers)).fetchone())
@@ -444,12 +448,11 @@ class Relay:
         return {"ok": True, "closed": n, "peer": self.addr_of(peer)}
 
     def untrust(self, me, peer):
-        """Снять доверие стороны me к стороне peer целиком: иначе другой агент того же человека держал бы его. Под LOCK."""
-        _, da = self.side(me)
+        """Снять доверие агента me: к агенту peer — только к нему;
+        к человеку peer — к нему и ко всем его агентам. Под LOCK."""
         o = self.db.execute("SELECT id FROM owners WHERE id=?", (peer,)).fetchone()
-        po, pa = (o[0], [a for a, in self.db.execute("SELECT id FROM agents WHERE owner=?", (o[0],))]) if o else self.side(peer)
-        peers = pa + ([po] if po else [])
-        self.db.execute(f"DELETE FROM trust WHERE owner IN ({','.join('?' * len(da))}) AND peer IN ({','.join('?' * len(peers))})", (*da, *peers))
+        peers = [peer] + ([a for a, in self.db.execute("SELECT id FROM agents WHERE owner=?", (o[0],))] if o else [])
+        self.db.execute(f"DELETE FROM trust WHERE owner=? AND peer IN ({','.join('?' * len(peers))})", (me, *peers))
 
     def target(self, to):
         """Получатель письма: ID агента (как resolve) или ID чужого человека `ow-…`."""
@@ -766,16 +769,18 @@ class Relay:
                 **({"av": r[9]} if r[9] else {}), "human": r[11], **st}
 
     def agent_stats(self, aid):
-        """Счётчики агента для публичной карточки. Стороны — люди (или агент без человека). Под LOCK."""
+        """Счётчики агента для публичной карточки: доверие именно этому агенту и от него, в людях (агент без человека — сам
+        себе человек); переписка — в людях. Под LOCK."""
         o, mine = self.side(aid)
         ph = ",".join("?" * len(mine))
         peers = mine + ([o] if o else [])
         pp = ",".join("?" * len(peers))
         key = "COALESCE(z.owner, z.id)"
-        trusted_by, = self.db.execute(f"SELECT COUNT(DISTINCT {key}) FROM trust t JOIN agents z ON z.id=t.owner WHERE t.peer IN ({pp}) "
-                                      f"AND z.id NOT IN ({ph})", (*peers, *mine)).fetchone()
+        # доверие — у конкретного агента, счёт — в людях: 150 агентов одного человека — это один человек
+        trusted_by, = self.db.execute(f"SELECT COUNT(DISTINCT {key}) FROM trust t JOIN agents z ON z.id=t.owner WHERE t.peer=? "
+                                      f"AND z.id NOT IN ({ph})", (aid, *mine)).fetchone()
         trusts, = self.db.execute(f"SELECT COUNT(DISTINCT COALESCE(z.owner, z.id, t.peer)) FROM trust t LEFT JOIN agents z ON z.id=t.peer "
-                                  f"WHERE t.owner IN ({ph})", mine).fetchone()
+                                  f"WHERE t.owner=? AND COALESCE(z.owner, t.peer) IS NOT ?", (aid, o)).fetchone()
         sent, = self.db.execute("SELECT COUNT(*) FROM msgs m JOIN agents z ON z.id=m.dst WHERE m.src=? AND (z.owner IS NULL OR z.owner IS NOT ?)", (aid, o)).fetchone()
         got, = self.db.execute("SELECT COUNT(*) FROM msgs m JOIN agents z ON z.id=m.src WHERE m.dst=? AND (z.owner IS NULL OR z.owner IS NOT ?)", (aid, o)).fetchone()
         talked, = self.db.execute(f"SELECT COUNT(DISTINCT {key}) FROM msgs m JOIN agents z ON z.id = CASE WHEN m.src=? THEN m.dst ELSE m.src END "
