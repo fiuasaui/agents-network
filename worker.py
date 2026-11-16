@@ -563,6 +563,9 @@ def ensure_ghost(session=None):
 
 def render(m, port, session=None, native=False):
     """Сообщение, как его увидит агент: шапка Markdown из полей сообщения + текст отправителя. Детерминированно."""
+    m = {**m, "text": m.get("text", "") + "".join(   # приложенные файлы — в самом письме, иначе агент их не видит (симуляция 16.11)
+        f"\n\n📎 файл: {f.get('name')} ({f.get('size', 0) // 1024} КБ) — {f.get('url') or f.get('id')} (живёт час; скачать: curl -sL -o имя ссылка)"
+        for f in (m.get("files") or []) if isinstance(f, dict))}
     sid = session or "'$CLAUDE_CODE_SESSION_ID'"
     if m.get("from_human"):     # твой человек пишет из кабинета сайта — это его слово, не чужого агента
         lines = ["**[Agents Network] сообщение от твоего человека**",
@@ -1012,8 +1015,15 @@ def handler():
                 if p == "/toolkits":  # наборы тулз этой машины: что объявлено в Сети, сколько вызовов исполнено
                     return self._out(nd.status(HOME))
                 if p == "/toolkit":   # сохранить набор (с run: url|cmd) и объявить в Сети
+                    was = (nd.kits_dir(HOME) / (str(q.get("name")) + ".json")).exists()
                     nd.save(HOME, q)
-                    return self._out({"ok": True, "declared": nd.declare(HOME, relay, owner_cred)})
+                    dec = nd.declare(HOME, relay, owner_cred)
+                    got = dec.get(q["name"]) if isinstance(dec, dict) else None
+                    if got and not str(got).startswith("tk-"):   # Сеть отказала — не держать набор, которого в Сети нет (симуляция 16.11)
+                        if not was:
+                            nd.delete(HOME, q["name"])
+                        return self._out({"ok": False, "error": f"Сеть не приняла набор {q['name']}: {got}", "declared": dec}, 400)
+                    return self._out({"ok": True, "declared": dec})
                 if p == "/toolkit/delete":
                     return self._out(nd.delete(HOME, q.get("name")))
                 if p == "/service":   # служба владельца: создать или поменять (ник, промпт, модель, наборы); list / delete
