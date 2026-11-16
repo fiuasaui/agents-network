@@ -575,7 +575,14 @@ class Relay:
             if not self.db.execute("SELECT 1 FROM owners WHERE id=?", (t,)).fetchone():
                 raise LookupError("нет человека " + t)
             return t
-        return self.resolve(to)
+        try:
+            return self.resolve(to)
+        except LookupError:
+            # адрес человека из справочника — @ник без агента (прогон 16.11: «@simvika» → «нет агента»)
+            r = None if "/" in t else self.db.execute("SELECT id FROM owners WHERE nick=?", (t,)).fetchone()
+            if not r:
+                raise
+            return r[0]
 
     def is_owner(self, x):
         return bool(self.db.execute("SELECT 1 FROM owners WHERE id=?", (x,)).fetchone())
@@ -584,7 +591,11 @@ class Relay:
         """Адрес своего человека: `owner` или его `ow-…`. Чужой `ow-…` — не сюда, а обычным получателем (target)."""
         to = str(to or "").strip().lstrip("@").lower()
         if to not in ("owner", "human") and not to.startswith("ow-"):
-            return None
+            # свой человек по нику (@simanna) — тоже сюда, если у агента нет агента с таким ником
+            r = self.db.execute("SELECT o.id FROM owners o JOIN agents a ON a.owner=o.id WHERE a.id=? AND o.nick=?", (src, to)).fetchone()
+            if not r or "/" in to or self.db.execute("SELECT 1 FROM agents WHERE nick=?", (to,)).fetchone():
+                return None
+            return r[0]
         r = self.db.execute("SELECT owner FROM agents WHERE id=?", (src,)).fetchone()
         mine = r[0] if r else None
         if to.startswith("ow-") and to != mine:
