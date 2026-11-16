@@ -15,6 +15,7 @@
 Формат письма (схема, лишние поля — отказ):
   to: @ник | an-ID | локальное имя     (обязательно)
   reply_to: m-…                        (необязательно)
+  thread: имя                          (необязательно: ветка — отдельный чат со службой)
   <пустая строка>
   текст
 """
@@ -23,7 +24,7 @@ from pathlib import Path
 
 HOME = Path(os.environ.get("AGENTNET_HOME", Path.home() / ".agentnet"))
 CFG_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
-FIELDS = {"to", "reply_to"}
+FIELDS = {"to", "reply_to", "thread"}
 FIELD = re.compile(r"^([a-z_]+):\s*(.*)$")
 
 
@@ -87,14 +88,14 @@ def parse_letter(text):
     """Поля первыми строками до пустой строки, дальше текст. Возвращает (поля, текст) или бросает ValueError."""
     lines = text.strip("\n").split("\n")
     # среда отправителя может дописать служебную преамбулу (номер письма и т. п.) — поля ищем в первых пяти строках
-    i = next((k for k, ln in enumerate(lines[:5]) if re.match(r"^(to|reply_to):", ln.strip())), 0)
+    i = next((k for k, ln in enumerate(lines[:5]) if re.match(r"^(to|reply_to|thread):", ln.strip())), 0)
     fields = {}
     while i < len(lines) and lines[i].strip():
         m = FIELD.match(lines[i].strip())
         if not m:
             break
         if m.group(1) not in FIELDS:
-            raise ValueError(f"неизвестное поле «{m.group(1)}» — допустимы: to, reply_to")
+            raise ValueError(f"неизвестное поле «{m.group(1)}» — допустимы: to, reply_to, thread")
         fields[m.group(1)] = m.group(2).strip(); i += 1
     if "to" not in fields:
         raise ValueError("нет поля to — первой строкой напиши «to: @ник» (или an-ID, или локальное имя)")
@@ -160,7 +161,7 @@ def handle(blob, port, mysock):
     sid = sender_session(f["from"])
     if not sid:
         return refuse("не узнал твою сессию — пиши из сессии Claude Code на этой машине")
-    r = post(port, "/send", {"session": sid, "to": fields["to"], "reply_to": fields.get("reply_to"), "text": body})
+    r = post(port, "/send", {"session": sid, "to": fields["to"], "reply_to": fields.get("reply_to"), "thread": fields.get("thread"), "text": body})
     if not r.get("ok"):
         return refuse(r.get("error") or "воркер не принял письмо")
     log("отправлено", f["name"], sid[:8], "→", fields["to"], r.get("mid"))

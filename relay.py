@@ -46,6 +46,8 @@ def db_open(path):
         c.execute("ALTER TABLE msgs ADD COLUMN fmt TEXT")
     if "files" not in mcols:        # приложенные файлы письма: JSON [{id, name, size, mime}]
         c.execute("ALTER TABLE msgs ADD COLUMN files TEXT")
+    if "thread" not in mcols:       # ветка переписки: NULL — общий чат; служба в режиме «много чатов» ведёт каждую отдельно
+        c.execute("ALTER TABLE msgs ADD COLUMN thread TEXT")
     if "seen" not in cols:          # когда агент последний раз забирал почту — «в сети» в кабинете
         c.execute("ALTER TABLE agents ADD COLUMN seen REAL")
     if "hidden" not in cols:        # скрытый агент: в сети не показывается вовсе, пишет ему его человек и те, кому разрешено
@@ -134,6 +136,19 @@ def clean_html(t):
     c = _Clean()
     c.feed(t); c.close()
     return "".join(c.out) + "".join(f"</{x}>" for x in reversed(c.open))
+
+
+THREAD_RE = re.compile(r"^[\w.-]{1,40}$")
+
+
+def thread_of(q):
+    """Ветка письма: необязательное имя до 40 знаков — буквы, цифры, «._-». Нет — общий чат."""
+    t = str(q.get("thread") or "").strip()
+    if not t:
+        return None
+    if not THREAD_RE.match(t):
+        raise ValueError("thread — до 40 знаков: буквы, цифры, точка, дефис, подчёркивание")
+    return t
 
 
 def fmt(q):
@@ -482,6 +497,7 @@ class Relay:
         if fj and not text.strip():
             text = "(файл)"
         self.check_text(text)
+        th = thread_of(q)
         rto = q.get("reply_to")
         if rto:     # ответ — только на письмо своей переписки: иначе связка «ответ → разговор» рвётся молча
             with LOCK:
@@ -492,8 +508,8 @@ class Relay:
             if human:        # своему человеку: в кабинет сайта (или в местный интерфейс), будить никого не нужно
                 text = clean_html(text) if fmt(q) else text
                 mid = "m-" + secrets.token_hex(6)
-                self.db.execute("INSERT INTO msgs (mid, src, dst, text, reply_to, at, fmt, files) VALUES (?,?,?,?,?,?,?,?)",
-                                (mid, src, human, text, q.get("reply_to"), time.time(), fmt(q), fj))
+                self.db.execute("INSERT INTO msgs (mid, src, dst, text, reply_to, at, fmt, files, thread) VALUES (?,?,?,?,?,?,?,?,?)",
+                                (mid, src, human, text, q.get("reply_to"), time.time(), fmt(q), fj, th))
                 WAKE.notify_all()
                 return {"ok": True, "mid": mid, "how": "owner"}
             dst = self.target(q.get("to"))
@@ -507,12 +523,12 @@ class Relay:
             mid = "m-" + secrets.token_hex(6)
             now = time.time()
             text = clean_html(text) if fmt(q) else text
-            self.db.execute("INSERT INTO msgs (mid, src, dst, text, reply_to, at, fmt, files) VALUES (?,?,?,?,?,?,?,?)",
-                            (mid, src, dst, text, q.get("reply_to"), now, fmt(q), fj))
+            self.db.execute("INSERT INTO msgs (mid, src, dst, text, reply_to, at, fmt, files, thread) VALUES (?,?,?,?,?,?,?,?,?)",
+                            (mid, src, dst, text, q.get("reply_to"), now, fmt(q), fj, th))
             # получатель может ответить отправителю без обмена ID (чат-бот, разовое обращение)
             self.db.execute("INSERT OR REPLACE INTO grants VALUES (?,?,?)", (src, dst, now + REPLY_TTL))
             WAKE.notify_all()
-        return {"ok": True, "mid": mid, "how": how}
+        return {"ok": True, "mid": mid, "how": how, **({"thread": th} if th else {})}
 
     def inbox(self, q):
         me, wait = self.auth(q), min(float(q.get("wait") or 0), 50)
@@ -527,7 +543,7 @@ class Relay:
             mine = (self.db.execute("SELECT owner FROM agents WHERE id=?", (me,)).fetchone() or [None])[0]
             while True:
                 rows = self.db.execute(
-                    "SELECT m.mid, m.src, a.name, m.text, m.reply_to, m.at, a.nick, COALESCE(o.nick, h.nick), h.id, m.fmt, m.files FROM msgs m "
+                    "SELECT m.mid, m.src, a.name, m.text, m.reply_to, m.at, a.nick, COALESCE(o.nick, h.nick), h.id, m.fmt, m.files, m.thread FROM msgs m "
                     "LEFT JOIN agents a ON a.id=m.src LEFT JOIN owners o ON o.id=a.owner LEFT JOIN owners h ON h.id=m.src "
                     "WHERE m.dst=? AND m.acked IS NULL AND m.at>?" + sk + " ORDER BY m.at LIMIT 20", (me, time.time() - KEEP, *skip)).fetchall()
                 left = end - time.time()
@@ -539,7 +555,8 @@ class Relay:
         return {"msgs": [{"mid": r[0], "from": r[1], "from_name": r[2] or (f"@{r[7]}" if r[8] else None), "text": r[3], "reply_to": r[4],
                           "at": r[5], "from_nick": r[6], "from_owner": r[7],
                           **({"from_human": True} if r[8] and r[8] == mine else {"from_person": True} if r[8] else {}),
-                          **({"format": r[9]} if r[9] else {}), **({"files": self.files_out(r[10])} if r[10] else {})} for r in rows]}
+                          **({"format": r[9]} if r[9] else {}), **({"files": self.files_out(r[10])} if r[10] else {}),
+                          **({"thread": r[11]} if r[11] else {})} for r in rows]}
 
     def history(self, q):
         """Вся переписка агента, включая прочитанное: свежее сначала, до `limit` (≤100) писем,
@@ -553,15 +570,18 @@ class Relay:
                 peer = self.target(q.get("peer"))
                 w += " AND (m.src=? OR m.dst=?)"
                 args += [peer, peer]
+            if "thread" in q:       # одна ветка; пустая строка — общий чат
+                w += " AND COALESCE(m.thread, '')=?"
+                args.append(thread_of(q) or "")
             rows = self.db.execute(
-                "SELECT m.mid, m.src, m.dst, m.text, m.reply_to, m.at, m.acked, m.fmt, m.files FROM msgs m WHERE " + w + " ORDER BY m.at DESC LIMIT ?",
+                "SELECT m.mid, m.src, m.dst, m.text, m.reply_to, m.at, m.acked, m.fmt, m.files, m.thread FROM msgs m WHERE " + w + " ORDER BY m.at DESC LIMIT ?",
                 (*args, lim)).fetchall()
             out = [{"mid": mid, "dir": "out" if src == me else "in", "from": src, "to": dst, "peer": self.addr_of(dst if src == me else src),
                     "text": t, "reply_to": r, "at": at, **({"read": True} if ak else {}), **({"format": f} if f else {}),
-                    **({"files": self.files_out(fl)} if fl else {})}
-                   for mid, src, dst, t, r, at, ak, f, fl in rows]
+                    **({"files": self.files_out(fl)} if fl else {}), **({"thread": th} if th else {})}
+                   for mid, src, dst, t, r, at, ak, f, fl, th in rows]
         return {"msgs": out, **({"next": out[-1]["at"]} if len(out) == lim else {}),
-                "hint": "свежее сначала; следующая страница — before из next; peer — переписка с одним адресатом"}
+                "hint": "свежее сначала; следующая страница — before из next; peer — переписка с одним адресатом; thread — одна ветка"}
 
     def ack(self, q):
         me = self.auth(q)
