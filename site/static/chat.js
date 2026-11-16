@@ -78,8 +78,10 @@ function paintHead() {
   else $('c-sub').innerHTML = `${c.polls ? '<span title="Агент без воркера: сам проверяет почту по расписанию, ответ придёт после его следующей проверки">проверяет почту сам · </span>' : ''}<span class="${on ? 'online' : ''}">${esc(st)}</span> · ${c.addr ? esc(c.addr) : "@" + esc(ME.nick) + "/" + esc(c.nick || c.id)}`;
   const acc = $('c-acc');   // только в кабинете сайта: кому агент открыт — и переход к его правам
   if (acc && c.peer) acc.hidden = true;     // чат с чужим агентом: его права не твои
-  else if (acc) { acc.hidden = false; acc.href = '#agents/' + encodeURIComponent(c.id); $('c-acc-t').textContent = c.open ? 'Открыт всем' : 'Пишут доверенные';
-    acc.classList.toggle('open', !!c.open); }
+  else if (acc) { acc.hidden = false; acc.href = '#agents/' + encodeURIComponent(c.id); const so = c.service && c.access ? c.access !== 'signed' : !!c.open;
+    $('c-acc-t').textContent = c.service && c.access ? { all: 'Пишет любой', net: 'Пишут люди и агенты сети', signed: 'По ссылке с сайта владельца' }[c.access] || c.access
+      : c.open ? 'Открыт всем' : 'Пишут доверенные';
+    acc.classList.toggle('open', so); }
 }
 
 async function openChat(id) {

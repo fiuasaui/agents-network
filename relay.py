@@ -186,7 +186,7 @@ class Relay:
         with LOCK:
             if self.db.execute("SELECT 1 FROM owners WHERE nick=?", (n,)).fetchone():
                 raise FileExistsError(f"ник человека @{n} занят")
-            self.db.execute("INSERT INTO owners VALUES (?,?,?,?)", (oid, sec, n, time.time()))
+            self.db.execute("INSERT INTO owners (id, secret, nick, created) VALUES (?,?,?,?)", (oid, sec, n, time.time()))
         return {"owner": oid, "owner_secret": sec, "nick": n}
 
     def owner_rename(self, oid, nick):
@@ -316,7 +316,7 @@ class Relay:
             if ow and not self.db.execute("SELECT 1 FROM agents WHERE nick=?", (raw,)).fetchone():
                 peer = ow[0]    # доверие человеку — всем его агентам
                 if q.get("on", True):
-                    self.db.execute("INSERT OR REPLACE INTO trust VALUES (?,?,?)", (me, peer, time.time()))
+                    self.db.execute("INSERT OR REPLACE INTO trust (owner, peer, at) VALUES (?,?,?)", (me, peer, time.time()))
                     self.knock_answer(me, peer, True)      # просил сам человек — ему письмо «пиши»
                 else:
                     self.untrust(me, peer)
@@ -325,7 +325,7 @@ class Relay:
             if not self.db.execute("SELECT 1 FROM agents WHERE id=?", (peer,)).fetchone():
                 raise LookupError("нет агента " + peer)
             if q.get("on", True):
-                self.db.execute("INSERT OR REPLACE INTO trust VALUES (?,?,?)", (me, peer, time.time()))
+                self.db.execute("INSERT OR REPLACE INTO trust (owner, peer, at) VALUES (?,?,?)", (me, peer, time.time()))
                 self.knock_answer(me, peer, True)
             else:
                 self.untrust(me, peer)
@@ -388,14 +388,14 @@ class Relay:
             n, = self.db.execute("SELECT COUNT(*) FROM knocks WHERE src=? AND at>?", (src, now - 24 * 3600)).fetchone()
             if n >= 20:
                 raise RateLimit("не больше 20 просьб в сутки", 3600)
-            self.db.execute("INSERT OR REPLACE INTO knocks VALUES (?,?,?,?)", (src, dst, now, note))
+            self.db.execute("INSERT OR REPLACE INTO knocks (src, dst, at, note) VALUES (?,?,?,?)", (src, dst, now, note))
             extra = self.ask_extra(src, dst, note)
             me = self.addr_of(src)
             self.db.execute("INSERT INTO msgs (mid, src, dst, text, at) VALUES (?,?,?,?,?)", ("m-" + secrets.token_hex(6), src, dst,
                             f"🔑 {me} просит разрешения писать тебе" + (f": «{note}»." if note else ".") + (f" {extra}" if extra else
                             f" Разрешить — POST /trust {{\"peer\": \"{me}\"}}; отказать — POST /trust с \"on\": false или просто не отвечать."),
                             now))
-            self.db.execute("INSERT OR REPLACE INTO grants VALUES (?,?,?)", (src, dst, now + REPLY_TTL))
+            self.db.execute("INSERT OR REPLACE INTO grants (owner, peer, until) VALUES (?,?,?)", (src, dst, now + REPLY_TTL))
             WAKE.notify_all()
         return {"ok": True, "asked": self.addr_of(dst), "message": "просьба отправлена: решит агент или его человек, ответ придёт письмом"}
 
@@ -526,7 +526,7 @@ class Relay:
             self.db.execute("INSERT INTO msgs (mid, src, dst, text, reply_to, at, fmt, files, thread) VALUES (?,?,?,?,?,?,?,?,?)",
                             (mid, src, dst, text, q.get("reply_to"), now, fmt(q), fj, th))
             # получатель может ответить отправителю без обмена ID (чат-бот, разовое обращение)
-            self.db.execute("INSERT OR REPLACE INTO grants VALUES (?,?,?)", (src, dst, now + REPLY_TTL))
+            self.db.execute("INSERT OR REPLACE INTO grants (owner, peer, until) VALUES (?,?,?)", (src, dst, now + REPLY_TTL))
             WAKE.notify_all()
         return {"ok": True, "mid": mid, "how": how, **({"thread": th} if th else {})}
 
@@ -629,7 +629,7 @@ class Relay:
                 raise PermissionError(f"{self.addr_of(dst)} пока не принимает твои письма — попроси разрешения")
             mid, now = "m-" + secrets.token_hex(6), time.time()
             self.db.execute("INSERT INTO msgs (mid, src, dst, text, reply_to, at, files) VALUES (?,?,?,?,?,?,?)", (mid, owner, dst, text, reply_to, now, fj))
-            self.db.execute("INSERT OR REPLACE INTO grants VALUES (?,?,?)", (owner, dst, now + REPLY_TTL))
+            self.db.execute("INSERT OR REPLACE INTO grants (owner, peer, until) VALUES (?,?,?)", (owner, dst, now + REPLY_TTL))
             WAKE.notify_all()
         return {"ok": True, "mid": mid, "how": how}
 

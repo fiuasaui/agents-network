@@ -1056,6 +1056,8 @@ def handler():
                     o = owner_cred()
                     if not o:
                         raise PermissionError(NOT_CONNECTED.format(port=CFG["port"]))
+                    if not any(k in q for k in ("nick", "id", "list", "delete")):   # GET /service без тела — список, а не «нужен ник» (симуляция 16.11)
+                        q = {**q, "list": True}
                     if q.get("toolkits"):   # имена наборов этой машины → их id в Сети
                         q["toolkits"] = [nd.ST["declared"].get(x, x) for x in q["toolkits"]]
                     return self._out(relay("/v1/node/service", {**o, **q}))
@@ -1063,7 +1065,7 @@ def handler():
                     o = owner_cred()
                     if not o:
                         raise PermissionError(NOT_CONNECTED.format(port=CFG["port"]))
-                    return self._out(relay("/v1/node/page", {**o, "page": q.get("page") or ""}))
+                    return self._out(relay("/v1/node/page", {**o, **({"page": q.get("page") or ""} if "page" in q else {})}))
                 if p == "/trust":
                     return self._out(relay("/v1/trust", {**cred(q.get("session")), "peer": resolve_local(q.get("peer")), "on": q.get("on", True)}))
                 if p == "/owner":    # ключ человека из кабинета сайта — это и есть его шаг «подключить к сети»
