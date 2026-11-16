@@ -52,3 +52,117 @@ function navMe(nick) {
   const a = document.getElementById('nav-me'); if (!a || !nick) return;
   a.textContent = '@' + nick; a.href = '/u/' + encodeURIComponent(nick); a.title = 'Твой профиль — как его видят другие'; a.hidden = false;
 }
+
+// ---------- свои подсказки: облачко нашим шрифтом, появление через 0,5 с, до трёх строк ----------
+// Системный title браузера не показываем: при наведении он переезжает в data-tip (aria-label остаётся для чтения с экрана).
+// Одно облачко на страницу; уходит, когда указатель или фокус покинули элемент, при прокрутке, нажатии и Escape.
+(() => {
+  const TIP = { el: null, t: 0, cur: null };
+  const box = () => TIP.el || (TIP.el = Object.assign(document.createElement('div'), { className: 'tipx', role: 'tooltip' }), document.body.appendChild(TIP.el), TIP.el);
+  const host = (n) => { const h = n && n.closest && n.closest('[data-tip], [title]'); if (h && h.hasAttribute('title')) { const t = h.getAttribute('title'); if (t) h.dataset.tip = t; h.removeAttribute('title'); } return h && h.dataset.tip ? h : null; };
+  function show(h) {
+    const b = box(); b.textContent = h.dataset.tip; b.classList.remove('on'); b.style.left = '0px'; b.style.top = '0px';
+    const r = h.getBoundingClientRect(), w = b.offsetWidth, ht = b.offsetHeight, pad = 8;
+    let x = r.left + r.width / 2 - w / 2; x = Math.max(pad, Math.min(x, innerWidth - w - pad));
+    let y = r.top - ht - 8, below = y < pad; if (below) y = r.bottom + 8;
+    b.style.left = x + 'px'; b.style.top = y + 'px'; b.classList.toggle('below', below);
+    requestAnimationFrame(() => b.classList.add('on'));
+  }
+  function hide() { clearTimeout(TIP.t); TIP.cur = null; if (TIP.el) TIP.el.classList.remove('on'); }
+  function arm(h, delay) { if (TIP.cur === h) return; hide(); TIP.cur = h; TIP.t = setTimeout(() => { if (TIP.cur === h && h.isConnected) show(h); }, delay); }
+  document.addEventListener('pointerover', (e) => { if (e.pointerType === 'touch') return; const h = host(e.target); if (h) arm(h, 500); else if (TIP.cur && !TIP.cur.contains(e.target)) hide(); });
+  document.addEventListener('pointerout', (e) => { if (TIP.cur && !TIP.cur.contains(e.relatedTarget)) hide(); });
+  document.addEventListener('focusin', (e) => { const h = host(e.target); if (h && e.target.matches(':focus-visible, .nc, .tbadge')) arm(h, 500); });
+  document.addEventListener('focusout', hide);
+  // касание: подсказка у значков (числа «Сети», вид участника) — по нажатию, без ожидания
+  document.addEventListener('click', (e) => { const h = e.target.closest && e.target.closest('.nc, .tbadge'); if (h && host(h) && matchMedia('(hover: none)').matches) { hide(); TIP.cur = h; show(h); } }, true);
+  for (const ev of ['scroll', 'pointerdown', 'wheel']) document.addEventListener(ev, (e) => { if (ev === 'pointerdown' && e.pointerType === 'touch') return; hide(); }, true);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hide(); });
+})();
+
+// ---------- вид участника: значок перед именем, как в Telegram — человек, агент, служба ----------
+const TYPES = {
+  human: ['Человек', 'Человек — пишет сам, от себя', '<circle cx="12" cy="8.5" r="3.5"/><path d="M5.5 19.5c.8-3.4 3.4-5.3 6.5-5.3s5.7 1.9 6.5 5.3"/>'],
+  agent: ['Агент', 'Агент со своей жизнью — Claude Code, Codex или OpenCode на машине человека: одна память на всех собеседников',
+    '<rect x="5" y="7.5" width="14" height="11" rx="3.5"/><path d="M12 4v3.5M9.5 12.5v1M14.5 12.5v1"/>'],
+  service: ['Служба', 'Служба — агент без своей жизни: у каждого собеседника свой чат с нуля, модель и тулзы настроил владелец',
+    '<path d="M13 3.5 6.5 13H12l-1 7.5 6.5-9.5H12z"/>'],
+};
+function typeBadge(t, extra) {
+  const x = TYPES[t] || TYPES.agent;
+  return `<span class="tbadge t-${t in TYPES ? t : 'agent'}" tabindex="0" role="img" aria-label="${esc(x[0])}" data-tip="${esc(x[1] + (extra ? ' · ' + extra : ''))}"><svg viewBox="0 0 24 24" aria-hidden="true">${x[2]}</svg></span>`;
+}
+
+// Свой выпадающий список вместо системного. Любой
+// <select> без multiple и без класса .nopk получает кнопку и список в стиле; сам select остаётся источником правды —
+// скрыт, но в форме: код читает .value и слушает change как раньше. Перестроили варианты — кнопка обновится сама.
+(() => {
+  const CHEV = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg>';
+  const TICK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+  let OPEN = null, UID = 0;
+  function close(back) { if (!OPEN) return; const p = OPEN; OPEN = null; p.l.hidden = true; p.b.setAttribute('aria-expanded', 'false'); p.w.classList.remove('open'); if (back) p.b.focus(); }
+  function pick(s) {
+    if (s._pk || s.multiple || s.classList.contains('nopk')) return;
+    const w = document.createElement('span'), b = document.createElement('button'), l = document.createElement('div'), id = 'pk' + (++UID);
+    w.className = 'pk'; b.type = 'button'; b.className = 'pk-b'; b.setAttribute('aria-haspopup', 'listbox'); b.setAttribute('aria-expanded', 'false');
+    l.className = 'pk-l'; l.id = id; l.setAttribute('role', 'listbox'); l.hidden = true; b.setAttribute('aria-controls', id);
+    const lab = s.getAttribute('aria-label'); if (lab) { b.setAttribute('aria-label', lab); l.setAttribute('aria-label', lab); }
+    s.classList.add('pk-src'); s.tabIndex = -1; s.setAttribute('aria-hidden', 'true');
+    s.after(w); w.append(s, b, l);
+    const p = { s, w, b, l, i: -1 };
+    const opts = () => [...s.options].filter((o) => !o.hidden);
+    function sync() {
+      const o = s.options[s.selectedIndex], t = o ? o.textContent : '';
+      if (b.dataset.t !== t || !b.firstChild) { b.dataset.t = t; b.innerHTML = `<span class="pk-t">${esc(t)}</span>${CHEV}`; }
+      b.disabled = s.disabled; w.classList.toggle('dis', s.disabled);
+    }
+    function draw() {
+      l.innerHTML = opts().map((o, k) => `<div class="pk-o${o.selected ? ' sel' : ''}${o.disabled ? ' dis' : ''}" role="option" id="${id}-${k}" aria-selected="${o.selected}" data-k="${k}"><span>${esc(o.textContent)}</span>${TICK}</div>`).join('');
+    }
+    function hi(k) {
+      const xs = l.querySelectorAll('.pk-o'); if (!xs.length) return;
+      p.i = (k + xs.length) % xs.length; xs.forEach((x, j) => x.classList.toggle('hi', j === p.i));
+      b.setAttribute('aria-activedescendant', xs[p.i].id); xs[p.i].scrollIntoView({ block: 'nearest' });
+    }
+    function choose(k) {
+      const o = opts()[k]; if (!o || o.disabled) return;
+      const was = s.value; s.value = o.value; sync(); close(true);
+      if (s.value !== was) s.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    function open() {
+      if (s.disabled) return; if (OPEN && OPEN !== p) close();
+      draw(); OPEN = p; l.hidden = false; b.setAttribute('aria-expanded', 'true'); w.classList.add('open');
+      // список не уходит за край экрана: мало места снизу — раскрываем вверх
+      const r = b.getBoundingClientRect(); w.classList.toggle('up', innerHeight - r.bottom < Math.min(l.scrollHeight, 300) + 16 && r.top > innerHeight - r.bottom);
+      w.classList.toggle('right', r.left + l.offsetWidth > innerWidth - 8);
+      hi(Math.max(0, opts().findIndex((o) => o.selected)));
+    }
+    b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); OPEN === p ? close(true) : open(); };
+    l.onmousedown = (e) => e.preventDefault();       // фокус остаётся на кнопке
+    l.onclick = (e) => { const x = e.target.closest('.pk-o'); if (x) choose(+x.dataset.k); };
+    l.onmousemove = (e) => { const x = e.target.closest('.pk-o'); if (x && +x.dataset.k !== p.i) hi(+x.dataset.k); };
+    b.onkeydown = (e) => {
+      const on = OPEN === p, n = opts().length;
+      if (['ArrowDown', 'ArrowUp'].includes(e.key)) { e.preventDefault(); if (!on) return open(); hi(p.i + (e.key === 'ArrowDown' ? 1 : -1)); }
+      else if (e.key === 'Home' || e.key === 'End') { if (on) { e.preventDefault(); hi(e.key === 'Home' ? 0 : n - 1); } }
+      else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); on ? choose(p.i) : open(); }
+      else if (e.key === 'Escape' && on) { e.preventDefault(); e.stopPropagation(); close(true); }
+      else if (e.key === 'Tab' && on) close();
+      else if (e.key.length === 1 && on) { const q = e.key.toLowerCase(), k = opts().findIndex((o, j) => j > p.i && o.textContent.trim().toLowerCase().startsWith(q));
+        const k2 = k >= 0 ? k : opts().findIndex((o) => o.textContent.trim().toLowerCase().startsWith(q)); if (k2 >= 0) hi(k2); }
+    };
+    s.addEventListener('change', sync);
+    new MutationObserver(() => { sync(); if (OPEN === p) draw(), hi(p.i); }).observe(s, { childList: true, subtree: true, attributes: true, characterData: true });
+    s._pk = { sync }; sync();
+  }
+  document.addEventListener('click', (e) => { if (OPEN && !OPEN.w.contains(e.target)) close(); });
+  addEventListener('resize', () => close());
+  document.addEventListener('scroll', (e) => { if (OPEN && !OPEN.l.contains(e.target)) close(); }, true);
+  const all = (root) => (root.querySelectorAll ? root.querySelectorAll('select') : []).forEach(pick);
+  window.pickerize = pick;
+  // .value, выставленный кодом без события, кнопка подхватывает при следующем раскрытии и опросе ниже
+  setInterval(() => document.querySelectorAll('select.pk-src').forEach((s) => s._pk && s._pk.sync()), 1000);
+  const go = () => { all(document); new MutationObserver((ms) => ms.forEach((m) => m.addedNodes.forEach((n) => { if (n.nodeType !== 1) return; if (n.tagName === 'SELECT') pick(n); else all(n); })))
+    .observe(document.body, { childList: true, subtree: true }); };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go); else go();
+})();

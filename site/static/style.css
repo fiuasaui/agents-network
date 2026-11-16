@@ -208,3 +208,44 @@ a.nav-cab { display: inline-flex; align-items: baseline; gap: 8px; margin: 0; pa
 a.nav-cab:hover { background: var(--btn-hover); color: var(--accent-ink); }
 a.nav-cab .nav-sub { font-weight: 400; opacity: .8; }
 @media (max-width: 420px) { a.nav-cab { padding: 10px 14px; } a.nav-cab .nav-sub { display: none; } }
+/* свои подсказки: облачко нашим шрифтом, скругление, до трёх строк, появление через 0,5 с (задержка — в core.js) */
+.tipx { position: fixed; z-index: 1000; max-width: min(300px, calc(100vw - 16px)); padding: 7px 11px; border-radius: 10px;
+  background: #0b131c; color: #e6edf3; border: 1px solid #2a3846; box-shadow: 0 8px 24px rgba(0,0,0,.4);
+  font: 500 13px/1.45 "Open Sans", "Segoe UI", system-ui, sans-serif; pointer-events: none; white-space: normal; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
+  opacity: 0; transform: translateY(3px); transition: opacity 140ms var(--ease), transform 140ms var(--ease); }
+.tipx.below { transform: translateY(-3px); }
+.tipx.on { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) { .tipx { transition: none; } }
+/* значок вида участника перед именем */
+.tbadge { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 16px; height: 16px; margin-right: 5px; vertical-align: -2px;
+  border-radius: 5px; color: #8fa3b8; outline: none; cursor: default; }
+.tbadge svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.tbadge.t-human { color: #7bc8a0; } .tbadge.t-service { color: #e8b04e; } .tbadge.t-service svg { fill: currentColor; stroke-width: 1.2; }
+.tbadge:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+
+/* свой выпадающий список (core.js): кнопка как поле, список как меню профиля; системный select скрыт */
+select.pk-src { position: absolute !important; width: 1px !important; height: 1px !important; min-height: 0 !important; padding: 0 !important; margin: 0 !important; opacity: 0; pointer-events: none; border: 0; }
+.pk { position: relative; display: inline-flex; min-width: 0; vertical-align: middle; }
+.pk-b { display: inline-flex; align-items: center; gap: 6px; width: 100%; min-width: 0; min-height: 42px; padding: 0 10px 0 14px; border: 0; border-radius: 18px;
+  background: #242f3d; color: var(--ink); font: inherit; font-size: 15px; cursor: pointer; text-align: left; transition: background 150ms; }
+.pk-b:hover, .pk.open .pk-b { background: #2b3947; }
+.pk-b:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pk-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pk-b svg { flex: none; width: 18px; height: 18px; fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform 180ms; }
+.pk.open .pk-b svg { transform: rotate(180deg); }
+.pk.dis .pk-b { opacity: .5; cursor: default; }
+.pk-l { position: absolute; left: 0; top: calc(100% + 6px); z-index: 60; min-width: 100%; width: max-content; max-width: min(340px, calc(100vw - 32px)); max-height: 300px; overflow-y: auto;
+  padding: 6px; border-radius: 14px; background: #202b36; box-shadow: 0 10px 30px rgba(0, 0, 0, .4), 0 0 0 1px rgba(255, 255, 255, .04); animation: pkin 140ms ease-out; overscroll-behavior: contain; }
+.pk-l[hidden] { display: none; }
+.pk.up .pk-l { top: auto; bottom: calc(100% + 6px); animation-name: pkup; }
+.pk.right .pk-l { left: auto; right: 0; }
+.pk-o { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 9px; color: var(--ink); font-size: 14.5px; line-height: 1.35; cursor: pointer; transition: background 120ms; }
+.pk-o span { flex: 1; min-width: 0; }
+.pk-o svg { flex: none; width: 16px; height: 16px; fill: none; stroke: var(--accent); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; visibility: hidden; }
+.pk-o.hi { background: #2b3947; }
+.pk-o.sel { color: #9fd2fb; } .pk-o.sel svg { visibility: visible; }
+.pk-o.dis { opacity: .45; cursor: default; }
+@keyframes pkin { from { opacity: 0; transform: translateY(-4px); } }
+@keyframes pkup { from { opacity: 0; transform: translateY(4px); } }
+@media (prefers-reduced-motion: reduce) { .pk-l { animation: none; } .pk-b svg { transition: none; } }

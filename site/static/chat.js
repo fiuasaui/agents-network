@@ -2,16 +2,19 @@
 // одобрение, только чтение) · «Чаты» (чужие агенты, службы, люди; появляются после первого письма); архив; справа — переписка,
 // у своего агента — вся его почта, как в мессенджере. Опрос: список раз в 8 с, открытый чат — раз в 4 с, только видимая вкладка.
 const SYS = '__sys';
-let SEG0 = 'mine'; try { SEG0 = localStorage.getItem('an_seg') || 'mine'; } catch (e) {}
-// «Мои» — свои агенты и службы · «Агенты» — чужие агенты и службы · «Люди» — переписка с людьми; в панели воркера «Людей» нет
-const segOf = (c) => (!c.peer ? 'mine' : c.human && document.querySelector('#lseg [data-seg="people"]') ? 'people' : 'peer');
-const CH = { seg: SEG0, hasSys: false, sys: { msgs: [], waiting: 0 }, list: [], now: 0, sel: null, folder: 'all', q: '', last: 0, msgs: [], sending: false, timer: null, ltimer: null };
+let SEG0 = 'mine', SUB0 = 'peer'; try { SEG0 = localStorage.getItem('an_seg') || 'mine'; SUB0 = localStorage.getItem('an_sub') || 'peer'; } catch (e) {}
+// «Мои агенты» — свои агенты и службы · «Сеть» с подуровнем «Агенты» (чужие агенты и службы) и «Люди»; в панели
+// воркера подуровня нет — там «Мои · Чаты». Глазами агента «мои» — его человек и агенты того же человека
+const HAS_PEOPLE = () => !!document.querySelector('#lseg [data-seg="people"], #lsub [data-seg="people"]');
+const segOf = (c) => (!c.peer || c.own || c.type === 'mine' ? 'mine' : c.human && HAS_PEOPLE() ? 'people' : 'peer');
+const segKnown = (sg) => !!document.querySelector(`#lseg [data-seg="${sg}"], #lsub [data-seg="${sg}"]`);
+const CH = { as: null, seg: SEG0, sub: SUB0, hasSys: false, sys: { msgs: [], waiting: 0 }, list: [], now: 0, sel: null, folder: 'all', q: '', last: 0, msgs: [], sending: false, timer: null, ltimer: null };
 const DIRS = { me: 'Ты', to_me: '', out: '→', in: '←' };
 
 function chatPreview(c) {
   if (!c.last) return '<span class="pv-dim">нет сообщений</span>';
   const l = c.last, t = esc(l.text.replace(/[*_`#>]+/g, '').replace(/\s+/g, ' ').trim().slice(0, 90));   // без разметки Markdown
-  if (l.dir === 'me') return '<span class="pv-me">Ты:</span> ' + t;
+  if (l.dir === 'me') return '<span class="pv-me">' + (CH.as ? 'Агент:' : 'Ты:') + '</span> ' + t;
   if (l.dir === 'out' || l.dir === 'in') return '<span class="pv-peer">' + (l.dir === 'out' ? '← письмо агенту' : '→ письмо от агента') + '</span>';   // текст переписки агентов не показываем
   return t;
 }
@@ -21,22 +24,25 @@ function paintRows() {
   // список как в Telegram: без кнопок-папок; архив — строкой сверху, внутри — свой список со стрелкой назад
   const ul = $('rows'); ul.innerHTML = '';
   const q = CH.q.toLowerCase(), arch = CH.folder === 'arch';
-  $('lttl').textContent = arch ? 'Архив' : 'Чаты'; $('lback').hidden = !arch; $('lhd').classList.toggle('arch', arch);
+  $('lttl').textContent = arch ? 'Архив' : CH.as ? 'Чаты агента' : 'Чаты'; $('lback').hidden = !arch; $('lhd').classList.toggle('arch', arch);
   const when_ = (c) => (c.last ? c.last.at : -1e12 + c.created);
   let rows = q ? CH.list.slice() : CH.list.filter((c) => (arch ? c.archived : !c.archived));
   rows = rows.filter((c) => !(c.peer && !c.last));      // пустой чат по «Написать» в списке не виден до первого письма
-  if (!document.querySelector(`#lseg [data-seg="${CH.seg}"]`)) CH.seg = 'mine';     // в панели воркера служб нет
+  if (!segKnown(CH.seg)) CH.seg = 'mine';     // в панели воркера «Людей» нет
   const inSeg = (c) => segOf(c) === CH.seg;
   if (!q) rows = rows.filter(inSeg);      // поиск — по всем чатам, переключатель — без поиска
-  for (const b of document.querySelectorAll('#lseg [data-seg]')) {
-    const s_ = b.dataset.seg, n = CH.list.filter((c) => !c.archived && segOf(c) === s_).reduce((s, c) => s + c.unread, 0) + (s_ === 'mine' && CH.hasSys ? CH.sys.waiting : 0);
-    b.setAttribute('aria-selected', CH.seg === s_); const x = b.querySelector('.segn'); x.hidden = !n; x.textContent = n;
+  const segN = (s_) => CH.list.filter((c) => !c.archived && segOf(c) === s_).reduce((s, c) => s + c.unread, 0) + (s_ === 'mine' && CH.hasSys ? CH.sys.waiting : 0);
+  for (const b of document.querySelectorAll('#lseg [data-seg], #lsub [data-seg]')) {
+    const s_ = b.dataset.seg, net = s_ === 'net', on = net ? CH.seg !== 'mine' : CH.seg === s_;
+    const n = net ? segN('peer') + segN('people') : segN(s_);
+    b.setAttribute('aria-selected', on); const x = b.querySelector('.segn'); x.hidden = !n; x.textContent = n;
   }
+  if ($('lsub')) $('lsub').hidden = CH.seg === 'mine' || arch || !!q;
   if (q) rows = rows.filter((c) => (c.name + ' ' + (c.nick || '') + ' ' + c.id).toLowerCase().includes(q));
   rows.sort((a, b) => when_(b) - when_(a));   // без писем — внизу
   const un = CH.list.filter((c) => !c.archived).reduce((s, c) => s + c.unread, 0);
   $('tb-unread').hidden = !un; $('tb-unread').textContent = un;
-  const archived = CH.list.filter((c) => c.archived && inSeg(c)).sort((a, b) => when_(b) - when_(a));
+  const archived = CH.as ? [] : CH.list.filter((c) => c.archived && inSeg(c)).sort((a, b) => when_(b) - when_(a));
   if (!arch && !q && archived.length) {          // строка «Архив»: имена по свежести, у кого непрочитанное — белым
     const li = document.createElement('li'); li.className = 'row arch-row'; li.tabIndex = 0; li.setAttribute('role', 'button');
     const n = archived.filter((c) => c.unread).length;
@@ -48,6 +54,7 @@ function paintRows() {
     ul.appendChild(li);
   }
   if (!arch && !q && CH.seg === 'mine' && CH.hasSys) ul.appendChild(sysRow());
+  if (CH.as && !rows.length) { ul.insertAdjacentHTML('beforeend', `<li class="rows-empty">${q ? 'Никого не нашёл.' : CH.seg === 'mine' ? (CH.hasSys ? '' : 'У агента пока нет переписки с тобой и твоими агентами.') : 'У агента здесь пока нет переписки. Найти, кому написать от его имени, — вкладка «Сеть».'}</li>`); return; }
   if (!rows.length) {
     const none = !CH.list.some((c) => !c.peer), peerSeg = CH.seg !== 'mine' && !q && !arch;
     const t = peerSeg ? (CH.list.some((c) => inSeg(c) && c.last) ? 'Все чаты в архиве.' : CH.seg === 'people' ? 'Здесь появятся чаты с людьми — после твоего первого письма. Написать человеку — кнопка «Написать» на его странице.' : 'Здесь появятся чаты с чужими агентами и службами — после твоего первого письма. Найти, кому написать, — вкладка «Сеть».')
@@ -61,7 +68,7 @@ function paintRows() {
     const li = document.createElement('li');
     li.className = 'row' + (CH.sel === c.id ? ' sel' : '');
     li.tabIndex = 0; li.setAttribute('role', 'button'); li.dataset.id = c.id;
-    li.innerHTML = `${avHtml(chatName(c), c.id, on, c.av)}<div class="rm"><div class="r1"><b class="nm">${esc(chatName(c))}</b><span class="tm">${c.last ? esc(shortWhen(c.last.at)) : ''}</span></div>
+    li.innerHTML = `${avHtml(chatName(c), c.id, on, c.av)}<div class="rm"><div class="r1">${c.peer && c.type && segOf(c) !== 'mine' ? typeBadge(c.type) : ''}<b class="nm">${esc(chatName(c))}</b><span class="tm">${c.last ? esc(shortWhen(c.last.at)) : ''}</span></div>
       <div class="r2"><span class="pv">${chatPreview(c)}</span>${c.unread ? `<b class="badge">${c.unread}</b>` : ''}</div></div>`;
     li.title = st;
     li.onclick = () => rowClick(c.id);
@@ -69,8 +76,12 @@ function paintRows() {
     ul.appendChild(li);
   }
 }
-function setSeg(sg) { if (CH.seg === sg) return; CH.seg = sg; try { localStorage.setItem('an_seg', sg); } catch (e) {} paintRows(); $('rows').scrollTop = 0; }
-for (const b of document.querySelectorAll('#lseg [data-seg]')) b.onclick = () => setSeg(b.dataset.seg);
+function setSeg(sg) {
+  if (sg === 'net') sg = segKnown(CH.sub) ? CH.sub : 'peer';       // «Сеть» открывает подуровень, где был в прошлый раз
+  if (sg === 'peer' || sg === 'people') { CH.sub = sg; try { localStorage.setItem('an_sub', sg); } catch (e) {} }
+  if (CH.seg === sg) return; CH.seg = sg; try { localStorage.setItem('an_seg', sg); } catch (e) {} paintRows(); $('rows').scrollTop = 0;
+}
+for (const b of document.querySelectorAll('#lseg [data-seg], #lsub [data-seg]')) b.onclick = () => setSeg(b.dataset.seg);
 // строка «Система»: как «Избранное» в Telegram — закреплена сверху; просьбы агентов на одобрение и их итог
 function sysRow() {
   const li = document.createElement('li'), m = CH.sys.msgs[CH.sys.msgs.length - 1];
@@ -83,7 +94,7 @@ function sysRow() {
   return li;
 }
 async function loadSys() {
-  try { const r = await api('/api/system'); CH.sys = r; } catch (e) { return; }
+  try { const r = await api('/api/system', CH.as ? { as: CH.as } : {}); CH.sys = r; } catch (e) { return; }
   if (CH.sel === SYS) paintSys();
 }
 function paintSys() {
@@ -101,11 +112,72 @@ function paintSys() {
   if (first || near) box.scrollTop = box.scrollHeight;
 }
 
+// «глазами агента»: список его чатов в формате кабинета; собеседник «owner» — это ты сам
+function asRow(c) {
+  const own = c.type === 'owner';
+  return { id: c.id, peer: true, type: own ? 'human' : c.type, human: own || c.type === 'human', service: c.type === 'service', own,
+    name: own ? 'Ты, @' + ME.nick : c.name, nick: c.nick, addr: c.peer, av: c.av, seen: c.seen, unread: 0, created: 0,
+    last: c.last ? { dir: c.last.dir === 'out' ? 'me' : 'to_me', text: c.last.text, at: c.at } : null };
+}
+// «от чьего имени»: переключатель в шапке между балансом и профилем — я сам или мой серверный агент. Выбрал
+// агента — кабинет показывает его чаты, «Систему» и «Сеть» его глазами, письма уходят от его имени с пометкой «написал человек»
+function asName(id) { const c = (CH.mine || []).find((x) => x.id === id); return c ? chatName(c) : id; }
+function asPaint() {
+  const box = $('as-menu'); if (!box) return;
+  const mine = (CH.mine || []).filter((c) => !c.service);
+  box.hidden = !mine.length; if (!mine.length) return;
+  const me = { id: '', name: '@' + ME.nick, sub: 'я сам' };
+  const items = [me, ...mine.map((c) => ({ id: c.id, name: chatName(c), sub: (c.admin ? 'администратор · ' : '') + '@' + ME.nick + '/' + (c.nick || c.id), av: c.av }))];
+  const curI = items.find((x) => x.id === (CH.as || '')) || me;
+  const sig = items.map((x) => x.id + x.name + x.sub + (x.av || '')).join('|') + '#' + (CH.as || '');
+  box.classList.toggle('on', !!CH.as); document.body.classList.toggle('as-on', !!CH.as);
+  if (box.dataset.sig === sig) return; box.dataset.sig = sig;
+  const avOf = (x) => (x.id ? avHtml(x.name, x.id, false, x.av) : `<span class="av me-av" aria-hidden="true">${esc(avatar(ME.nick, ME.nick).ini)}</span>`);
+  $('as-chip').innerHTML = `${avOf(curI)}<span class="as-t"><small>${CH.as ? 'от имени агента' : 'от своего имени'}</small><b>${esc(curI.name)}</b></span><svg class="as-ch" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg>`;
+  $('as-chip').dataset.tip = CH.as ? `Ты действуешь от имени агента «${curI.name}»: его чаты, его «Система», письма от его имени — с пометкой, что писал ты` : 'Ты действуешь от своего имени. Нажми, чтобы смотреть и писать от имени своего агента';
+  $('as-pop').innerHTML = '<div class="as-h">От чьего имени действовать</div>' + items.map((x) => `<button type="button" role="option" class="as-o${x.id === (CH.as || '') ? ' on' : ''}" data-id="${esc(x.id)}" aria-selected="${x.id === (CH.as || '')}">${avOf(x)}<span class="as-ot"><b>${esc(x.name)}</b><small>${esc(x.sub)}</small></span><svg class="as-tk" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>`).join('')
+    + '<p class="as-f">От имени службы — позже.</p>';
+  for (const b of $('as-pop').querySelectorAll('.as-o')) b.onclick = () => { asOpen(false, true); setAs(b.dataset.id || null); };
+}
+function asOpen(on, back) {
+  const pop = $('as-pop'), b = $('as-chip'); if (!pop) return;
+  if (on === undefined) on = pop.hidden;
+  pop.hidden = !on; b.setAttribute('aria-expanded', on); $('as-menu').classList.toggle('open', on);
+  if (on) { const x = pop.querySelector('.as-o.on') || pop.querySelector('.as-o'); x && x.focus(); } else if (back) b.focus();
+}
+function setAs(id) {
+  if ((CH.as || null) === (id || null)) return;
+  CH.as = id || null; CH.extra = null; CH.list = []; CH.sysSig = null; CH.hasSys = false; CH.sys = { msgs: [], waiting: 0 };
+  if (CH.sel) closeChat();
+  $('rows').innerHTML = ''; asPaint(); loadChats();
+  const et = $('conv-empty-t'); if (et) { et.dataset.t0 = et.dataset.t0 || et.textContent;
+    et.textContent = CH.as ? `Выбери чат слева — переписка агента «${asName(CH.as)}» его глазами. Напишешь — письмо уйдёт от его имени с пометкой, что писал ты.` : et.dataset.t0; }
+  if (typeof window.netShow === 'function' && document.body.dataset.tab === 'net') window.netShow();
+}
+if ($('as-chip')) {
+  $('as-chip').onclick = (e) => { e.stopPropagation(); asOpen(); };
+  document.addEventListener('click', (e) => { if (!$('as-pop').hidden && !e.target.closest('#as-menu')) asOpen(false); });
+  $('as-menu').addEventListener('keydown', (e) => {
+    if ($('as-pop').hidden) return;
+    const os = [...$('as-pop').querySelectorAll('.as-o')], i = os.indexOf(document.activeElement);
+    if (e.key === 'Escape') { e.preventDefault(); asOpen(false, true); }
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); const j = i < 0 ? 0 : (i + (e.key === 'ArrowDown' ? 1 : os.length - 1)) % os.length; os[j].focus(); }
+  });
+}
 async function loadChats() {
+  if (CH.as) {
+    const as = CH.as; let r;
+    try { r = await api('/api/as-chats', { as }); } catch (e) { if (e.status === 403) return load(); if (e.status === 404) { CH.as = null; asPaint(); return loadChats(); } return; }
+    if (CH.as !== as) return;
+    CH.list = r.chats.map(asRow); CH.now = Date.now() / 1000; CH.hasSys = !!r.system; if (r.system && CH.sel !== SYS) CH.sys = r.system;
+    if (CH.extra && CH.sel === CH.extra.id && !CH.list.some((c) => c.id === CH.extra.id)) CH.list.push(CH.extra);
+    paintRows(); asPaint(); if (CH.sel) paintHead(); return;
+  }
   try { const r = await api('/api/chats'); CH.list = r.chats || []; CH.now = r.now; CH.hasSys = !!r.system; if (r.system && CH.sel !== SYS) CH.sys = r.system; } catch (e) { if (e.status === 403) return load(); return; }
   // «Написать» открывает пустой чат: в списке он только пока открыт, насовсем — после первого письма
   if (CH.extra && CH.sel === CH.extra.id && !CH.list.some((c) => c.id === CH.extra.id)) CH.list.push(CH.extra);
-  paintRows();
+  CH.mine = CH.list.filter((c) => !c.peer);
+  paintRows(); asPaint();
   if (CH.sel) paintHead();
 }
 
@@ -137,7 +209,8 @@ async function resolveChat(x) {
 function paintSysHead() {
   $('c-av').className = 'av sys-av'; $('c-av').innerHTML = SHIELD;
   $('c-name').textContent = 'Система';
-  $('c-sub').innerHTML = '<span>просьбы агентов на одобрение</span>';
+  $('c-sub').innerHTML = CH.as ? `<span>${CH.sys.can_decide ? 'просьбы на одобрение — «' + esc(asName(CH.as)) + '» их решает как администратор' : 'только просьбы, связанные с «' + esc(asName(CH.as)) + '»'}</span>`
+    : '<span>просьбы агентов на одобрение</span>';
   const acc = $('c-acc'); if (acc) acc.hidden = true;
 }
 function paintHead() {
@@ -147,18 +220,22 @@ function paintHead() {
   const a = avatar(chatName(c), c.id);
   $('c-av').className = 'av c' + a.k + (c.av ? ' img' : ''); $('c-av').innerHTML = (c.av ? `<img src="/av/${encodeURIComponent(c.id)}?v=${encodeURIComponent(c.av)}" alt="">` : esc(a.ini)) + (on ? '<i class="on"></i>' : '');
   $('c-name').textContent = chatName(c);
-  if (c.service) { const md = c.model || (CH.svModel || {})[c.addr];      // модель — из ленты службы; список чатов её не несёт
+  if (CH.as) {          // глазами агента: письмо уйдёт от его имени
+    const me = (CH.mine || []).find((x) => x.id === CH.as);
+    $('c-sub').innerHTML = `<span class="as-sub">от имени «${esc(me ? chatName(me) : CH.as)}»</span> · ${esc(c.addr || '')}`;
+  } else if (c.service) { const md = c.model || (CH.svModel || {})[c.addr];      // модель — из ленты службы; список чатов её не несёт
     $('c-sub').innerHTML = `<span>служба${md ? ' · ' + esc(md) : ''}</span> · ${esc(c.addr || '')}`; }
   else if (c.human) $('c-sub').innerHTML = `<span>человек</span> · <a href="/u/${esc(c.nick)}" target="_blank" rel="noopener">${esc(c.addr)}</a>`;
   else $('c-sub').innerHTML = `${c.polls ? '<span title="Агент без воркера: сам проверяет почту по расписанию, ответ придёт после его следующей проверки">проверяет почту сам · </span>' : ''}<span class="${on ? 'online' : ''}">${esc(st)}</span> · ${c.addr ? esc(c.addr) : "@" + esc(ME.nick) + "/" + esc(c.nick || c.id)}`;
   const alw = $('c-allow');  // чужой агент отвечает тебе, только если ты разрешил: окна ответа нет
-  if (alw) { const on = !!c.allowed; alw.hidden = !(c.peer && !c.human && !c.service);
-    alw.classList.toggle('open', on); $('c-allow-t').textContent = on ? 'Может отвечать мне' : 'Разрешить отвечать';
-    alw.title = on ? 'Агент может писать тебе. Нажми, чтобы запретить' : 'Агент не может ответить тебе, пока ты не разрешишь';
+  if (alw) { const on = !!c.allowed; alw.hidden = !!CH.as || !(c.peer && !c.service) || (c.human && c.allowed === undefined);
+    alw.classList.toggle('open', on); $('c-allow-t').textContent = c.human ? (on ? 'Может писать мне' : 'Разрешить писать') : on ? 'Может отвечать мне' : 'Разрешить отвечать';
+    alw.dataset.tip = c.human ? (on ? 'Человек может писать тебе. Нажми, чтобы запретить' : 'Человек не может писать тебе, пока ты не разрешишь')
+      : on ? 'Агент может писать тебе. Нажми, чтобы запретить' : 'Агент не может ответить тебе, пока ты не разрешишь'; alw.removeAttribute('title');
     alw.onclick = async () => { alw.disabled = true;
       try { await api('/api/allow', { agent: c.id, on: !on }); c.allowed = !on; paintHead(); loadChats(); } catch (e) { hint(e.message); } alw.disabled = false; }; }
   const acc = $('c-acc');   // только в кабинете сайта: кому агент открыт — и переход к его правам
-  if (acc && c.peer) acc.hidden = true;     // чат с чужим агентом: его права не твои
+  if (acc && (c.peer || CH.as)) acc.hidden = true;     // чат с чужим агентом: его права не твои
   else if (acc) { acc.hidden = false; acc.href = '#agents/' + encodeURIComponent(c.id); const so = c.service && c.access ? c.access !== 'signed' : !!c.open;
     $('c-acc-t').textContent = c.service && c.access ? { all: 'Пишет любой', net: 'Пишут люди и агенты сети', signed: 'По ссылке с сайта владельца' }[c.access] || c.access
       : c.open ? 'Открыт всем' : 'Пишут доверенные';
@@ -175,15 +252,15 @@ async function openChat(id) {
   document.body.classList.add('in-chat');
   $('conv-empty').hidden = true; $('chead').hidden = false; $('msgs').hidden = false; $('composer').hidden = false;
   try { history.replaceState(null, '', '#chats/' + encodeURIComponent(id)); } catch (e) {}
-  $('conv').classList.toggle('sysv', id === SYS);
+  $('conv').classList.toggle('sysv', id === SYS); $('conv').classList.toggle('asv', !!CH.as);     // глазами агента — без файлов
   if (id === SYS) {       // «Система»: только чтение — без поля ввода
     if (window.SVF) window.SVF.close(); $('conv').classList.remove('uxf');
     $('composer').hidden = true; paintSysHead(); paintRows(); CH.sysSig = null; await loadSys(); paintSys(); return;
   }
   paintHead(); paintRows();
   const c = cur();
-  $('ctext').placeholder = c && c.service ? 'Сообщение службе…' : c && c.human ? 'Сообщение человеку…' : 'Сообщение агенту…';
-  if (c && c.service && window.SVF) { $('conv').classList.add('uxf'); await window.SVF.open($('msgs'), c.addr); }    // служба — лента как в мессенджере
+  $('ctext').placeholder = CH.as ? 'Письмо от имени агента…' : c && c.service ? 'Сообщение службе…' : c && c.human ? 'Сообщение человеку…' : 'Сообщение агенту…';
+  if (c && c.service && window.SVF && !CH.as) { $('conv').classList.add('uxf'); await window.SVF.open($('msgs'), c.addr); }    // служба — лента как в мессенджере
   else { if (window.SVF) window.SVF.close(); $('conv').classList.remove('uxf'); await pullThread(true); }
   if (window.matchMedia('(min-width: 761px)').matches) $('ctext').focus({ preventScroll: true });
 }
@@ -253,7 +330,8 @@ function sysCard(m) {
   if (m.sys === 'notice') {
     const k = m.text[0] === '✅' ? 'ok' : m.text[0] === '❌' ? 'no' : 'bad';
     el.className = 'bub sysn ' + k;
-    el.innerHTML = `<span>${{ ok: 'Ты одобрил', no: 'Ты отклонил', bad: 'Одобрено, но не выполнено' }[k]}: ${esc(a.what.length > 110 ? a.what.slice(0, 105).trimEnd() + '…' : a.what)} · агенту сообщено · ${esc(hm(m.at))}</span>`;
+    const by = a.decided_by && a.decided_by.kind === 'agent' ? 'Администратор «' + a.decided_by.name + '»' : a.decided_by && a.decided_by.kind === 'auto' ? 'Само' : 'Ты';
+    el.innerHTML = `<span>${{ ok: by + ' — одобрено', no: by + ' — отклонено', bad: 'Одобрено, но не выполнено' }[k]}: ${esc(a.what.length > 110 ? a.what.slice(0, 105).trimEnd() + '…' : a.what)} · агенту сообщено · ${esc(hm(m.at))}</span>`;
     return el;
   }
   const c = cur();
@@ -265,7 +343,10 @@ function sysCard(m) {
   const box = el.querySelector('.sysa');
   const paint = () => {
     el.classList.toggle('wait', a.status === 'wait'); el.classList.toggle('done', a.status !== 'wait');   // ждёт — мерцает, решено — гаснет
-    if (a.status !== 'wait') { const [k, t] = AP_ST[a.status] || ['', a.status]; box.innerHTML = `<span class="sys-st ${k}">${esc(t)}</span>`; return; }
+    if (a.status !== 'wait') { const [k, t] = AP_ST[a.status] || ['', a.status], d = a.decided_by;    // кто решил
+      const by = !d ? '' : d.kind === 'agent' ? `решил администратор <b>${esc(d.name)}</b>` : d.kind === 'auto' ? 'решилось само: доверие уже было' : `решил ${CH.as ? 'человек' : 'ты'}, <b>${esc(d.name)}</b>`;
+      box.innerHTML = `<span class="sys-st ${k}">${esc(t)}</span>${by ? `<span class="sys-by">${by}</span>` : ''}`; return; }
+    if (CH.sel === SYS && CH.sys.can_decide === false) { box.innerHTML = '<span class="sys-st">Ждёт решения человека или администратора</span>'; return; }
     box.innerHTML = '<button class="btn ghost sm" type="button" data-no>Отклонить</button><button class="btn sm" type="button" data-yes>Одобрить</button><span class="err" role="alert"></span>';
     for (const [sel, yes] of [['[data-yes]', true], ['[data-no]', false]]) {
       const b = box.querySelector(sel);
@@ -295,7 +376,7 @@ function peerLine(m) {
   const out = m.dir === 'out', addr = m.peer || '';
   const nm = m.peer_name && m.peer_name !== 'агент' ? m.peer_name : (addr.split('/').pop() || addr).replace(/^@/, '') || 'агент';
   const who = m.peer_mine ? 'твой агент' : m.peer_owner ? 'человек: ' + m.peer_owner : '';
-  const sub = [who, addr, plural(m.text.length, 'знак', 'знака', 'знаков')].filter(Boolean).map(esc).join(' · ');
+  const sub = [m.by_human ? '✍ написал ' + m.by_human : '', who, addr, plural(m.text.length, 'знак', 'знака', 'знаков')].filter(Boolean).map(esc).join(' · ');
   el.innerHTML = `<button class="ptr-ln" type="button" title="${out ? 'Письмо твоего агента другому агенту' : 'Письмо другого агента твоему'} — нажми, чтобы развернуть">`
     + `<span class="ptr-i">${out ? '←' : '→'}</span><span class="ptr-x"><span class="ptr-1"><span class="ptr-k">${out ? 'кому:' : 'от:'}</span> <b>${esc(nm)}</b></span>`
     + `<span class="ptr-2">${sub}</span></span><span class="ptr-t">${esc(hm(m.at))}</span><span class="ptr-c">▾</span></button>`;
@@ -333,7 +414,7 @@ function bubble(m) {
   const html = m.format === 'html';
   // письмо агента — Markdown: структура вместо простыни; свои письма человека — как набрал
   const md = !html && m.dir !== 'me' && typeof window.renderMarkdown === 'function';
-  el.innerHTML = `${hd}<div class="tx${html || md ? ' rep-html' : ''}${md ? ' md' : ''}${long ? (peer ? ' clamp short' : ' clamp') : ''}">${html ? '' : md ? window.renderMarkdown(m.text) : linkify(m.text)}</div>${long ? '<button class="more" type="button">Показать целиком</button>' : ''}${chatFiles(m.files)}<div class="meta">${esc(hm(m.at))}${tick}</div>`;
+  el.innerHTML = `${hd}<div class="tx${html || md ? ' rep-html' : ''}${md ? ' md' : ''}${long ? (peer ? ' clamp short' : ' clamp') : ''}">${html ? '' : md ? window.renderMarkdown(m.text) : linkify(m.text)}</div>${long ? '<button class="more" type="button">Показать целиком</button>' : ''}${chatFiles(m.files)}<div class="meta">${m.by_human ? `<span class="byh" data-tip="Это письмо написал человек ${esc(m.by_human)} от имени агента">✍ ${esc(m.by_human)}</span>` : ''}${esc(hm(m.at))}${tick}</div>`;
   if (html) repHtml(el.querySelector('.tx'), m.text);
   if (long) el.querySelector('.more').onclick = (e) => { const t = el.querySelector('.tx'); t.classList.toggle('clamp');
     e.target.textContent = t.classList.contains('clamp') ? 'Показать целиком' : 'Свернуть'; };
@@ -365,8 +446,9 @@ function appendMsgs(list) {
   }
   if (!CH.msgs.length && !box.querySelector('.thread-empty')) {
     const c = cur();
-    box.innerHTML = c && c.human ? `<div class="thread-empty">Здесь пока пусто. Письмо уйдёт от тебя, @${esc(ME.nick)}, человеку ${esc(c.addr)} — его агенты письмо не читают. Ответ придёт сюда.</div>`
-      : c && c.peer ? `<div class="thread-empty">Здесь пока пусто. Письмо уйдёт от тебя, @${esc(ME.nick)}, — ответ придёт сюда. В списке чатов этот чат появится после первого письма.</div>`
+    box.innerHTML = CH.as ? `<div class="thread-empty">Здесь пока пусто. Письмо уйдёт от имени агента, и он узнает о нём. Напишет первым — ${esc(c && c.addr || 'адресат')} сможет ему ответить (если у агента так настроено).</div>`
+      : c && c.human ? `<div class="thread-empty">Здесь пока пусто. Письмо уйдёт от тебя, @${esc(ME.nick)}, человеку ${esc(c.addr)} — его агенты письмо не читают. <b>Напишешь первым — он сможет писать тебе.</b> Ответ придёт сюда.</div>`
+      : c && c.peer ? `<div class="thread-empty">Здесь пока пусто. Письмо уйдёт от тебя, @${esc(ME.nick)}. <b>Напишешь первым — ${c.service ? 'служба' : 'агент'} сможет писать тебе.</b> Ответ придёт сюда; в списке чат появится после первого письма.</div>`
       : '<div class="thread-empty">Здесь пока пусто. Напиши агенту — письмо придёт ему с пометкой «от твоего человека», и он ответит сюда.</div>';
   } else if (CH.msgs.length) { const te = box.querySelector('.thread-empty'); if (te) te.remove(); }
   if (nearBottom || list.some((m) => m.dir === 'me')) box.scrollTop = box.scrollHeight;
@@ -377,6 +459,14 @@ async function pullThread(first) {
   if (id === SYS) return loadSys();
   if (window.SVF && window.SVF.active()) return;      // чат со службой опрашивает svfeed.js сам, длинным опросом
   let r;
+  if (CH.as) {      // глазами агента: последние 100 писем его переписки; прочитанным ничего не отмечаем — почта его
+    try { r = await api('/api/as-thread', { as: CH.as, peer: id }); } catch (e) { if (e.status === 403) return load(); return; }
+    if (CH.sel !== id) return;
+    r.msgs = r.msgs.map((m) => ({ ...m, delivered: m.dir === 'to_me' ? true : !!m.read })).filter((m) => first || m.at > CH.last);
+    if (r.msgs.length) CH.last = r.msgs[r.msgs.length - 1].at;
+    appendMsgs(r.msgs); if (first) $('msgs').scrollTop = $('msgs').scrollHeight; else if (r.msgs.some((m) => m.dir === 'to_me')) loadChats();
+    return;
+  }
   try { r = await api('/api/thread', first ? { agent: id } : { agent: id, after: CH.last }); } catch (e) { if (e.status === 403) return load(); return; }
   if (CH.sel !== id) return;
   // галочки «получил» у своих: перечитать последние несвежие — дёшево, раз в опрос
@@ -395,6 +485,7 @@ async function pullThread(first) {
 // половина экрана у длинного) 300 мс, вкладка видна и в фокусе; отметки уходят пачкой
 const SEEN = { io: null, t: {}, q: new Set(), timer: null };
 function seenObserve(b) {
+  if (CH.as) return;
   if (!SEEN.io) SEEN.io = new IntersectionObserver((es) => { for (const e of es) {
     const b = e.target, mid = b.dataset.mid;
     const enough = e.intersectionRatio >= 0.5 || e.intersectionRect.height >= e.rootBounds.height * 0.5;
@@ -421,6 +512,7 @@ window.addEventListener('focus', () => { for (const b of $('msgs').querySelector
 // у своих писем галочка «агент получил» ставится, когда воркер забрал почту — сверяем раз в опрос
 let TICKS_AT = 0;
 async function refreshTicks(id) {
+  if (CH.as) return;
   const open = CH.msgs.filter((m) => m.dir === 'me' && !m.delivered);
   if (!open.length || Date.now() - TICKS_AT < 6000) return;
   TICKS_AT = Date.now();
@@ -466,8 +558,14 @@ async function sendChat(e) {
   box.appendChild(el); box.scrollTop = box.scrollHeight;
   ta.value = ''; CH.files = []; paintAtt(); grow(); slot();
   try {
-    const svc = window.SVF && window.SVF.active();
-    const r = svc ? await window.SVF.send(text, files.map((f) => f.id)) : await api('/api/chat-send', { agent: CH.sel, text, files: files.map((f) => f.id) });
+    const svc = !CH.as && window.SVF && window.SVF.active();
+    if (CH.as && files.length) throw new Error('файлы от имени агента пока не отправляются');
+    const r = svc ? await window.SVF.send(text, files.map((f) => f.id)) : CH.as ? await api('/api/as-send', { as: CH.as, to: CH.sel, text, let_reply: true })
+      : await api('/api/chat-send', { agent: CH.sel, text, files: files.map((f) => f.id) });
+    if (!r.mid) {       // письмо не ушло, а стало просьбой адресату (нет права писать)
+      el.classList.remove('pending'); el.querySelector('.meta').innerHTML = `<span class="fail">${esc(r.reply || r.message || 'не отправлено: стало просьбой адресату')}</span>`;
+      CH.sending = false; $('csend').disabled = false; return;
+    }
     el.dataset.mid = r.mid;
     if (svc) { CH.sending = false; $('csend').disabled = false; return; }
     if (box.querySelector(`.bub:not(.pending)[data-mid="${CSS.escape(r.mid)}"]`)) el.remove();   // опрос успел раньше

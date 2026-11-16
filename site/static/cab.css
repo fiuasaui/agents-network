@@ -54,7 +54,7 @@ body.cab-page.in-app { height: 100dvh; overflow: hidden; background: #0e1621; fo
 .row { position: relative; display: flex; gap: 12px; align-items: center; padding: 9px 12px; cursor: pointer; transition: background 120ms var(--ease); }
 .row::after { content: ""; position: absolute; left: 70px; right: 0; bottom: 0; height: 1px; background: #0f1922; }
 .row:hover { background: #202b36; }
-.row.sel { background: #2b5278; }
+.row.sel { background: var(--rowsel); }   /* своё, темнее аватарок и «Системы» — иначе аватар размывается */
 .row.sel::after, .row:hover::after { background: transparent; }
 .row.sel .av.c0 { --avc: #e17076; } .av.c1 { --avc: #7bc862; } .av.c2 { --avc: #65aadd; } .av.c3 { --avc: #a695e7; }
 .av.c4 { --avc: #ee7aae; } .av.c5 { --avc: #6ec9cb; } .av.c6 { --avc: #faa774; }
@@ -239,7 +239,7 @@ input[type=search]#dsearch { width: 100%; padding: 10px 14px; border-radius: 18p
 .lback { margin-left: -8px; } .lback[hidden] { display: none; }
 .arch-av { background: #202b36; color: var(--muted); }
 .arch-av svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.sys-av { background: #2b5278; color: #e8f1fa; }
+.sys-av { background: #4579b0; color: #fff; }
 .sys-av svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
 .chead .sys-av svg { width: 19px; height: 19px; }
 .badge.mute { background: #6c7883; }
@@ -337,7 +337,7 @@ input[type=search]#dsearch { width: 100%; padding: 10px 14px; border-radius: 18p
 /* «Сеть»: поиск и порядок, секции, форма «написать / попросить» под строкой */
 .netq { display: flex; gap: 8px; margin-top: 10px; }
 .netq input { flex: 1; min-width: 0; margin: 0; }
-.netq select { flex: none; width: auto; margin: 0; }
+.netq select, .netq .pk { flex: none; width: auto; margin: 0; }
 .netsec .more { margin-top: 8px; }
 .netr .agm .about { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .netr > .btn, .netr > .meta { flex: none; }
@@ -351,7 +351,7 @@ input[type=search]#dsearch { width: 100%; padding: 10px 14px; border-radius: 18p
 .nf-act { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .nf-act .err { flex: 1; color: var(--bad); font-size: 13px; }
 .netok { margin: 0; color: var(--ok); font-size: 14px; }
-@media (max-width: 760px) { .netf { padding-left: 0; } .netq select { max-width: 42%; } }
+@media (max-width: 760px) { .netf { padding-left: 0; } .netq { flex-wrap: wrap; } .netq input { flex: 1 1 100%; } .netq .pk { flex: 1 1 0; max-width: none; } .netq .pk-b { width: 100%; } }
 /* карточка агента — по щелчку на имя в шапке чата */
 #chead .who.click { cursor: pointer; border-radius: 10px; padding: 2px 6px; margin: -2px -6px; transition: background 150ms; }
 #chead .who.click:hover { background: var(--hover); }
@@ -383,6 +383,11 @@ input[type=search]#dsearch { width: 100%; padding: 10px 14px; border-radius: 18p
 .av.img { background: none; overflow: hidden; }
 .av.img img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; display: block; }
 .cedit { display: flex; flex-direction: column; gap: 8px; }
+.cmut { border: 0; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.cmut legend { font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+.cmut label { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; color: var(--ink) !important; margin: 0 !important; cursor: pointer; line-height: 1.35; }
+.cmut input { margin-top: 3px; accent-color: var(--accent, #5eb5f7); }
+.cmut span { color: var(--muted); } .cmut b { color: var(--ink); font-weight: 600; }
 .cedit label:not(.btn) { font-size: 13px; color: var(--muted); margin-top: 6px; }
 .cedit textarea { background: #242f3d; border: 0; color: var(--ink); font: inherit; font-size: 15px; border-radius: 14px; padding: 10px 14px; resize: vertical; }
 .av-act { display: flex; gap: 8px; margin-top: 6px; }
@@ -461,12 +466,13 @@ a.me-chip { text-decoration: none; cursor: pointer; transition: background 150ms
 /* строка «Сети» схемой: имя и адрес в одну строку, ниже описание, ниже значки с числами; пояснение — подсказкой */
 .netr .nh { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .netr .nh .meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; font-size: 13px; }
-.netr .nh .aplink { flex: none; max-width: 70%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.netr .nh .nhn { display: inline-flex; align-items: center; gap: 6px; flex: none; max-width: 70%; min-width: 0; }
+.netr .nh .aplink { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nst { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 5px; }
 .nc { position: relative; display: inline-flex; align-items: center; gap: 4px; font-size: 13px; line-height: 18px; color: #93a4b6; font-variant-numeric: tabular-nums; cursor: default; outline: none; border-radius: 6px; }
 .nc svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .nc.in { color: #7bc862; } .nc.st { color: #f2c94c; } .nc.st svg { fill: currentColor; stroke-width: 1.4; }
-.nc::after { content: attr(data-tip); position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translate(-50%, 4px); white-space: nowrap;
+.nc::after { display: none; content: attr(data-tip); position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translate(-50%, 4px); white-space: nowrap;
   background: #0e1621; color: #e6edf3; font-size: 12.5px; padding: 6px 10px; border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.35);
   opacity: 0; pointer-events: none; transition: opacity 120ms var(--ease), transform 120ms var(--ease); z-index: 5; }
 .nc:hover::after, .nc:focus-visible::after, .nc:focus::after { opacity: 1; transform: translate(-50%, 0); }
@@ -489,7 +495,7 @@ a.me-chip { text-decoration: none; cursor: pointer; transition: background 150ms
 .agx .sw, .agx .sw-t { min-width: 0; }
 @media (max-width: 760px) {
   #agents .agr > .agb { flex-wrap: wrap; flex: 1 1 calc(100% - 52px); min-width: 0; }
-  .netr .nh { flex-direction: column; align-items: flex-start; gap: 0; } .netr .nh .aplink { max-width: 100%; } .netr .nh .meta { max-width: 100%; }
+  .netr .nh { flex-direction: column; align-items: flex-start; gap: 0; } .netr .nh .aplink, .netr .nh .nhn { max-width: 100%; } .netr .nh .meta { max-width: 100%; }
 }
 /* аудит v18 (auditor_main): подпись ключа машины не лезет под «Отозвать»; подсказку значка закрывает Escape; цель касания шире */
 #keys .agm { min-width: 0; } #keys .meta { white-space: normal; overflow-wrap: anywhere; }
@@ -515,6 +521,8 @@ a.me-chip { text-decoration: none; cursor: pointer; transition: background 150ms
 .svcf { display: flex; flex-direction: column; gap: 12px; margin: 6px 0 18px; padding: 16px; border-radius: 14px; background: #1f2b38; }
 .svcf label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--muted); }
 .svcf input, .svcf textarea, .svcf select { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; min-width: 0; }
+.svcf .pk { display: flex; width: 100%; } .svcf .pk-b { min-height: 40px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); padding: 0 8px 0 11px; }
+.svcf .pk-b:hover, .svcf .pk.open .pk-b { background: var(--bg); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
 .svcf .svcg { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .svcf fieldset { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 0; display: flex; flex-direction: column; gap: 6px; }
 .svcf legend { color: var(--muted); font-size: 14px; padding: 0 4px; }
@@ -565,3 +573,62 @@ button.me-chip:hover, button.me-chip[aria-expanded="true"] { background: #2b3947
 .bal-chip.on { outline: 2px solid color-mix(in srgb, #5288c1 70%, transparent); outline-offset: 1px; }
 .chead button.acc { border: 0; background: none; font: inherit; cursor: pointer; }
 .chead button.acc:disabled { opacity: .6; cursor: default; }
+
+.conv.asv .clip { display: none; }   /* письмо от имени агента — пока без файлов */
+
+/* цвет выделенной строки: отдельный, темнее любого фона аватарки */
+:root { --rowsel: #1f4469; }
+.row.sel .av .on { box-shadow: 0 0 0 2.5px var(--rowsel); }
+
+/* второй уровень «Сети»: «Агенты · Люди» — тише первого уровня */
+.lsub { display: flex; gap: 6px; margin: -2px 12px 8px; flex: none; }
+.lsub[hidden] { display: none; }
+.lsub button { flex: 1; height: 28px; border: 0; border-radius: 14px; background: rgba(255, 255, 255, .04); color: var(--muted); font: inherit; font-size: 13px;
+  font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; transition: background 150ms, color 150ms; }
+.lsub button:hover { color: var(--ink); }
+.lsub button[aria-selected="true"] { background: rgba(94, 181, 247, .16); color: #cfe6fb; }
+.lsub button:focus-visible { outline: 2px solid #5288c1; outline-offset: 1px; }
+
+/* «от чьего имени» в шапке */
+.as-menu { position: relative; }
+.as-menu[hidden] { display: none; }
+.as-chip { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 8px 0 4px; border: 0; border-radius: 19px; background: #202b36; color: #dbe6f2;
+  font: inherit; cursor: pointer; max-width: 240px; transition: background 150ms, box-shadow 150ms; }
+.as-chip:hover, .as-menu.open .as-chip { background: #2b3947; }
+.as-chip:focus-visible { outline: 2px solid #5288c1; outline-offset: 2px; }
+.as-chip .av, .as-o .av { width: 30px; height: 30px; font-size: 12.5px; flex: none; }
+.as-t { display: flex; flex-direction: column; min-width: 0; line-height: 1.15; text-align: left; }
+.as-t small { font-size: 11px; color: var(--muted); font-weight: 600; }
+.as-t b { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.as-ch { width: 16px; height: 16px; flex: none; fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform 160ms; }
+.as-menu.open .as-ch { transform: rotate(180deg); }
+.as-menu.on .as-chip { background: #2b5278; box-shadow: 0 0 0 2px #6fb3ff; }
+.as-menu.on .as-t small { color: #a9d3fb; }
+.me-av { background: #3a4a5c; color: #e8f1fa; }
+.as-pop { position: absolute; left: 50%; top: calc(100% + 8px); transform: translateX(-50%); width: 300px; max-height: 60vh; overflow: auto; padding: 6px;
+  border-radius: 16px; background: #202b36; box-shadow: 0 12px 34px rgba(0, 0, 0, .45); z-index: 45; animation: aspop 150ms ease-out; }
+.as-pop[hidden] { display: none; }
+@keyframes aspop { from { opacity: 0; transform: translate(-50%, -4px); } }
+.as-h { padding: 6px 10px 8px; font-size: 12px; font-weight: 700; color: var(--muted); }
+.as-o { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 10px; border: 0; border-radius: 11px; background: none; color: var(--ink);
+  font: inherit; text-align: left; cursor: pointer; transition: background 120ms; }
+.as-o:hover, .as-o:focus-visible { background: #2b3947; outline: none; }
+.as-o.on { background: var(--rowsel); }
+.as-ot { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.25; }
+.as-ot b { font-size: 14.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.as-ot small { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.as-tk { width: 18px; height: 18px; flex: none; fill: none; stroke: #6fb3ff; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; visibility: hidden; }
+.as-o.on .as-tk { visibility: visible; }
+.as-f { margin: 4px 10px 6px; font-size: 12px; color: var(--muted); }
+.as-sub { color: #8cc0f5; }
+body.as-on .bar { box-shadow: inset 0 -2px 0 #2b5278; }
+@media (prefers-reduced-motion: reduce) { .as-pop { animation: none; } }
+@media (max-width: 760px) {
+  .as-chip { padding: 0 6px 0 4px; gap: 4px; } .as-t { display: none; }
+  .as-pop { position: fixed; left: 12px; right: 12px; top: calc(60px + env(safe-area-inset-top, 0px)); width: auto; transform: none; animation: none; }
+}
+
+/* кто решил просьбу и письмо, написанное человеком от имени агента */
+.sys-by { margin-left: 10px; font-size: 12.5px; color: var(--muted); }
+.sys-by b { color: #dbe6f2; font-weight: 600; }
+.byh { margin-right: 6px; color: #a9d3fb; font-weight: 600; }
