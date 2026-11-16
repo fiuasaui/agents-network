@@ -228,7 +228,7 @@ function bubble(m) {
   const html = m.format === 'html';
   // письмо агента — Markdown: структура вместо простыни; свои письма человека — как набрал
   const md = !html && m.dir !== 'me' && typeof window.renderMarkdown === 'function';
-  el.innerHTML = `${hd}<div class="tx${html || md ? ' rep-html' : ''}${md ? ' md' : ''}${long ? (peer ? ' clamp short' : ' clamp') : ''}">${html ? '' : md ? window.renderMarkdown(m.text) : linkify(m.text)}</div>${long ? '<button class="more" type="button">Показать целиком</button>' : ''}<div class="meta">${esc(hm(m.at))}${tick}</div>`;
+  el.innerHTML = `${hd}<div class="tx${html || md ? ' rep-html' : ''}${md ? ' md' : ''}${long ? (peer ? ' clamp short' : ' clamp') : ''}">${html ? '' : md ? window.renderMarkdown(m.text) : linkify(m.text)}</div>${long ? '<button class="more" type="button">Показать целиком</button>' : ''}${chatFiles(m.files)}<div class="meta">${esc(hm(m.at))}${tick}</div>`;
   if (html) repHtml(el.querySelector('.tx'), m.text);
   if (long) el.querySelector('.more').onclick = (e) => { const t = el.querySelector('.tx'); t.classList.toggle('clamp');
     e.target.textContent = t.classList.contains('clamp') ? 'Показать целиком' : 'Свернуть'; };
@@ -321,18 +321,42 @@ async function refreshTicks(id) {
   } catch (e) {}
 }
 
+// файлы письма: до 20 МБ, живут час; ссылка /f/<id>
+function chatFiles(fs) {
+  if (!fs || !fs.length) return '';
+  const sz = (n) => n > 2 ** 20 ? (n / 2 ** 20).toFixed(1) + ' МБ' : Math.max(1, Math.round(n / 1024)) + ' КБ';
+  return '<div class="cfiles">' + fs.map((f) => `<a class="cfile" href="/f/${encodeURIComponent(f.id)}" target="_blank" rel="noopener">📄 ${esc(f.name)} <small>${sz(f.size)}</small></a>`).join('') + '</div>';
+}
+CH.files = [];
+function paintAtt() {
+  if (!$('catt')) return;
+  $('catt').innerHTML = CH.files.map((f, i) => `<span class="cchip">📄 ${esc(f.name)}<button type="button" data-rmf="${i}" aria-label="Убрать файл">×</button></span>`).join('');
+  $('catt').hidden = !CH.files.length; slot();
+}
+if ($('cfile')) $('cfile').addEventListener('change', async () => {
+  const f = $('cfile').files[0]; $('cfile').value = '';
+  if (!f) return;
+  if (f.size > 20 * 2 ** 20) { alert('Файл больше 20 МБ'); return; }
+  try {
+    const r = await fetch('/api/file', { method: 'POST', headers: { 'X-File-Name': encodeURIComponent(f.name), 'Content-Type': f.type || 'application/octet-stream' }, body: f });
+    const d = await r.json(); if (!r.ok) throw new Error(d.error || 'не загрузилось');
+    CH.files.push(d); paintAtt();
+  } catch (e) { alert(e.message); }
+});
+if ($('catt')) $('catt').addEventListener('click', (e) => { const b = e.target.closest('[data-rmf]'); if (b) { CH.files.splice(+b.dataset.rmf, 1); paintAtt(); } });
+
 async function sendChat(e) {
   e.preventDefault();
-  const ta = $('ctext'), text = ta.value.trim();
-  if (!text || CH.sending || !CH.sel) return;
+  const ta = $('ctext'), text = ta.value.trim(), files = CH.files.slice();
+  if ((!text && !files.length) || CH.sending || !CH.sel) return;
   CH.sending = true; $('csend').disabled = true;
-  const tmp = { mid: 'tmp-' + Date.now(), dir: 'me', text, at: Date.now() / 1000, delivered: false };
+  const tmp = { mid: 'tmp-' + Date.now(), dir: 'me', text: text || '(файл)', at: Date.now() / 1000, delivered: false, files };
   const el = bubble(tmp); el.classList.add('pending'); el.querySelector('.meta').innerHTML = '<span class="spin sm" aria-hidden="true"></span> отправляю';
   const box = $('msgs'); const te = box.querySelector('.thread-empty'); if (te) te.remove();
   box.appendChild(el); box.scrollTop = box.scrollHeight;
-  ta.value = ''; grow(); slot();
+  ta.value = ''; CH.files = []; paintAtt(); grow(); slot();
   try {
-    const r = await api('/api/chat-send', { agent: CH.sel, text });
+    const r = await api('/api/chat-send', { agent: CH.sel, text, files: files.map((f) => f.id) });
     el.dataset.mid = r.mid;
     if (box.querySelector(`.bub:not(.pending)[data-mid="${CSS.escape(r.mid)}"]`)) el.remove();   // опрос успел раньше
     await pullThread(false);
@@ -353,7 +377,7 @@ $('ctext').addEventListener('input', () => { grow(); slot(); });
 // поле, ➤ — сразу отправить. Тишину и записи короче секунды не шлём: модель на тишине выдумывает текст.
 CH.voice = false; CH.voiceMax = 120;
 function setVoice(on, max) { CH.voice = !!on; CH.voiceMax = max || 120; $('rec-max').textContent = ' / ' + Math.floor(CH.voiceMax / 60) + ':' + String(CH.voiceMax % 60).padStart(2, '0'); slot(); }
-function slot() { const empty = !$('ctext').value.trim(); $('cmic').hidden = !(CH.voice && empty); $('csend').hidden = CH.voice && empty; }
+function slot() { const empty = !$('ctext').value.trim() && !(CH.files && CH.files.length); $('cmic').hidden = !(CH.voice && empty); $('csend').hidden = CH.voice && empty; }
 function hint(t) { const ta = $('ctext'), was = 'Сообщение агенту…'; ta.placeholder = t; clearTimeout(hint.t); hint.t = setTimeout(() => { ta.placeholder = was; }, 4000); }
 const REC = { mr: null, chunks: [], t0: 0, timer: null, stream: null, cancel: false, send: false, ctx: null, an: null, levels: [], n: 0, step: 100, top: 0 };
 $('cmic').onclick = async () => {

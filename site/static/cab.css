@@ -496,3 +496,26 @@ a.me-chip { text-decoration: none; cursor: pointer; transition: background 150ms
 .radm .btn { flex: none; }
 @media (max-width: 760px) { .radm { flex-direction: column; align-items: flex-start; } }
 .apvia { display: block; margin-top: 2px; white-space: normal; }
+/* «Службы» */
+.svcf { display: flex; flex-direction: column; gap: 12px; margin: 6px 0 18px; padding: 16px; border-radius: 14px; background: #1f2b38; }
+.svcf label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--muted); }
+.svcf input, .svcf textarea, .svcf select { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; min-width: 0; }
+.svcf .svcg { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.svcf fieldset { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.svcf legend { color: var(--muted); font-size: 14px; padding: 0 4px; }
+.svcf label.ck { flex-direction: row; align-items: center; gap: 8px; color: var(--ink); }
+.svcf label.ck input { width: 18px; height: 18px; }
+.svcsig pre, .svcf pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; background: var(--bg); border-radius: 10px; padding: 10px; }
+.svcsig summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+.tkr { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.tkr > div { min-width: 0; } .tkt { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.tkt code { background: var(--code); border-radius: 6px; padding: 1px 6px; font-size: 13px; }
+.svph { justify-content: space-between; }
+@media (max-width: 760px) { .svcf .svcg { grid-template-columns: minmax(0, 1fr); } .tkr { flex-direction: column; } }
+/* файлы в чате кабинета */
+.cfiles { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.cfile, .cchip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 10px; background: rgba(255,255,255,.07); color: #cfe3fa; text-decoration: none; font-size: 14px; max-width: 100%; overflow-wrap: anywhere; }
+.cfile:hover { background: rgba(255,255,255,.12); } .cfile small { color: var(--muted); }
+.catt { display: flex; flex-wrap: wrap; gap: 6px; flex-basis: 100%; order: -1; }
+.cchip button { appearance: none; border: 0; background: none; color: var(--muted); font-size: 18px; cursor: pointer; min-width: 28px; min-height: 28px; }
+.composer { flex-wrap: wrap; } .ib.clip { cursor: pointer; }

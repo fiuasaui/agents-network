@@ -44,6 +44,8 @@ def db_open(path):
     mcols = [r[1] for r in c.execute("PRAGMA table_info(msgs)")]
     if "fmt" not in mcols:          # формат письма: NULL — текст, 'html' — отчёт агента человеку
         c.execute("ALTER TABLE msgs ADD COLUMN fmt TEXT")
+    if "files" not in mcols:        # приложенные файлы письма: JSON [{id, name, size, mime}]
+        c.execute("ALTER TABLE msgs ADD COLUMN files TEXT")
     if "seen" not in cols:          # когда агент последний раз забирал почту — «в сети» в кабинете
         c.execute("ALTER TABLE agents ADD COLUMN seen REAL")
     if "hidden" not in cols:        # скрытый агент: в сети не показывается вовсе, пишет ему его человек и те, кому разрешено
@@ -459,6 +461,15 @@ class Relay:
             raise PermissionError("у тебя нет человека: агент без владельца пишет только агентам")
         return mine
 
+    FILE_BASE = ""      # адрес сайта для ссылок на файлы; у местной сети файлов нет
+
+    def files_json(self, files, src):
+        """Файлы письма → JSON для msgs.files. В местной сети файлов нет — их держит сайт сети."""
+        raise ValueError("файлы прикладываются только в общей сети (agentsnetwork.online): загрузи файл туда — POST /v1/file")
+
+    def files_out(self, fj):
+        return [{**f, "url": f"{self.FILE_BASE}/f/{f['id']}"} for f in json.loads(fj)] if fj else []
+
     def check_text(self, text):
         if not text.strip():
             raise ValueError("пустое сообщение")
@@ -467,6 +478,9 @@ class Relay:
 
     def send(self, q):
         src, text = self.auth(q), str(q.get("text") or "")
+        fj = self.files_json(q.get("files"), src) if q.get("files") else None
+        if fj and not text.strip():
+            text = "(файл)"
         self.check_text(text)
         rto = q.get("reply_to")
         if rto:     # ответ — только на письмо своей переписки: иначе связка «ответ → разговор» рвётся молча
@@ -478,8 +492,8 @@ class Relay:
             if human:        # своему человеку: в кабинет сайта (или в местный интерфейс), будить никого не нужно
                 text = clean_html(text) if fmt(q) else text
                 mid = "m-" + secrets.token_hex(6)
-                self.db.execute("INSERT INTO msgs (mid, src, dst, text, reply_to, at, fmt) VALUES (?,?,?,?,?,?,?)",
-                                (mid, src, human, text, q.get("reply_to"), time.time(), fmt(q)))
+                self.db.execute("INSERT INTO msgs (mid, src, dst, text, reply_to, at, fmt, files) VALUES (?,?,?,?,?,?,?,?)",
+                                (mid, src, human, text, q.get("reply_to"), time.time(), fmt(q), fj))
                 WAKE.notify_all()
                 return {"ok": True, "mid": mid, "how": "owner"}
             dst = self.target(q.get("to"))
@@ -493,8 +507,8 @@ class Relay:
             mid = "m-" + secrets.token_hex(6)
             now = time.time()
             text = clean_html(text) if fmt(q) else text
-            self.db.execute("INSERT INTO msgs (mid, src, dst, text, reply_to, at, fmt) VALUES (?,?,?,?,?,?,?)",
-                            (mid, src, dst, text, q.get("reply_to"), now, fmt(q)))
+            self.db.execute("INSERT INTO msgs (mid, src, dst, text, reply_to, at, fmt, files) VALUES (?,?,?,?,?,?,?,?)",
+                            (mid, src, dst, text, q.get("reply_to"), now, fmt(q), fj))
             # получатель может ответить отправителю без обмена ID (чат-бот, разовое обращение)
             self.db.execute("INSERT OR REPLACE INTO grants VALUES (?,?,?)", (src, dst, now + REPLY_TTL))
             WAKE.notify_all()
@@ -513,7 +527,7 @@ class Relay:
             mine = (self.db.execute("SELECT owner FROM agents WHERE id=?", (me,)).fetchone() or [None])[0]
             while True:
                 rows = self.db.execute(
-                    "SELECT m.mid, m.src, a.name, m.text, m.reply_to, m.at, a.nick, COALESCE(o.nick, h.nick), h.id, m.fmt FROM msgs m "
+                    "SELECT m.mid, m.src, a.name, m.text, m.reply_to, m.at, a.nick, COALESCE(o.nick, h.nick), h.id, m.fmt, m.files FROM msgs m "
                     "LEFT JOIN agents a ON a.id=m.src LEFT JOIN owners o ON o.id=a.owner LEFT JOIN owners h ON h.id=m.src "
                     "WHERE m.dst=? AND m.acked IS NULL AND m.at>?" + sk + " ORDER BY m.at LIMIT 20", (me, time.time() - KEEP, *skip)).fetchall()
                 left = end - time.time()
@@ -525,7 +539,7 @@ class Relay:
         return {"msgs": [{"mid": r[0], "from": r[1], "from_name": r[2] or (f"@{r[7]}" if r[8] else None), "text": r[3], "reply_to": r[4],
                           "at": r[5], "from_nick": r[6], "from_owner": r[7],
                           **({"from_human": True} if r[8] and r[8] == mine else {"from_person": True} if r[8] else {}),
-                          **({"format": r[9]} if r[9] else {})} for r in rows]}
+                          **({"format": r[9]} if r[9] else {}), **({"files": self.files_out(r[10])} if r[10] else {})} for r in rows]}
 
     def history(self, q):
         """Вся переписка агента, включая прочитанное: свежее сначала, до `limit` (≤100) писем,
@@ -540,11 +554,12 @@ class Relay:
                 w += " AND (m.src=? OR m.dst=?)"
                 args += [peer, peer]
             rows = self.db.execute(
-                "SELECT m.mid, m.src, m.dst, m.text, m.reply_to, m.at, m.acked, m.fmt FROM msgs m WHERE " + w + " ORDER BY m.at DESC LIMIT ?",
+                "SELECT m.mid, m.src, m.dst, m.text, m.reply_to, m.at, m.acked, m.fmt, m.files FROM msgs m WHERE " + w + " ORDER BY m.at DESC LIMIT ?",
                 (*args, lim)).fetchall()
             out = [{"mid": mid, "dir": "out" if src == me else "in", "from": src, "to": dst, "peer": self.addr_of(dst if src == me else src),
-                    "text": t, "reply_to": r, "at": at, **({"read": True} if ak else {}), **({"format": f} if f else {})}
-                   for mid, src, dst, t, r, at, ak, f in rows]
+                    "text": t, "reply_to": r, "at": at, **({"read": True} if ak else {}), **({"format": f} if f else {}),
+                    **({"files": self.files_out(fl)} if fl else {})}
+                   for mid, src, dst, t, r, at, ak, f, fl in rows]
         return {"msgs": out, **({"next": out[-1]["at"]} if len(out) == lim else {}),
                 "hint": "свежее сначала; следующая страница — before из next; peer — переписка с одним адресатом"}
 
@@ -564,21 +579,23 @@ class Relay:
             raise LookupError("это не твой агент")
         return r
 
-    def human_send(self, owner, agent, text, reply_to=None):
+    def human_send(self, owner, agent, text, reply_to=None, files=None):
         """Человек пишет своему агенту: письмо в его почту, воркер будит сессию."""
-        text = str(text or "")
+        fj = self.files_json(files, owner) if files else None
+        text = str(text or "") or ("(файл)" if fj else "")
         self.check_text(text)
         with LOCK:
             aid, _ = self.own_agent(owner, agent)
             mid = "m-" + secrets.token_hex(6)
-            self.db.execute("INSERT INTO msgs (mid, src, dst, text, reply_to, at) VALUES (?,?,?,?,?,?)", (mid, owner, aid, text, reply_to, time.time()))
+            self.db.execute("INSERT INTO msgs (mid, src, dst, text, reply_to, at, files) VALUES (?,?,?,?,?,?,?)", (mid, owner, aid, text, reply_to, time.time(), fj))
             WAKE.notify_all()
         return {"ok": True, "mid": mid}
 
-    def human_net(self, owner, to, text, reply_to=None):
+    def human_net(self, owner, to, text, reply_to=None, files=None):
         """Человек пишет чужому агенту от себя: письмо подписано им (`from` = его ow-…), ответ придёт ему же —
         в его чат с этим агентом. Правило «кто может писать» то же, что у агентов: человек и его агенты — одна сторона."""
-        text = str(text or "")
+        fj = self.files_json(files, owner) if files else None
+        text = str(text or "") or ("(файл)" if fj else "")
         self.check_text(text)
         with LOCK:
             dst = self.resolve(to)
@@ -586,12 +603,12 @@ class Relay:
             if not r:
                 raise LookupError("нет агента " + str(to))
             if r[0] == owner:
-                return self.human_send(owner, dst, text, reply_to)
+                return self.human_send(owner, dst, text, reply_to, files)
             how = self.may_write(owner, dst)
             if not how:
                 raise PermissionError(f"{self.addr_of(dst)} пока не принимает твои письма — попроси разрешения")
             mid, now = "m-" + secrets.token_hex(6), time.time()
-            self.db.execute("INSERT INTO msgs (mid, src, dst, text, reply_to, at) VALUES (?,?,?,?,?,?)", (mid, owner, dst, text, reply_to, now))
+            self.db.execute("INSERT INTO msgs (mid, src, dst, text, reply_to, at, files) VALUES (?,?,?,?,?,?,?)", (mid, owner, dst, text, reply_to, now, fj))
             self.db.execute("INSERT OR REPLACE INTO grants VALUES (?,?,?)", (owner, dst, now + REPLY_TTL))
             WAKE.notify_all()
         return {"ok": True, "mid": mid, "how": how}
@@ -642,7 +659,7 @@ class Relay:
             except LookupError:
                 return self.peer_thread(owner, agent, after, limit)
             rows = self.db.execute(
-                "SELECT m.mid, m.src, m.dst, m.text, m.reply_to, m.at, m.acked, sa.nick, sa.name, so.nick, da.nick, da.name, dw.nick, m.fmt, sa.owner, da.owner "
+                "SELECT m.mid, m.src, m.dst, m.text, m.reply_to, m.at, m.acked, sa.nick, sa.name, so.nick, da.nick, da.name, dw.nick, m.fmt, sa.owner, da.owner, m.files "
                 "FROM msgs m LEFT JOIN agents sa ON sa.id=m.src LEFT JOIN owners so ON so.id=sa.owner "
                 "LEFT JOIN agents da ON da.id=m.dst LEFT JOIN owners dw ON dw.id=da.owner "
                 "WHERE (m.src=? OR m.dst=?) AND m.at>? ORDER BY m.at DESC LIMIT ?", (aid, aid, float(after or 0), int(limit))).fetchall()
@@ -650,7 +667,7 @@ class Relay:
         def addr(i, n, nm, o):
             return (f"@{o}/{n}" if o and n else f"@{n}" if n else i, nm)
         msgs = []
-        for mid, src, dst, text, rto, at, acked, sn, snm, so, dn, dnm, do, fm, sow, dow in reversed(rows):
+        for mid, src, dst, text, rto, at, acked, sn, snm, so, dn, dnm, do, fm, sow, dow, fl in reversed(rows):
             d = self._dir(src, dst, aid, owner)
             peer = addr(dst, dn, dnm, do) if d == "out" else addr(src, sn, snm, so) if d == "in" else (None, None)
             if peer[0] and str(peer[0]).startswith("ow-"):     # чужой человек в почте агента — его @ник
@@ -661,17 +678,18 @@ class Relay:
             msgs.append({"mid": mid, "dir": d, "text": text, "reply_to": rto, "at": at, "delivered": bool(acked),
                          "peer": peer[0], "peer_name": peer[1],
                          **({"peer_owner": po, "peer_mine": pw == owner} if d in ("out", "in") else {}),
-                         **({"format": fm} if fm else {})})
+                         **({"format": fm} if fm else {}), **({"files": self.files_out(fl)} if fl else {})})
         return {"agent": aid, "msgs": msgs}
 
     def peer_thread(self, owner, agent, after=0, limit=200):
         """Переписка человека с чужим агентом: только их письма друг другу. Под LOCK."""
         aid = self.resolve(agent)
-        rows = self.db.execute("SELECT mid, src, text, reply_to, at, acked, fmt FROM msgs WHERE ((src=? AND dst=?) OR (src=? AND dst=?)) AND at>? "
+        rows = self.db.execute("SELECT mid, src, text, reply_to, at, acked, fmt, files FROM msgs WHERE ((src=? AND dst=?) OR (src=? AND dst=?)) AND at>? "
                                "ORDER BY at DESC LIMIT ?", (owner, aid, aid, owner, float(after or 0), int(limit))).fetchall()
         return {"agent": aid, "peer": True, "msgs": [{"mid": m, "dir": "me" if s_ == owner else "to_me", "text": t, "reply_to": r, "at": at,
-                                                      "delivered": bool(ak), **({"format": f} if f else {})}
-                                                     for m, s_, t, r, at, ak, f in reversed(rows)]}
+                                                      "delivered": bool(ak), **({"format": f} if f else {}),
+                                                      **({"files": self.files_out(fl)} if fl else {})}
+                                                     for m, s_, t, r, at, ak, f, fl in reversed(rows)]}
 
     def human_seen(self, owner, agent, mids):
         """Человек дочитал до этих писем своего агента (или чужого, с которым переписывается сам) — снять из непрочитанных."""
