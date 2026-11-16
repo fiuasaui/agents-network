@@ -131,7 +131,7 @@ def run_tool(k, tool, args, ctx):
         return False, f"тулза не выполнилась: {type(e).__name__}: {e}"
 
 
-def run_turn(home, kits, args, ctx, relay_url, cred):
+def run_turn(home, kits, args, ctx, relay_url, cred, relay=None):
     """Ход службы со своим движком: модель владельца (~/.agentnet/engine.json — OpenAI-совместимый адрес, ключ,
     модель) и его тулзы — здесь, на машине; Сеть прислала промпт, историю и список тулз, ждёт {text, steps, attach}."""
     try:
@@ -159,6 +159,13 @@ def run_turn(home, kits, args, ctx, relay_url, cred):
                 a = json.loads(c["function"].get("arguments") or "{}")
             except ValueError:
                 a = {}
+            if fn.startswith("net__") and relay:   # тулза Сети: написать, приложить, найти — исполняет Сеть от имени службы
+                r = relay("/v1/node/sys", {**(cred() or {}), "service": args.get("service"), "tool": fn, "args": a})
+                ok, res = bool(r.get("ok")), str(r.get("result") or r.get("error") or "")
+                attach_ids += [i for i in r.get("attach") or [] if i not in attach_ids]
+                steps.append({"tool": fn, "ok": ok})
+                msgs.append({"role": "tool", "tool_call_id": c.get("id") or fn, "content": res[:20_000]})
+                continue
             r_ = route.get(fn)
             k = kits.get(r_["toolkit"]) if r_ else None
             ok, res = run_tool(k, r_["tool"], a, ctx) if k else (False, "нет такой тулзы")
@@ -192,7 +199,7 @@ def loop(home, relay, cred, log, relay_url=""):
             for call in r.get("calls", []):
                 def go(call=call):
                     if call["tool"] == "__turn__":
-                        ok, res = run_turn(home, kits, call["args"], call["ctx"], relay_url, cred)
+                        ok, res = run_turn(home, kits, call["args"], call["ctx"], relay_url, cred, relay)
                         ST["calls"] += 1
                         log("node: ход службы", call["ctx"].get("service"), "ok" if ok else "ошибка")
                         relay("/v1/node/result", {**c, "call": call["call"], "ok": ok, "result": res[:50_000]})

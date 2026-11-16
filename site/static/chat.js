@@ -56,18 +56,26 @@ function paintRows() {
 
 async function loadChats() {
   try { const r = await api('/api/chats'); CH.list = r.chats || []; CH.now = r.now; } catch (e) { if (e.status === 403) return load(); return; }
+  if (CH.extra && !CH.list.some((c) => c.id === CH.extra.id)) CH.list.push(CH.extra);   // служба из «Сети», пока писем нет
   paintRows();
   if (CH.sel) paintHead();
 }
 
 function cur() { return CH.list.find((c) => c.id === CH.sel); }
+// «Открыть чат» со службой из «Сети»: чата в списке ещё нет — заводим строку сами, лента откроется через /sv/thread
+window.svcChat = function (a) {
+  CH.extra = { id: a.id, peer: true, service: true, addr: a.address, nick: a.nick, name: a.name, about: a.about, av: a.av, seen: a.seen, unread: 0, last: null };
+  if (location.hash === '#chats/' + encodeURIComponent(a.id)) fromHash(); else location.hash = '#chats/' + encodeURIComponent(a.id);
+};
 function paintHead() {
   const c = cur(); if (!c) return;
   const [st, on] = seenText(c.seen, CH.now);
   const a = avatar(chatName(c), c.id);
   $('c-av').className = 'av c' + a.k + (c.av ? ' img' : ''); $('c-av').innerHTML = (c.av ? `<img src="/av/${encodeURIComponent(c.id)}?v=${encodeURIComponent(c.av)}" alt="">` : esc(a.ini)) + (on ? '<i class="on"></i>' : '');
   $('c-name').textContent = chatName(c);
-  $('c-sub').innerHTML = `${c.polls ? '<span title="Агент без воркера: сам проверяет почту по расписанию, ответ придёт после его следующей проверки">проверяет почту сам · </span>' : ''}<span class="${on ? 'online' : ''}">${esc(st)}</span> · ${c.addr ? esc(c.addr) : "@" + esc(ME.nick) + "/" + esc(c.nick || c.id)}`;
+  if (c.service) { const md = c.model || (CH.svModel || {})[c.addr];      // модель — из ленты службы; список чатов её не несёт
+    $('c-sub').innerHTML = `<span>служба${md ? ' · ' + esc(md) : ''}</span> · ${esc(c.addr || '')}`; }
+  else $('c-sub').innerHTML = `${c.polls ? '<span title="Агент без воркера: сам проверяет почту по расписанию, ответ придёт после его следующей проверки">проверяет почту сам · </span>' : ''}<span class="${on ? 'online' : ''}">${esc(st)}</span> · ${c.addr ? esc(c.addr) : "@" + esc(ME.nick) + "/" + esc(c.nick || c.id)}`;
   const acc = $('c-acc');   // только в кабинете сайта: кому агент открыт — и переход к его правам
   if (acc && c.peer) acc.hidden = true;     // чат с чужим агентом: его права не твои
   else if (acc) { acc.hidden = false; acc.href = '#agents/' + encodeURIComponent(c.id); $('c-acc-t').textContent = c.open ? 'Открыт всем' : 'Пишут доверенные';
@@ -80,7 +88,10 @@ async function openChat(id) {
   $('conv-empty').hidden = true; $('chead').hidden = false; $('msgs').hidden = false; $('composer').hidden = false;
   paintHead(); paintRows();
   try { history.replaceState(null, '', '#chats/' + encodeURIComponent(id)); } catch (e) {}
-  await pullThread(true);
+  const c = cur();
+  $('ctext').placeholder = c && c.service ? 'Сообщение службе…' : 'Сообщение агенту…';
+  if (c && c.service && window.SVF) { $('conv').classList.add('uxf'); await window.SVF.open($('msgs'), c.addr); }    // служба — лента как в мессенджере
+  else { if (window.SVF) window.SVF.close(); $('conv').classList.remove('uxf'); await pullThread(true); }
   if (window.matchMedia('(min-width: 761px)').matches) $('ctext').focus({ preventScroll: true });
 }
 
@@ -109,6 +120,7 @@ function goNext() {
 }
 
 function closeChat() {
+  if (window.SVF) window.SVF.close(); $('conv').classList.remove('uxf');
   document.body.classList.remove('in-chat');
   CH.sel = null; paintRows();
   $('conv-empty').hidden = false; $('chead').hidden = true; $('msgs').hidden = true; $('composer').hidden = true;
@@ -266,6 +278,7 @@ function appendMsgs(list) {
 
 async function pullThread(first) {
   const id = CH.sel; if (!id) return;
+  if (window.SVF && window.SVF.active()) return;      // чат со службой опрашивает svfeed.js сам, длинным опросом
   let r;
   try { r = await api('/api/thread', first ? { agent: id } : { agent: id, after: CH.last }); } catch (e) { if (e.status === 403) return load(); return; }
   if (CH.sel !== id) return;
@@ -356,8 +369,10 @@ async function sendChat(e) {
   box.appendChild(el); box.scrollTop = box.scrollHeight;
   ta.value = ''; CH.files = []; paintAtt(); grow(); slot();
   try {
-    const r = await api('/api/chat-send', { agent: CH.sel, text, files: files.map((f) => f.id) });
+    const svc = window.SVF && window.SVF.active();
+    const r = svc ? await window.SVF.send(text, files.map((f) => f.id)) : await api('/api/chat-send', { agent: CH.sel, text, files: files.map((f) => f.id) });
     el.dataset.mid = r.mid;
+    if (svc) { CH.sending = false; $('csend').disabled = false; return; }
     if (box.querySelector(`.bub:not(.pending)[data-mid="${CSS.escape(r.mid)}"]`)) el.remove();   // опрос успел раньше
     await pullThread(false);
   } catch (err) {
