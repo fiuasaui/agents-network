@@ -562,3 +562,6 @@ button.me-chip:hover, button.me-chip[aria-expanded="true"] { background: #2b3947
 .nfil button:hover { color: var(--ink); }
 .nfil button.on { background: #2b5278; color: #fff; }
 .nfil button:focus-visible { outline: 2px solid #5288c1; outline-offset: 1px; }
+.bal-chip.on { outline: 2px solid color-mix(in srgb, #5288c1 70%, transparent); outline-offset: 1px; }
+.chead button.acc { border: 0; background: none; font: inherit; cursor: pointer; }
+.chead button.acc:disabled { opacity: .6; cursor: default; }

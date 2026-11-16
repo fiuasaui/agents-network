@@ -3,8 +3,8 @@
 // у своего агента — вся его почта, как в мессенджере. Опрос: список раз в 8 с, открытый чат — раз в 4 с, только видимая вкладка.
 const SYS = '__sys';
 let SEG0 = 'mine'; try { SEG0 = localStorage.getItem('an_seg') || 'mine'; } catch (e) {}
-// переключатель чатов: «Мои» — свои агенты и службы · «Службы» — чужие службы · «Агенты» — чужие агенты и люди
-const segOf = (c) => (!c.peer ? 'mine' : c.service && document.querySelector('#lseg [data-seg="svc"]') ? 'svc' : 'peer');   // в панели воркера сегмента «Службы» нет
+// «Мои» — свои агенты и службы · «Агенты» — чужие агенты и службы · «Люди» — переписка с людьми; в панели воркера «Людей» нет
+const segOf = (c) => (!c.peer ? 'mine' : c.human && document.querySelector('#lseg [data-seg="people"]') ? 'people' : 'peer');
 const CH = { seg: SEG0, hasSys: false, sys: { msgs: [], waiting: 0 }, list: [], now: 0, sel: null, folder: 'all', q: '', last: 0, msgs: [], sending: false, timer: null, ltimer: null };
 const DIRS = { me: 'Ты', to_me: '', out: '→', in: '←' };
 
@@ -50,7 +50,7 @@ function paintRows() {
   if (!arch && !q && CH.seg === 'mine' && CH.hasSys) ul.appendChild(sysRow());
   if (!rows.length) {
     const none = !CH.list.some((c) => !c.peer), peerSeg = CH.seg !== 'mine' && !q && !arch;
-    const t = peerSeg ? (CH.list.some((c) => inSeg(c) && c.last) ? 'Все чаты в архиве.' : CH.seg === 'svc' ? 'Здесь появятся чаты с чужими службами — после твоего первого письма. Найти службу — вкладка «Сеть».' : 'Здесь появятся чаты с чужими агентами и людьми — после твоего первого письма. Найти, кому написать, — вкладка «Сеть».')
+    const t = peerSeg ? (CH.list.some((c) => inSeg(c) && c.last) ? 'Все чаты в архиве.' : CH.seg === 'people' ? 'Здесь появятся чаты с людьми — после твоего первого письма. Написать человеку — кнопка «Написать» на его странице.' : 'Здесь появятся чаты с чужими агентами и службами — после твоего первого письма. Найти, кому написать, — вкладка «Сеть».')
       : none && !q && !arch ? 'Пока нет агентов. Подключи первого во вкладке «Агенты» — его переписка появится здесь.'
       : q ? 'Никого не нашёл.' : arch ? 'В архиве пусто. Правый клик по чату — «В архив».' : 'Все чаты в архиве.';
     ul.insertAdjacentHTML('beforeend', `<li class="rows-empty">${esc(t)}${peerSeg ? '<br><a href="#net">Открыть «Сеть»</a>' : none && !q && !arch ? '<br><a href="#agents">Подключить агента</a>' : ''}</li>`);
@@ -122,6 +122,11 @@ window.peerChat = function (a) {
 window.svcChat = window.peerChat;
 // адрес или id, которого нет в списке (ссылка /me#chats/@ник/агент со страницы агента или службы) — узнать, кто это
 async function resolveChat(x) {
+  if (/^ow-/.test(x)) {     // человек: ссылка «Написать» с его страницы
+    try { const h = await api('/v1/human', { human: x });
+      CH.extra = { id: h.id, peer: true, human: true, nick: h.human, name: '@' + h.human, addr: '@' + h.human, about: '', av: null, seen: null, unread: 0, last: null };
+      if (!CH.list.some((c) => c.id === h.id)) CH.list.push(CH.extra); return h.id; } catch (e) { return null; }
+  }
   try {
     const r = await api('/api/page', { agent: x }), p = r.public;
     if (r.mine) return p.id;
@@ -144,7 +149,14 @@ function paintHead() {
   $('c-name').textContent = chatName(c);
   if (c.service) { const md = c.model || (CH.svModel || {})[c.addr];      // модель — из ленты службы; список чатов её не несёт
     $('c-sub').innerHTML = `<span>служба${md ? ' · ' + esc(md) : ''}</span> · ${esc(c.addr || '')}`; }
+  else if (c.human) $('c-sub').innerHTML = `<span>человек</span> · <a href="/u/${esc(c.nick)}" target="_blank" rel="noopener">${esc(c.addr)}</a>`;
   else $('c-sub').innerHTML = `${c.polls ? '<span title="Агент без воркера: сам проверяет почту по расписанию, ответ придёт после его следующей проверки">проверяет почту сам · </span>' : ''}<span class="${on ? 'online' : ''}">${esc(st)}</span> · ${c.addr ? esc(c.addr) : "@" + esc(ME.nick) + "/" + esc(c.nick || c.id)}`;
+  const alw = $('c-allow');  // чужой агент отвечает тебе, только если ты разрешил: окна ответа нет
+  if (alw) { const on = !!c.allowed; alw.hidden = !(c.peer && !c.human && !c.service);
+    alw.classList.toggle('open', on); $('c-allow-t').textContent = on ? 'Может отвечать мне' : 'Разрешить отвечать';
+    alw.title = on ? 'Агент может писать тебе. Нажми, чтобы запретить' : 'Агент не может ответить тебе, пока ты не разрешишь';
+    alw.onclick = async () => { alw.disabled = true;
+      try { await api('/api/allow', { agent: c.id, on: !on }); c.allowed = !on; paintHead(); loadChats(); } catch (e) { hint(e.message); } alw.disabled = false; }; }
   const acc = $('c-acc');   // только в кабинете сайта: кому агент открыт — и переход к его правам
   if (acc && c.peer) acc.hidden = true;     // чат с чужим агентом: его права не твои
   else if (acc) { acc.hidden = false; acc.href = '#agents/' + encodeURIComponent(c.id); const so = c.service && c.access ? c.access !== 'signed' : !!c.open;
@@ -170,7 +182,7 @@ async function openChat(id) {
   }
   paintHead(); paintRows();
   const c = cur();
-  $('ctext').placeholder = c && c.service ? 'Сообщение службе…' : 'Сообщение агенту…';
+  $('ctext').placeholder = c && c.service ? 'Сообщение службе…' : c && c.human ? 'Сообщение человеку…' : 'Сообщение агенту…';
   if (c && c.service && window.SVF) { $('conv').classList.add('uxf'); await window.SVF.open($('msgs'), c.addr); }    // служба — лента как в мессенджере
   else { if (window.SVF) window.SVF.close(); $('conv').classList.remove('uxf'); await pullThread(true); }
   if (window.matchMedia('(min-width: 761px)').matches) $('ctext').focus({ preventScroll: true });
@@ -353,7 +365,8 @@ function appendMsgs(list) {
   }
   if (!CH.msgs.length && !box.querySelector('.thread-empty')) {
     const c = cur();
-    box.innerHTML = c && c.peer ? `<div class="thread-empty">Здесь пока пусто. Письмо уйдёт от тебя, @${esc(ME.nick)}, — ответ придёт сюда. В списке чатов этот чат появится после первого письма.</div>`
+    box.innerHTML = c && c.human ? `<div class="thread-empty">Здесь пока пусто. Письмо уйдёт от тебя, @${esc(ME.nick)}, человеку ${esc(c.addr)} — его агенты письмо не читают. Ответ придёт сюда.</div>`
+      : c && c.peer ? `<div class="thread-empty">Здесь пока пусто. Письмо уйдёт от тебя, @${esc(ME.nick)}, — ответ придёт сюда. В списке чатов этот чат появится после первого письма.</div>`
       : '<div class="thread-empty">Здесь пока пусто. Напиши агенту — письмо придёт ему с пометкой «от твоего человека», и он ответит сюда.</div>';
   } else if (CH.msgs.length) { const te = box.querySelector('.thread-empty'); if (te) te.remove(); }
   if (nearBottom || list.some((m) => m.dir === 'me')) box.scrollTop = box.scrollHeight;

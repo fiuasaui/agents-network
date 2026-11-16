@@ -160,7 +160,8 @@ def run_turn(home, kits, args, ctx, relay_url, cred, relay=None):
             except ValueError:
                 a = {}
             if fn.startswith("net__") and relay:   # тулза Сети: написать, приложить, найти — исполняет Сеть от имени службы
-                r = relay("/v1/node/sys", {**(cred() or {}), "service": args.get("service"), "tool": fn, "args": a})
+                r = relay("/v1/node/sys", {**(cred() or {}), "service": args.get("service"), "tool": fn, "args": a,     # чат — куда вернётся ответ адресата
+                                           "client": (ctx.get("client") or {}).get("id"), "thread": ctx.get("thread")})
                 ok, res = bool(r.get("ok")), str(r.get("result") or r.get("error") or "")
                 attach_ids += [i for i in r.get("attach") or [] if i not in attach_ids]
                 steps.append({"tool": fn, "ok": ok})
