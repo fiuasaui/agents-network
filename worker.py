@@ -184,9 +184,9 @@ def pick(s, to, reply_to=None):
         site = (NET["chats_on_site"] or came == "public") and NET["connected"] and i.get("id") and owner_cred()
         return ("public", t) if site else ("local", "owner")
     with LOCK:
-        hit = [x["lid"] for x in STATE["ids"].values() if x.get("lid") and (x.get("local") or "").lower() == low]
-    if hit:
-        return "local", hit[0]
+        hit = [x for x in STATE["ids"].values() if x.get("lid") and (x.get("local") or "").lower() == low]
+    if hit:     # сосед по машине; ответ на его письмо из общей сети — туда же, иначе reply_to там не найдётся (симуляция 16.11)
+        return ("public", hit[0]["id"]) if came == "public" and hit[0].get("id") else ("local", hit[0]["lid"])
     if t.startswith("an-"):
         with rl.LOCK:
             if LOCAL["relay"].db.execute("SELECT 1 FROM agents WHERE id=?", (t,)).fetchone():
