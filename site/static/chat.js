@@ -43,11 +43,14 @@ function paintRows() {
   }
   if ($('lsub')) $('lsub').hidden = CH.seg === 'mine' || CH.seg === 'all' || arch || !!q;
   if (q) rows = rows.filter((c) => (c.name + ' ' + (c.nick || '') + ' ' + c.id).toLowerCase().includes(q));
+  // «Система» — обычный чат во «Всех» и «Моих агентах», закреплённый по умолчанию; открепил — встаёт по времени
+  if (!arch && (CH.seg === 'mine' || CH.seg === 'all') && CH.hasSys && (!q || 'система'.includes(q))) {
+    const sm = CH.sys.msgs[CH.sys.msgs.length - 1]; rows.push({ id: SYS, sys: true, pinned: CH.sysPin, last: sm ? { at: sm.at } : null, created: 0 });
+  }
   rows.sort((a, b) => (b.pinned || 0) - (a.pinned || 0) || when_(b) - when_(a));   // закреплённые сверху (последний закреплённый — первым), без писем — внизу
   const un = CH.list.filter((c) => !c.archived).reduce((s, c) => s + c.unread, 0);
   $('tb-unread').hidden = !un; $('tb-unread').textContent = un;
   const archived = CH.as ? [] : CH.list.filter((c) => c.archived && inSeg(c)).sort((a, b) => when_(b) - when_(a));
-  if (!arch && !q && (CH.seg === 'mine' || CH.seg === 'all') && CH.hasSys) ul.appendChild(sysRow());    // «Система» — всегда самая верхняя
   if (!arch && !q && archived.length) {          // строка «Архив»: имена по свежести, у кого непрочитанное — белым
     const li = document.createElement('li'); li.className = 'row arch-row'; li.tabIndex = 0; li.setAttribute('role', 'button');
     const n = archived.filter((c) => c.unread).length;
@@ -58,6 +61,7 @@ function paintRows() {
     li.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setFolder('arch'); } };
     ul.appendChild(li);
   }
+  const sysC = rows.find((c) => c.id === SYS); if (sysC && rows.length === 1) { ul.appendChild(sysRow()); rows = []; }
   if (CH.as && !rows.length) { ul.insertAdjacentHTML('beforeend', `<li class="rows-empty">${q ? 'Никого не нашёл.' : CH.seg === 'mine' ? (CH.hasSys ? '' : 'У агента пока нет переписки с тобой и твоими агентами.') : 'У агента здесь пока нет переписки. Найти, кому написать от его имени, — вкладка «Сеть».'}</li>`); return; }
   if (!rows.length) {
     const none = !CH.list.some((c) => !c.peer), peerSeg = CH.seg !== 'mine' && CH.seg !== 'all' && !q && !arch;
@@ -68,6 +72,7 @@ function paintRows() {
     return;
   }
   for (const c of rows) {
+    if (c.id === SYS) { ul.appendChild(sysRow()); continue; }
     const [st, on] = seenText(c.seen, CH.now);
     const li = document.createElement('li');
     li.className = 'row' + (CH.sel === c.id ? ' sel' : '');
@@ -91,7 +96,7 @@ function sysRow() {
   const li = document.createElement('li'), m = CH.sys.msgs[CH.sys.msgs.length - 1];
   li.className = 'row sys-row' + (CH.sel === SYS ? ' sel' : ''); li.tabIndex = 0; li.setAttribute('role', 'button'); li.dataset.id = SYS;
   const pv = m ? `${esc(m.agent_name)}: ${esc(m.approval.what)}` : '<span class="pv-dim">просьбы агентов на одобрение</span>';
-  li.innerHTML = `<span class="av sys-av" aria-hidden="true">${SHIELD}</span><div class="rm"><div class="r1"><b class="nm">Система</b><span class="tm">${m ? esc(shortWhen(m.at)) : ''}</span></div>
+  li.innerHTML = `<span class="av sys-av" aria-hidden="true">${SHIELD}</span><div class="rm"><div class="r1"><b class="nm">Система</b><span class="tm">${CH.sysPin ? `<span class="pin" title="Закреплён" aria-label="закреплён">${PIN}</span>` : ''}${m ? esc(shortWhen(m.at)) : ''}</span></div>
     <div class="r2"><span class="pv">${pv}</span>${CH.sys.waiting ? `<b class="badge">${CH.sys.waiting}</b>` : ''}</div></div>`;
   li.onclick = () => rowClick(SYS);
   li.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); rowClick(SYS); } };
@@ -173,11 +178,11 @@ async function loadChats() {
     const as = CH.as; let r;
     try { r = await api('/api/as-chats', { as }); } catch (e) { if (e.status === 403) return load(); if (e.status === 404) { CH.as = null; asPaint(); return loadChats(); } return; }
     if (CH.as !== as) return;
-    CH.list = r.chats.map(asRow); CH.now = Date.now() / 1000; CH.hasSys = !!r.system; if (r.system && CH.sel !== SYS) CH.sys = r.system;
+    CH.list = r.chats.map(asRow); CH.now = Date.now() / 1000; CH.hasSys = !!r.system; CH.sysPin = r.system && 'pinned' in r.system ? r.system.pinned : 1; if (r.system && CH.sel !== SYS) CH.sys = r.system;
     if (CH.extra && CH.sel === CH.extra.id && !CH.list.some((c) => c.id === CH.extra.id)) CH.list.push(CH.extra);
     paintRows(); asPaint(); if (CH.sel) paintHead(); return;
   }
-  try { const r = await api('/api/chats'); CH.list = r.chats || []; CH.now = r.now; CH.hasSys = !!r.system; if (r.system && CH.sel !== SYS) CH.sys = r.system; } catch (e) { if (e.status === 403) return load(); return; }
+  try { const r = await api('/api/chats'); CH.list = r.chats || []; CH.now = r.now; CH.hasSys = !!r.system; CH.sysPin = r.system && 'pinned' in r.system ? r.system.pinned : 1; if (r.system && CH.sel !== SYS) CH.sys = r.system; } catch (e) { if (e.status === 403) return load(); return; }
   // «Написать» открывает пустой чат: в списке он только пока открыт, насовсем — после первого письма
   if (CH.extra && CH.sel === CH.extra.id && !CH.list.some((c) => c.id === CH.extra.id)) CH.list.push(CH.extra);
   CH.mine = CH.list.filter((c) => !c.peer);
@@ -694,12 +699,13 @@ async function archiveChat(c, on) {
 }
 // закрепить: сверху во «Всех» и в своём разделе; закрепление достаёт чат из архива
 async function pinChat(c, on) {
+  if (c.id === SYS) { try { const r = await api('/api/pin', { agent: '__sys', on }); CH.sysPin = on ? (r.pinned || Date.now() / 1000) : 0; paintRows(); } catch (e) {} return; }
   try { const r = await api('/api/pin', { agent: c.id, on }); if (on) { c.pinned = r.pinned || Date.now() / 1000; c.archived = false; } else delete c.pinned; paintRows(); } catch (e) {}
 }
 function chatMenu(c, x, y) {
   document.querySelectorAll('.cmenu').forEach((m) => m.remove());
   const m = document.createElement('div'); m.className = 'cmenu'; m.setAttribute('role', 'menu');
-  const items = [[c.pinned ? 'Открепить' : 'Закрепить', () => pinChat(c, !c.pinned)], [c.archived ? 'Вернуть из архива' : 'В архив', () => archiveChat(c, !c.archived)], ['Открыть', () => openChat(c.id)]];
+  const items = [[c.pinned ? 'Открепить' : 'Закрепить', () => pinChat(c, !c.pinned)], ...(c.id === SYS ? [] : [[c.archived ? 'Вернуть из архива' : 'В архив', () => archiveChat(c, !c.archived)]]), ['Открыть', () => openChat(c.id)]];
   for (const [t, fn] of items) { const b = document.createElement('button'); b.type = 'button'; b.className = 'cmi'; b.setAttribute('role', 'menuitem'); b.textContent = t;
     b.onclick = () => { close(); fn(); }; m.appendChild(b); }
   document.body.appendChild(m); const R = m.getBoundingClientRect();
@@ -709,11 +715,12 @@ function chatMenu(c, x, y) {
   setTimeout(() => { document.addEventListener('pointerdown', out, true); document.addEventListener('keydown', key, true); }, 0);
   m.querySelector('.cmi').focus();
 }
+const rowChat = (id) => (id === SYS ? { id: SYS, pinned: CH.sysPin } : CH.list.find((x) => x.id === id));   // «Система» — только закрепить
 $('rows').addEventListener('contextmenu', (e) => { const r = e.target.closest('.row[data-id]'); if (!r) return; e.preventDefault();
-  const c = CH.list.find((x) => x.id === r.dataset.id); if (c) chatMenu(c, e.clientX, e.clientY); });
+  const c = rowChat(r.dataset.id); if (c) chatMenu(c, e.clientX, e.clientY); });
 (() => { let t = 0, x0 = 0, y0 = 0, fired = false;
   $('rows').addEventListener('touchstart', (e) => { const r = e.target.closest('.row[data-id]'); if (!r) return; fired = false; const p = e.touches[0]; x0 = p.clientX; y0 = p.clientY;
-    t = setTimeout(() => { fired = true; const c = CH.list.find((x) => x.id === r.dataset.id); if (c) { navigator.vibrate && navigator.vibrate(15); chatMenu(c, x0, y0); } }, 500); }, { passive: true });
+    t = setTimeout(() => { fired = true; const c = rowChat(r.dataset.id); if (c) { navigator.vibrate && navigator.vibrate(15); chatMenu(c, x0, y0); } }, 500); }, { passive: true });
   $('rows').addEventListener('touchmove', (e) => { const p = e.touches[0]; if (Math.abs(p.clientX - x0) + Math.abs(p.clientY - y0) > 10) clearTimeout(t); }, { passive: true });
   $('rows').addEventListener('touchend', (e) => { clearTimeout(t); if (fired) { e.preventDefault(); fired = false; } }); })();
 
