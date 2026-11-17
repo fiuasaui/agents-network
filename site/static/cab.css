@@ -634,3 +634,29 @@ body.as-on .bar { box-shadow: inset 0 -2px 0 #2b5278; }
 .sys-by { margin-left: 10px; font-size: 12.5px; color: var(--muted); }
 .sys-by b { color: #dbe6f2; font-weight: 600; }
 .byh { margin-right: 6px; color: #a9d3fb; font-weight: 600; }
+/* «Подключить машину»: шаги, выпущенный ключ, карточка ключа — шапка и настройки строками «подпись слева, управление справа» */
+.ksteps { margin: 10px 0 14px; padding-left: 22px; color: var(--ink); font-size: 14px; line-height: 1.5; } .ksteps li { margin: 4px 0; }
+.kout { margin-top: 12px; } .kout .note { margin: 0 0 8px; }
+.kval { display: flex; align-items: center; gap: 10px; } .kval pre.key { flex: 1; min-width: 0; margin: 0; } .kval .btn { flex: none; }
+.list.kl li.kc { display: block; padding: 14px 12px; }
+.list.kl li.kc:hover { background: transparent; }
+.kh { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.khm { display: flex; flex-direction: column; gap: 3px; min-width: 0; } .khm .meta { white-space: normal; overflow-wrap: anywhere; }
+.kh .actions { flex: none; margin: 0; flex-wrap: wrap; justify-content: flex-end; align-items: center; } .kh .actions .meta { white-space: normal; }
+.kset { margin-top: 12px; border-radius: 12px; background: #1b2531; overflow: hidden; }
+.kopt { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 56px; margin: 0; padding: 10px 14px; cursor: pointer; }
+.kopt + .kopt { border-top: 1px solid var(--line); }
+.kot { display: flex; flex-direction: column; gap: 2px; min-width: 0; } .kot b { color: var(--ink); font-size: 14px; } .kot .meta { white-space: normal; font-size: 12.5px; color: var(--muted); }
+.kopt .sw { flex: none; }
+.kin { display: inline-flex; align-items: center; gap: 8px; flex: none; color: var(--muted); font-size: 13.5px; }
+.kin input { width: 84px; min-height: 34px; margin: 0; padding: 4px 10px; border-radius: 10px; background: #242f3d; border: 0; color: var(--ink); font: inherit; font-size: 14px; text-align: right; }
+.kc .kwarn, .kc .err:not(:empty) { margin-top: 10px; }
+@media (max-width: 760px) { .kh { flex-direction: column; gap: 10px; } .kh .actions { justify-content: flex-start; } }
+/* ссылки-секции во вкладке «Агенты»: машины и пароль живут в настройках */
+.panel.golink { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.panel.golink h2 { margin-bottom: 4px; } .panel.golink .note { margin: 0; } .panel.golink .btn { flex: none; }
+@media (max-width: 760px) { .panel.golink { flex-direction: column; align-items: flex-start; } }
+/* «Сеть»: фильтры не слипаются с поиском */
+.nethd .nfil { margin: 14px 0 0; }
+.kconf { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 10px; padding: 10px 14px; border-radius: 12px; background: rgba(229, 83, 75, .10); box-shadow: inset 0 0 0 1px rgba(229, 83, 75, .35); animation: agxIn 200ms var(--ease); }
+.kconf .meta { white-space: normal; color: #e9c9c6; font-size: 13.5px; flex: 1 1 260px; } .kconf .actions { margin: 0; flex: none; }
