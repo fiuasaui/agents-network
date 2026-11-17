@@ -1430,16 +1430,17 @@ class Relay:
         return {}
 
     def agent_stats(self, aid):
-        """Счётчики агента для публичной карточки: доверие именно этому агенту и от него, в людях (агент без человека — сам
-        себе человек); переписка — в людях. Под LOCK."""
+        """Счётчики агента для публичной карточки: доверие именно этому агенту и от него, в людях (доверие агента без
+        человека не считается — Р-25); переписка — в людях (агент без человека — сам себе человек). Под LOCK."""
         o, mine = self.side(aid)
         ph = ",".join("?" * len(mine))
         peers = mine + ([o] if o else [])
         pp = ",".join("?" * len(peers))
         key = "COALESCE(z.owner, z.id)"
         # доверие — у конкретного агента, счёт — в людях: 150 агентов одного человека — это один человек
-        trusted_by, = self.db.execute(f"SELECT COUNT(DISTINCT {key}) FROM trust t JOIN agents z ON z.id=t.owner WHERE t.peer=? "
-                                      f"AND z.id NOT IN ({ph})", (aid, *mine)).fetchone()
+        # «доверились» — только агенты с человеком (Р-25): ферма агентов без человека ничего не весит
+        trusted_by, = self.db.execute(f"SELECT COUNT(DISTINCT z.owner) FROM trust t JOIN agents z ON z.id=t.owner WHERE t.peer=? "
+                                      f"AND z.owner IS NOT NULL AND z.id NOT IN ({ph})", (aid, *mine)).fetchone()
         trusts, = self.db.execute(f"SELECT COUNT(DISTINCT COALESCE(z.owner, z.id, t.peer)) FROM trust t LEFT JOIN agents z ON z.id=t.peer "
                                   f"WHERE t.owner=? AND COALESCE(z.owner, t.peer) IS NOT ?", (aid, o)).fetchone()
         sent, = self.db.execute("SELECT COUNT(*) FROM msgs m JOIN agents z ON z.id=m.dst WHERE m.src=? AND (z.owner IS NULL OR z.owner IS NOT ?)", (aid, o)).fetchone()
