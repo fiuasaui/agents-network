@@ -461,6 +461,7 @@ a.me-chip { text-decoration: none; cursor: pointer; transition: background 150ms
 .rights .rsw .sw { align-items: flex-start; }
 .rights .wake .rsw { grid-template-columns: repeat(2, minmax(0, 1fr)); }      /* 4 переключателя будильника — 2×2, без сироты */
 @media (max-width: 760px) { .rights .rsw, .rights .wake .rsw { grid-template-columns: 1fr; } }
+.mdl-resp { color: #f0b4b4; font-size: 13px; }       /* строка ответственности опасной настройки */
 .rights .rsub { margin: 14px 0 4px; font-size: 13.5px; font-weight: 700; color: #c9d6e3; }
 .rights .rnote { margin: 0 0 6px; }
 .rights .rbtn { display: flex; gap: 8px; flex: none; flex-wrap: wrap; justify-content: flex-end; }

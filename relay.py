@@ -50,6 +50,8 @@ def db_open(path):
         c.execute("ALTER TABLE msgs ADD COLUMN thread TEXT")
     if "by" not in mcols:           # человек, написавший от имени агента: видно всем участникам переписки
         c.execute("ALTER TABLE msgs ADD COLUMN by TEXT")
+    if "via" not in mcols:          # 'key' — письмо человека отправлено ключом: писал не обязательно он сам, мог его агент
+        c.execute("ALTER TABLE msgs ADD COLUMN via TEXT")
     if "seen" not in cols:          # когда агент последний раз забирал почту — «в сети» в кабинете
         c.execute("ALTER TABLE agents ADD COLUMN seen REAL")
     if "hidden" not in cols:        # скрытый агент: в сети не показывается вовсе, пишет ему его человек и те, кому разрешено
@@ -58,6 +60,8 @@ def db_open(path):
         c.execute("ALTER TABLE agents ADD COLUMN polls INTEGER DEFAULT 0")
     if "asks" not in cols:          # принимает ли просьбы «разреши писать»: 0 — закрыт совсем, доверие даёт только сам
         c.execute("ALTER TABLE agents ADD COLUMN asks INTEGER DEFAULT 1")
+    if "waker" not in cols:         # когда воркер последний раз ждал будящие письма агента: без воркера будить некому
+        c.execute("ALTER TABLE agents ADD COLUMN waker REAL")
     c.execute("CREATE INDEX IF NOT EXISTS trust_peer ON trust (peer)")
     c.execute("CREATE INDEX IF NOT EXISTS msgs_src ON msgs (src, at)")
     # владелец — человек: свой ник (уникален среди людей) и ключ; агенты привязаны к нему
@@ -530,10 +534,24 @@ class Relay:
         me = self.auth(q)
         with LOCK:
             if isinstance(q.get("set"), dict):
+                self.need_waker(me, q["set"])
                 self.set_wake(me, q["set"])
             if q.get("peer"):
+                if q.get("on", True) is not False:
+                    self.need_waker(me, {"from": True})
                 self.wake_peer(me, self.target(q["peer"]), q.get("on", True) is not False)
             return self.wake_view(me)
+
+    def need_waker(self, aid, patch):
+        """Будить агента может только воркер на его машине: без него «будить» — пустое обещание, поэтому
+        включение будильника агенту, у которого воркер не ждал почту ни разу, — понятная ошибка. Выключать можно всегда. Под LOCK."""
+        if not any(bool(v) for v in (patch or {}).values()):
+            return
+        r = self.db.execute("SELECT waker FROM agents WHERE id=?", (aid,)).fetchone()
+        if not (r and r[0]):
+            raise ValueError("будить некому: у агента нет воркера — расширения Agents Network на его машине, оно и будит сессию "
+                             "письмом. Без воркера агент проверяет почту сам (/v1/unread, /v1/read), будильник ему не нужен. "
+                             "Поставить воркер — https://agentsnetwork.online/agent, раздел 0 «Две ступени»")
 
     def hidden_wall(self, a, b):
         """Скрытый агент живёт только в системе своего человека: ни он наружу, ни снаружи к нему — включая
@@ -863,11 +881,13 @@ class Relay:
         with WAKE:
             # короткий запрос без ожидания — агент проверяет почту сам, по расписанию (режим проверок)
             self.db.execute("UPDATE agents SET seen=?, polls=? WHERE id=?", (time.time(), 1 if wait < 5 else 0, me))
+            if only_wake:       # так ждёт только воркер: значит, будить агента есть кому
+                self.db.execute("UPDATE agents SET waker=? WHERE id=?", (time.time(), me))
             mine = (self.db.execute("SELECT owner FROM agents WHERE id=?", (me,)).fetchone() or [None])[0]
             while True:
                 w = self.wake_of(me) if only_wake else None     # настройку могли поменять, пока ждём
                 rows = self.db.execute(
-                    "SELECT m.mid, m.src, a.name, m.text, m.reply_to, m.at, a.nick, COALESCE(o.nick, h.nick), h.id, m.fmt, m.files, m.thread, b.nick, m.kind FROM msgs m "
+                    "SELECT m.mid, m.src, a.name, m.text, m.reply_to, m.at, a.nick, COALESCE(o.nick, h.nick), h.id, m.fmt, m.files, m.thread, b.nick, m.kind, m.via FROM msgs m "
                     "LEFT JOIN agents a ON a.id=m.src LEFT JOIN owners o ON o.id=a.owner LEFT JOIN owners h ON h.id=m.src LEFT JOIN owners b ON b.id=m.by "
                     "WHERE m.dst=? AND m.acked IS NULL AND m.at>?" + sk + " ORDER BY m.at LIMIT ?", (me, time.time() - KEEP, *skip, 500 if only_wake else 20)).fetchall()
                 quiet = 0
@@ -892,7 +912,8 @@ class Relay:
                           **({"from_human": True} if r[8] and r[8] == mine else {"from_person": True} if r[8] else {}),
                           **({"format": r[9]} if r[9] else {}), **({"files": self.files_out(r[10])} if r[10] else {}),
                           **({"thread": r[11]} if r[11] else {}), **({"by_human": "@" + r[12]} if r[12] else {}),
-                          **({"kind": r[13]} if r[13] else {}), **({"woke": r[14]} if only_wake else {}),
+                          **({"kind": r[13]} if r[13] else {}), **({"woke": r[15]} if only_wake else {}),
+                          **({"via": "key"} if r[14] == "key" else {}),
                           **({"chat": ctxs.pop(r[1])} if r[1] in ctxs else {})} for r in rows],
                 **({"quiet": quiet} if only_wake else {})}
 
@@ -1262,7 +1283,7 @@ class Relay:
             except LookupError:
                 return self.peer_thread(owner, agent, after, limit)
             rows = self.db.execute(
-                "SELECT m.mid, m.src, m.dst, m.text, m.reply_to, m.at, m.acked, sa.nick, sa.name, so.nick, da.nick, da.name, dw.nick, m.fmt, sa.owner, da.owner, m.files, bo.nick "
+                "SELECT m.mid, m.src, m.dst, m.text, m.reply_to, m.at, m.acked, sa.nick, sa.name, so.nick, da.nick, da.name, dw.nick, m.fmt, sa.owner, da.owner, m.files, bo.nick, m.via "
                 "FROM msgs m LEFT JOIN agents sa ON sa.id=m.src LEFT JOIN owners so ON so.id=sa.owner LEFT JOIN owners bo ON bo.id=m.by "
                 "LEFT JOIN agents da ON da.id=m.dst LEFT JOIN owners dw ON dw.id=da.owner "
                 "WHERE (m.src=? OR m.dst=?) AND m.at>? ORDER BY m.at DESC LIMIT ?", (aid, aid, float(after or 0), int(limit))).fetchall()
@@ -1270,7 +1291,7 @@ class Relay:
         def addr(i, n, nm, o):
             return (f"@{o}/{n}" if o and n else f"@{n}" if n else i, nm)
         msgs = []
-        for mid, src, dst, text, rto, at, acked, sn, snm, so, dn, dnm, do, fm, sow, dow, fl, bn in reversed(rows):
+        for mid, src, dst, text, rto, at, acked, sn, snm, so, dn, dnm, do, fm, sow, dow, fl, bn, via in reversed(rows):
             d = self._dir(src, dst, aid, owner)
             peer = addr(dst, dn, dnm, do) if d == "out" else addr(src, sn, snm, so) if d == "in" else (None, None)
             if peer[0] and str(peer[0]).startswith("ow-"):     # чужой человек в почте агента — его @ник
@@ -1282,19 +1303,20 @@ class Relay:
                          "peer": peer[0], "peer_name": peer[1],
                          **({"peer_owner": po, "peer_mine": pw == owner} if d in ("out", "in") else {}),
                          **({"format": fm} if fm else {}), **({"files": self.files_out(fl)} if fl else {}),
-                         **({"by_human": "@" + bn} if bn else {})})
+                         **({"by_human": "@" + bn} if bn else {}), **({"via": "key"} if via == "key" else {})})
         return {"agent": aid, "msgs": msgs}
 
     def peer_thread(self, owner, agent, after=0, limit=200):
         """Переписка человека с чужим агентом или с человеком: только их письма друг другу. Под LOCK."""
         aid = self.resolve_human(agent) if str(agent or "").startswith("ow-") else self.resolve(agent)
-        rows = self.db.execute("SELECT m.mid, m.src, m.text, m.reply_to, m.at, m.acked, m.fmt, m.files, b.nick FROM msgs m LEFT JOIN owners b ON b.id=m.by "
+        rows = self.db.execute("SELECT m.mid, m.src, m.text, m.reply_to, m.at, m.acked, m.fmt, m.files, b.nick, m.via FROM msgs m LEFT JOIN owners b ON b.id=m.by "
                                "WHERE ((m.src=? AND m.dst=?) OR (m.src=? AND m.dst=?)) AND m.at>? "
                                "ORDER BY m.at DESC LIMIT ?", (owner, aid, aid, owner, float(after or 0), int(limit))).fetchall()
         return {"agent": aid, "peer": True, "msgs": [{"mid": m, "dir": "me" if s_ == owner else "to_me", "text": t, "reply_to": r, "at": at,
                                                       "delivered": bool(ak), **({"format": f} if f else {}),
-                                                      **({"files": self.files_out(fl)} if fl else {}), **({"by_human": "@" + bn} if bn else {})}
-                                                     for m, s_, t, r, at, ak, f, fl, bn in reversed(rows)]}
+                                                      **({"files": self.files_out(fl)} if fl else {}), **({"by_human": "@" + bn} if bn else {}),
+                                                      **({"via": "key"} if via == "key" else {})}
+                                                     for m, s_, t, r, at, ak, f, fl, bn, via in reversed(rows)]}
 
     def human_seen(self, owner, agent, mids):
         """Человек дочитал до этих писем своего агента (или чужого, с которым переписывается сам) — снять из непрочитанных."""

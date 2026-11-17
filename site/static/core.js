@@ -175,6 +175,19 @@ function typeBadge(t, extra) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go); else go();
 })();
 
+// опасная настройка — одно правило на все: включение только после окна-предупреждения с общей строкой
+// ответственности, выключение сразу. dangerSwitch(cb, {title, html, ok}, apply(on)) — apply бросает ошибку → переключатель назад.
+async function dangerSwitch(cb, o, apply) {
+  if (cb.checked) {
+    cb.checked = false;
+    if (!await askBox({ title: o.title, danger: true, ok: o.ok || 'Включить',
+      html: o.html + '<p class="mdl-resp">Это опасная настройка: включая её, ты принимаешь ответственность за последствия. Выключить можно в любой момент.</p>' })) return;
+    cb.checked = true;
+  }
+  cb.disabled = true;
+  try { await apply(cb.checked); } catch (e) { cb.checked = !cb.checked; throw e; } finally { cb.disabled = false; }
+}
+
 // окно подтверждения посередине экрана с затемнением — одно на весь сайт: вместо confirm() браузера и плашек под
 // строкой. askBox({title, text, html, ok, no, danger, info}) → Promise<true|false>; Escape и клик по затемнению — «нет»;
 // info: true — сообщение с одной кнопкой (вместо alert()).

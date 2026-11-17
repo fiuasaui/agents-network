@@ -95,7 +95,7 @@ for (const b of document.querySelectorAll('#lseg [data-seg], #lsub [data-seg]'))
 function sysRow() {
   const li = document.createElement('li'), m = CH.sys.msgs[CH.sys.msgs.length - 1];
   li.className = 'row sys-row' + (CH.sel === SYS ? ' sel' : ''); li.tabIndex = 0; li.setAttribute('role', 'button'); li.dataset.id = SYS;
-  const pv = m ? `${esc(m.agent_name)}: ${esc(m.approval.what)}` : '<span class="pv-dim">просьбы агентов на одобрение</span>';
+  const pv = m ? (m.approval ? `${esc(m.agent_name)}: ${esc(m.approval.what)}` : esc(m.text)) : '<span class="pv-dim">просьбы агентов на одобрение</span>';
   li.innerHTML = `<span class="av sys-av" aria-hidden="true">${SHIELD}</span><div class="rm"><div class="r1"><b class="nm">Система</b><span class="tm">${CH.sysPin ? `<span class="pin" title="Закреплён" aria-label="закреплён">${PIN}</span>` : ''}${m ? esc(shortWhen(m.at)) : ''}</span></div>
     <div class="r2"><span class="pv">${pv}</span>${CH.sys.waiting ? `<b class="badge">${CH.sys.waiting}</b>` : ''}</div></div>`;
   li.onclick = () => rowClick(SYS);
@@ -108,7 +108,7 @@ async function loadSys() {
 }
 function paintSys() {
   const box = $('msgs'), seen = new Set([...box.querySelectorAll('.bub[data-mid]')].map((b) => b.dataset.mid));
-  const sig = JSON.stringify(CH.sys.msgs.map((m) => [m.mid, m.approval.status]));
+  const sig = JSON.stringify(CH.sys.msgs.map((m) => [m.mid, m.approval ? m.approval.status : '']));
   if (sig === CH.sysSig && seen.size) return;
   const near = box.scrollHeight - box.scrollTop - box.clientHeight < 80, first = !CH.sysSig;
   CH.sysSig = sig; box.innerHTML = ''; let day = '';
@@ -117,7 +117,7 @@ function paintSys() {
     if (d !== day) { const s = document.createElement('div'); s.className = 'day'; s.textContent = dayLabel(m.at); box.appendChild(s); day = d; }
     box.appendChild(sysCard(m));
   }
-  if (!CH.sys.msgs.length) box.innerHTML = '<div class="thread-empty">Здесь появятся просьбы твоих агентов на одобрение: доверие, открытие, оплата. Писать сюда нельзя — только решать.</div>';
+  if (!CH.sys.msgs.length) box.innerHTML = '<div class="thread-empty">Здесь появятся просьбы твоих агентов на одобрение (доверие, открытие, оплата) и всё, что сделано твоим ключом. Писать сюда нельзя — только решать.</div>';
   if (first || near) box.scrollTop = box.scrollHeight;
 }
 
@@ -336,10 +336,15 @@ const SHIELD = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6
 function sysCard(m) {
   const a = m.approval, el = document.createElement('div');
   el.dataset.mid = m.mid;
+  if (m.sys === 'key') {    // сделано ключом человека: ключ безлик — видно что и когда, а не кто
+    el.className = 'bub sysn key';
+    el.innerHTML = `<span data-tip="Ключ один на все машины: им пользуются твои агенты и программы. Кто именно сделал — Сеть не знает">${esc(m.text)} · ${esc(hm(m.at))}</span>`;
+    return el;
+  }
   if (m.sys === 'notice') {
     const k = m.text[0] === '✅' ? 'ok' : m.text[0] === '❌' ? 'no' : 'bad';
     el.className = 'bub sysn ' + k;
-    const by = a.decided_by && a.decided_by.kind === 'agent' ? 'Администратор «' + a.decided_by.name + '»' : a.decided_by && a.decided_by.kind === 'auto' ? 'Само' : (a.decided_by && a.decided_by.name) || humanName(ME.name, ME.nick);
+    const by = a.decided_by && a.decided_by.kind === 'agent' ? 'Администратор «' + a.decided_by.name + '»' : a.decided_by && a.decided_by.kind === 'auto' ? 'Само' : a.decided_by && a.decided_by.kind === 'key' ? 'Ключом' : (a.decided_by && a.decided_by.name) || humanName(ME.name, ME.nick);
     el.innerHTML = `<span>${{ ok: by + ' — одобрено', no: by + ' — отклонено', bad: 'Одобрено, но не выполнено' }[k]}: ${esc(a.what.length > 110 ? a.what.slice(0, 105).trimEnd() + '…' : a.what)} · агенту сообщено · ${esc(hm(m.at))}</span>`;
     return el;
   }
@@ -353,7 +358,7 @@ function sysCard(m) {
   const paint = () => {
     el.classList.toggle('wait', a.status === 'wait'); el.classList.toggle('done', a.status !== 'wait');   // ждёт — мерцает, решено — гаснет
     if (a.status !== 'wait') { const [k, t] = AP_ST[a.status] || ['', a.status], d = a.decided_by;    // кто решил
-      const by = !d ? '' : d.kind === 'agent' ? `решил администратор <b>${esc(d.name)}</b>` : d.kind === 'auto' ? 'решилось само: доверие уже было' : `решил человек <b>${esc(d.name)}</b>`;
+      const by = !d ? '' : d.kind === 'agent' ? `решил администратор <b>${esc(d.name)}</b>` : d.kind === 'auto' ? 'решилось само: доверие уже было' : d.kind === 'key' ? `решено <b>${esc(d.name)}</b> (агент или программа)` : `решил человек <b>${esc(d.name)}</b>`;
       box.innerHTML = `<span class="sys-st ${k}">${esc(t)}</span>${by ? `<span class="sys-by">${by}</span>` : ''}`; return; }
     if (CH.sel === SYS && CH.sys.can_decide === false) { box.innerHTML = '<span class="sys-st">Ждёт решения человека или администратора</span>'; return; }
     box.innerHTML = '<button class="btn ghost sm" type="button" data-no>Отклонить</button><button class="btn sm" type="button" data-yes>Одобрить</button><span class="err" role="alert"></span>';
@@ -423,7 +428,7 @@ function bubble(m) {
   const html = m.format === 'html';
   // письмо агента — Markdown: структура вместо простыни; свои письма человека — как набрал
   const md = !html && (m.dir !== 'me' || (CH.as && !m.by_human)) && typeof window.renderMarkdown === 'function';
-  el.innerHTML = `${hd}<div class="tx${html || md ? ' rep-html' : ''}${md ? ' md' : ''}${long ? (peer ? ' clamp short' : ' clamp') : ''}">${html ? '' : md ? window.renderMarkdown(m.text) : linkify(m.text)}</div>${long ? '<button class="more" type="button">Показать целиком</button>' : ''}${chatFiles(m.files)}<div class="meta">${m.by_human ? `<span class="byh" data-tip="Это письмо написал человек ${esc(m.by_human)} от имени агента">✍ ${esc(m.by_human)}</span>` : ''}${esc(hm(m.at))}${tick}</div>`;
+  el.innerHTML = `${hd}<div class="tx${html || md ? ' rep-html' : ''}${md ? ' md' : ''}${long ? (peer ? ' clamp short' : ' clamp') : ''}">${html ? '' : md ? window.renderMarkdown(m.text) : linkify(m.text)}</div>${long ? '<button class="more" type="button">Показать целиком</button>' : ''}${chatFiles(m.files)}<div class="meta">${m.by_human ? `<span class="byh" data-tip="Это письмо написал человек ${esc(m.by_human)} от имени агента">✍ ${esc(m.by_human)}</span>` : ''}${m.via === 'key' ? '<span class="byh" data-tip="Отправлено ключом человека — программой или агентом, а не из кабинета">🔑 ключом</span>' : ''}${esc(hm(m.at))}${tick}</div>`;
   if (html) repHtml(el.querySelector('.tx'), m.text);
   if (long) el.querySelector('.more').onclick = (e) => { const t = el.querySelector('.tx'); t.classList.toggle('clamp');
     e.target.textContent = t.classList.contains('clamp') ? 'Показать целиком' : 'Свернуть'; };
