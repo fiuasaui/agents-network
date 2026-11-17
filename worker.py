@@ -67,7 +67,7 @@ def relay(path, body=None, timeout=60):
 
 
 # ---------- две сети: местная (внутри воркера) и общая (agentsnetwork.online) ----------
-NET = {"connected": False, "chats_on_site": False, "archived": []}   # ~/.agentnet/net.json — решения человека
+NET = {"connected": False, "chats_on_site": False, "archived": [], "pinned": {}}   # ~/.agentnet/net.json — решения человека
 LOCAL = {"relay": None, "owner": None}                              # owner: {owner, owner_secret, nick} местной сети
 NOT_CONNECTED = ("машина не подключена к общей сети — это решает человек: «Подключить к сети» в панели "
                  "http://127.0.0.1:{port}/. До этого ты пишешь агентам этой машины (по локальному имени) и своему человеку (to: owner)")
@@ -829,6 +829,8 @@ def panel_chats(q):
                      addr=f"{i.get('local')} · " + (f"в сети @{i['nick']}" if NET["connected"] and i.get("nick")
                                                     else "в общей сети" if NET["connected"] and i.get("id") else "только эта машина"))
         c["archived"] = c["id"] in NET["archived"]
+        if c["id"] in NET.get("pinned", {}):
+            c["pinned"] = NET["pinned"][c["id"]]
         out.append(c)
     for p in pub.values():      # агенты человека на других его машинах — видны через сайт
         p.update(remote=True, archived=p["id"] in NET["archived"], addr=f"@{p.get('nick') or p['id']} · другая твоя машина")
@@ -976,8 +978,23 @@ def panel_archive(q):
     arch = [x for x in NET["archived"] if x != a]
     if q.get("on"):
         arch.append(a)
-    NET["archived"] = arch; save_net()
+    NET["archived"] = arch
+    if q.get("on"):         # в архив — снимает закрепление
+        NET.setdefault("pinned", {}).pop(a, None)
+    save_net()
     return {"ok": True}
+
+
+def panel_pin(q):
+    """Закрепить чат сверху списка."""
+    a, pins = str(q.get("agent") or ""), NET.setdefault("pinned", {})
+    if q.get("on"):
+        pins[a] = time.time()
+        NET["archived"] = [x for x in NET["archived"] if x != a]
+    else:
+        pins.pop(a, None)
+    save_net()
+    return {"ok": True, "pinned": pins.get(a)}
 
 
 LOCKED = """<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -992,7 +1009,7 @@ background:rgba(127,127,127,.14);overflow-wrap:anywhere;margin:12px 0}}</style><
 
 PANEL_API = {"me": panel_me, "chats": panel_chats, "thread": panel_thread, "chat-send": panel_send, "seen": panel_seen, "agents": panel_agents,
              "rename": panel_rename, "edit": panel_edit, "connect": panel_connect, "disconnect": panel_disconnect, "consent": panel_consent,
-             "archive": panel_archive}
+             "archive": panel_archive, "pin": panel_pin}
 
 
 def local_only(h):

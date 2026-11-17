@@ -1,7 +1,7 @@
 // общие помощники кабинета: запрос к API, экранирование, время, аватарка по имени
 const $ = (id) => document.getElementById(id);
-async function api(path, body) {
-  const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+async function api(path, body, signal) {
+  const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}), signal });
   const d = await r.json().catch(() => ({ error: 'сервер ответил не JSON' }));
   if (!r.ok) { const e = new Error(d.error || ('ошибка ' + r.status)); e.status = r.status; throw e; }
   return d;

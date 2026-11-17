@@ -107,6 +107,8 @@ input[type=text], input[type=password] { width: 100%; padding: 12px; border-radi
 .list li:hover { background: var(--hover); }
 .list li:first-child { border-top: 0; }
 .list .meta { color: var(--muted); font-size: 14px; }
+/* вертикальный ритм: блок после пояснения панели не прилипает к тексту — список, карточка, форма, секция */
+.note + :is(ul, ol, div, section, form, table, fieldset), .note + [hidden] + :is(ul, ol, div, section, form, table, fieldset) { margin-top: 16px; }
 .empty { color: var(--muted); font-size: 15px; }
 .policy { display: flex; gap: 12px; flex-wrap: wrap; }
 .policy .btn[aria-pressed=true] { background: var(--btn); color: var(--accent-ink); box-shadow: none; }
