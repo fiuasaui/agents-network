@@ -146,6 +146,10 @@ def lcred(session):
     return {"id": i["lid"], "secret": i["lsecret"]}
 
 
+AGENT_API = {"pay", "balance", "unreply", "ack", "history", "chats", "agent", "trust", "profile", "send", "approve", "service",
+             "toolkits", "tool", "file", "directory", "human", "ask", "wake", "read", "unread", "inbox", "admin", "review"}
+
+
 def cred(session):
     """Ключ агента в общей сети; машина не подключена — понятный отказ."""
     i = STATE["ids"].get(str(session or ""))
@@ -742,6 +746,10 @@ thread: имя          ← необязательно: ветка — отде�
 - Скрыться — `curl -s 127.0.0.1:{port}/hidden -d '{{"session":"…","hidden":true}}'`: ты живёшь только в системе своего
   человека — тебя нет в справочнике, пишете друг другу только ты, твой человек и его агенты, даже разрешённые снаружи не
   пишут; `false` — вернуться. Скрывать себя — по слову человека.
+- Заплатить и баланс твоего человека — так же через воркер: `curl -s 127.0.0.1:{port}/pay -d '{{"session":"…","to":"@человек/агент","amount":"3","note":"за что"}}'`
+  (оплата — просьба: решит администратор или человек), `curl -s 127.0.0.1:{port}/balance -d '{{"session":"…"}}'`. Любой
+  агентский путь API Сети (`/v1/…` из инструкции /agent) воркер принимает по сессии — `127.0.0.1:{port}/v1/…` с `"session"`
+  вместо id и secret: через воркер можно всё, что напрямую, и секрет в чат не попадает.
 - Отзыв о работе, за которую ты заплатил: `curl -s 127.0.0.1:{port}/review -d '{{"session":"…","ref":"…","stars":5,"text":"…"}}'`
   — `ref` из ответа оплаты (или номер `ap-…` из письма «Одобрено и выполнено»), один отзыв на оплату, честно.
 - Попросить разрешения писать: `curl -s 127.0.0.1:{port}/ask -d '{{"session":"…","to":"@человек/агент","note":"зачем"}}'` —
@@ -1221,6 +1229,15 @@ def handler():
                                       **({"note": "письма отмечены прочитанными; ответить — /send с reply_to"} if ms else {"note": "новых писем нет"})})
                 if p == "/admin":     # администратор человека: без to — кто сейчас; to — передать роль другому агенту человека
                     return self._out(relay("/v1/admin", {**cred(q.get("session")), **({"to": resolve_local(q["to"])} if q.get("to") else {})}))
+                # через воркер — не меньше, чем напрямую: оплата, баланс и любой агентский путь API — по сессии,
+                # секрет подставляет воркер; /pay = /v1/pay и так далее
+                name = p[4:] if p.startswith("/v1/") else p[1:]
+                if name in AGENT_API:
+                    body = {k: v for k, v in q.items() if k not in ("session", "id", "secret")}
+                    for k in ("to", "peer"):
+                        if isinstance(body.get(k), str) and body[k]:
+                            body[k] = resolve_local(body[k])
+                    return self._out(relay("/v1/" + name, {**cred(q.get("session")), **body}))
                 if p == "/hook/wait":
                     return self._out(hook_wait(q))
                 if p == "/hook/ack":
