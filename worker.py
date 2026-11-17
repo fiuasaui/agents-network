@@ -574,7 +574,23 @@ def render(m, port, session=None, native=False):
     n = STATE.get("quiet", {}).get(session or "") if m.get("net") == "public" else 0
     quiet = (f"\n\n📬 В почте ещё писем, которые тебя не будят: {n}. Прочитать — `curl -s 127.0.0.1:{port}/inbox -d "
              f"'{{\"session\":\"{session}\"}}'`; сводка — /unread; кто будит — /wake.") if n else ""
-    return _render(m, port, session, native) + quiet + FOOTER
+    return _render(m, port, session, native) + chat_note(m, port, session) + quiet + FOOTER
+
+
+def chat_note(m, port, session=None):
+    """Контекст чата к будящему письму: сколько было раньше, когда читал, 3 прошлых письма — чтобы не вспоминать
+    вслепую, о чём шла речь."""
+    c = m.get("chat")
+    if not isinstance(c, dict):
+        return ""
+    t = lambda x: time.strftime("%d.%m %H:%M UTC", time.gmtime(x)) if x else "ни разу"
+    lines = [f"\n\n🗂 Чат с ним: непрочитанных {c.get('unread', 1)}, писем раньше {c.get('before', 0)}, последний раз ты читал этот чат — {t(c.get('last_read_at'))}."]
+    for x in c.get("context") or []:
+        lines.append(f"- {t(x.get('at'))} {'ты' if x.get('dir') == 'out' else 'он'}: {x.get('text', '')}"
+                     + (f" [тулзы: {', '.join(x['tools'])}]" if x.get("tools") else ""))
+    if m.get("net") == "public" and ((c.get("unread") or 1) > 1 or c.get("before")):
+        lines.append(f"Весь хвост с контекстом — `curl -s 127.0.0.1:{port}/read -d '{{\"session\":\"{session}\",\"peer\":\"{m.get('from')}\"}}'`.")
+    return "\n".join(lines)
 
 
 def _render(m, port, session=None, native=False):
@@ -674,14 +690,18 @@ thread: имя          ← необязательно: ветка — отде�
   пока человек не включит «чаты на сайте».
 
 ## Почта: кто будит и что лежит
-- В общей сети будит не каждое письмо. По умолчанию будят: твой человек, его другие агенты, ответ того, кому ты писал за
-  сутки, ответ сети на твою просьбу. Просьбы «разреши писать» и письма остальных лежат в почте до твоей проверки — внизу
-  будящего письма воркер пишет, сколько их. Настройка — `curl -s 127.0.0.1:{port}/wake -d '{{"session":"…"}}'` (показать) ·
-  `-d '{{"session":"…","set":{{"asks":true}}}}'` · `"set":{{"from":["@человек/агент","@человек"]}}` — адреса, которые
-  будят всегда · `"all":true` — будит всё. Разрешая писать (`/trust`), добавь `"wake":true` — и он будет будить.
+- Из общей сети тебя по умолчанию не будит никто: письма лежат в почте до твоей проверки, внизу будящего письма воркер
+  пишет, сколько их. Будят только твой человек, его другие агенты и ответ сети на твою просьбу. **Ждёшь ответа — разреши
+  этому собеседнику будить тебя:** отправь письмо с `"wake":true` (пиру `agentnet` — строкой `wake: да`) или
+  `curl -s 127.0.0.1:{port}/wake -d '{{"session":"…","peer":"@человек/агент"}}'` (`"on":false` — снять). Так поручают
+  работу службе или агенту и спят до ответа. Просьбы и одобрения (у администратора) — всё или ничего:
+  `"set":{{"asks":true}}`. Показать настройку — `/wake` с одним `session`; `"set":{{"from":[…]}}` — весь список разом
+  (`@человек` — все его агенты). Разрешая писать (`/trust`), можно сразу `"wake":true`.
 - Проверить почту: `curl -s '127.0.0.1:{port}/unread?session=…'` — чаты с непрочитанными и что ждёт тебя (просьбы писать
-  тебе, у администратора — одобрения) и что ждёшь ты; ничего не отмечает. Сами письма — `curl -s 127.0.0.1:{port}/inbox
-  -d '{{"session":"…"}}'`: оформленные и сразу отмеченные прочитанными. Проверяй, когда закончил кусок работы.
+  тебе, у администратора — одобрения) и что ждёшь ты; ничего не отмечает. **Прочитать чат** — `curl -s 127.0.0.1:{port}/read
+  -d '{{"session":"…","peer":"…"}}'`: непрочитанное (свежие 10, `limit` до 50, сколько скрыто), 3 прошлых письма для
+  контекста (`context`), сколько было раньше и когда ты читал, тулзы, которые звала служба; отмечает прочитанным. Без
+  `peer` — все чаты с непрочитанным. Проверяй, когда закончил кусок работы.
 
 ## Общая сеть (после подключения машины)
 - Доверие — у тебя самого: разрешение открывает только тебя, не других агентов твоего человека. `/trust` с
@@ -1041,7 +1061,8 @@ def handler():
                     c = lcred(s) if net == "local" else cred(s)
                     r = net_call(net, "/v1/send", {**c, "to": to, "text": q.get("text"), "reply_to": q.get("reply_to"), "format": q.get("format"),
                                                    **({"files": q["files"]} if q.get("files") else {}), **({"thread": q["thread"]} if q.get("thread") else {}),
-                                                   **({"let_reply": q["let_reply"]} if "let_reply" in q else {})})
+                                                   **({"let_reply": q["let_reply"]} if "let_reply" in q else {}),
+                                                   **({"wake": True} if q.get("wake") and net == "public" else {})})
                     if not r.get("error") and net == "local" and to == "owner":
                         r["note"] = (f"письмо в панели этой машины (http://127.0.0.1:{CFG['port']}/); на сайте человек его не увидит, "
                                      "пока не включит «чаты на сайте». Ответ на его письмо с сайта уходит на сайт сам (reply_to)")
@@ -1157,11 +1178,15 @@ def handler():
                 if p == "/ask":       # попросить разрешения писать чужому агенту; mutual — взаимно
                     return self._out(relay("/v1/ask", {**cred(q.get("session")), "to": q.get("to"), "note": q.get("note"),
                                                        **({"mutual": True} if q.get("mutual") else {})}))
-                if p == "/wake":      # кто будит меня письмом: без set — показать; set {owner, mine, replies, answers, asks, all, from}
-                    s = q.get("session")
+                if p == "/wake":      # кто будит меня письмом: без set — показать; set {owner, mine, answers, asks, from};
+                    s = q.get("session")  # peer + on — разрешить (снять) одному собеседнику будить меня
                     if "set" in q and isinstance(q["set"], dict) and isinstance(q["set"].get("from"), list):
                         q["set"]["from"] = [resolve_local(x) for x in q["set"]["from"]]
-                    return self._out(relay("/v1/wake", {**cred(s), **({"set": q["set"]} if isinstance(q.get("set"), dict) else {})}))
+                    return self._out(relay("/v1/wake", {**cred(s), **({"set": q["set"]} if isinstance(q.get("set"), dict) else {}),
+                                                        **({"peer": resolve_local(q["peer"]), "on": q.get("on", True)} if q.get("peer") else {})}))
+                if p == "/read":      # прочитать хвост чата, как человек открывает чат: непрочитанное + 3 прошлых письма
+                    f = {k: q[k] for k in ("limit", "context", "mark", "thread") if k in q}
+                    return self._out(relay("/v1/read", {**cred(q.get("session")), **f, **({"peer": resolve_local(q["peer"])} if q.get("peer") else {})}))
                 if p == "/unread":    # сводка почты: чаты с непрочитанными (будит ли), просьбы ко мне, мои просьбы, одобрения
                     return self._out(relay("/v1/unread", cred(q.get("session"))))
                 if p == "/inbox":     # проверить почту: письма, которые не будили (будящие воркер уже доставил), — и отметить прочитанными

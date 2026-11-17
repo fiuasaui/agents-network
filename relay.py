@@ -99,11 +99,16 @@ def db_open(path):
 
 
 # кто будит агента письмом: воркер ждёт только будящие письма, прочие лежат в почте до проверки
-WAKE_DEFAULT = {"owner": True, "mine": True, "replies": True, "answers": True, "asks": False, "all": False, "from": []}
-WAKE_HELP = {"owner": "твой человек", "mine": "другие агенты твоего человека", "replies": "ответ того, кому ты писал за последние сутки",
-             "answers": "ответ сети на твою просьбу (разрешили, отказали)", "asks": "просьба разрешить писать тебе",
-             "all": "любое письмо", "from": "список адресов, которые будят всегда"}
-REPLY_WAKE = 24 * 3600      # «ответ на моё письмо» будит, если писал ему за последние сутки
+#: из сети по умолчанию не будит никто — только почта; будить агент разрешает сам конкретным собеседникам (from);
+# просьбы и одобрения — одним переключателем на всех; «любое письмо» убрано как бесполезное
+WAKE_DEFAULT = {"owner": True, "mine": True, "answers": True, "asks": False, "from": []}
+WAKE_HELP = {"owner": "твой человек", "mine": "другие агенты твоего человека",
+             "answers": "ответ сети на твою просьбу (разрешили, отказали)",
+             "asks": "просьбы и одобрения: просьба разрешить писать тебе, у администратора — просьба на одобрение",
+             "from": "собеседники, которым ты разрешил будить себя (агент, служба или человек — тогда и все его агенты)"}
+WAKE_GONE = {"all": "«любое письмо» убрано: из сети будят только те, кому ты разрешил сам — from",
+             "replies": "«ответ тому, кому писал» убран: разреши будить конкретному собеседнику — from, "
+                        "или отправь письмо с \"wake\": true — его ответы будут тебя будить"}
 KIND_TEXT = {"open": "пишет любой", "ask": "пишут те, кому он разрешил; разрешения можно попросить", "closed": "пишут только те, кому он разрешил сам; просить нельзя"}
 WRITE_TEXT = {"open": "он открыт всем", "same-owner": "вы агенты одного человека", "trusted": "он тебе разрешил",
               "ask": "можно попросить разрешения — /v1/ask", "asked": "ты уже попросил, ждём решения", "refused": "тебе отказали, повтор — через сутки",
@@ -467,29 +472,26 @@ class Relay:
     def wakes(self, me, src, kind=None, w=None):
         """Будит ли письмо src агента me: по его настройкам. Возвращает причину словом или "" — не будит. Под LOCK."""
         w = w or self.wake_of(me)
-        if w.get("all"):
-            return "all"
         fl = w.get("from") or []
         if fl and (src in fl or (self.db.execute("SELECT owner FROM agents WHERE id=?", (src,)).fetchone() or [None])[0] in fl):
             return "from"       # адрес из списка — агент или человек (тогда и все его агенты)
         o = (self.db.execute("SELECT owner FROM agents WHERE id=?", (me,)).fetchone() or [None])[0]
         if o and src == o:
             return "owner" if w.get("owner") else ""
+        if kind == "ask":       # просьбы и одобрения — одним переключателем, от кого бы ни были, даже от своих
+            return "asks" if w.get("asks") else ""
         if o and self.db.execute("SELECT 1 FROM agents WHERE id=? AND owner=?", (src, o)).fetchone():
             return "mine" if w.get("mine") else ""
         if kind == "answer":
             return "answers" if w.get("answers") else ""
-        if kind == "ask":
-            return "asks" if w.get("asks") else ""
-        if w.get("replies") and self.db.execute("SELECT 1 FROM msgs WHERE src=? AND dst=? AND at>? AND kind IS NULL LIMIT 1",
-                                                (me, src, time.time() - REPLY_WAKE)).fetchone():
-            return "replies"
         return ""
 
     def set_wake(self, aid, patch):
         """Поменять настройки пробуждения: ключи WAKE_DEFAULT; from — адреса (@ник, @человек/агент, ID). Под LOCK."""
         w = self.wake_of(aid)
         for k, v in (patch or {}).items():
+            if k in WAKE_GONE:
+                raise ValueError("wake: " + WAKE_GONE[k])
             if k not in WAKE_DEFAULT:
                 raise ValueError(f"wake: неизвестная настройка {k}; есть " + ", ".join(WAKE_DEFAULT))
             if k == "from":
@@ -506,11 +508,21 @@ class Relay:
         WAKE.notify_all()       # ждущий опрос перечитает настройку: лежавшее письмо может теперь будить
         return w
 
+    def wake_peer(self, aid, peer, on=True):
+        """Разрешить (или снять) одному собеседнику будить агента: пара агентов, а не «все». Под LOCK."""
+        w = self.wake_of(aid)
+        fl = [x for x in w.get("from") or [] if x != peer] + ([peer] if on else [])
+        w["from"] = fl[-50:]
+        self.db.execute("UPDATE agents SET wake=? WHERE id=?", (json.dumps(w), aid))
+        WAKE.notify_all()
+        return w
+
     def wake_view(self, aid):
         """Настройки пробуждения словами — для агента и кабинета. Под LOCK."""
         w = self.wake_of(aid)
         return {"wake": {**w, "from": [self.addr_of(x) for x in w.get("from") or []]}, "help": WAKE_HELP,
-                "note": "будящие письма воркер доставляет в сессию сразу; остальные лежат в почте — проверяй /v1/unread и /v1/inbox"}
+                "note": "будящие письма воркер доставляет в сессию сразу; остальные лежат в почте — проверяй /v1/unread и читай /v1/read. "
+                "Ждёшь ответа от службы или агента — разреши ему будить себя: {\"peer\": \"адрес\", \"on\": true} или письмо с \"wake\": true"}
 
     def wake(self, q):
         """Кто будит меня письмом: без `set` — показать, с `set` {…} — поменять. Сужать и расширять —
@@ -519,6 +531,8 @@ class Relay:
         with LOCK:
             if isinstance(q.get("set"), dict):
                 self.set_wake(me, q["set"])
+            if q.get("peer"):
+                self.wake_peer(me, self.target(q["peer"]), q.get("on", True) is not False)
             return self.wake_view(me)
 
     def hidden_wall(self, a, b):
@@ -817,14 +831,24 @@ class Relay:
             mid = "m-" + secrets.token_hex(6)
             now = time.time()
             text = clean_html(text) if fmt(q) else text
+            if by:      # приписка в самом тексте: видно и в логе, и любому клиенту — ради субординации, не антифрода
+                text += self.by_note(src, by, bool(fmt(q)))
+            if q.get("wake"):       # жду ответа: его письма будят меня
+                self.wake_peer(src, dst, True)
             self.db.execute("INSERT INTO msgs (mid, src, dst, text, reply_to, at, fmt, files, thread, by) VALUES (?,?,?,?,?,?,?,?,?,?)",
                             (mid, src, dst, text, q.get("reply_to"), now, fmt(q), fj, th, by))
             back = self.open_back(src, dst, act)
             self.acted(src)
             WAKE.notify_all()
-        return {"ok": True, "mid": mid, "how": how, **({"thread": th} if th else {}),
+        return {"ok": True, "mid": mid, "how": how, **({"thread": th} if th else {}), **({"wakes_me": True} if q.get("wake") else {}),
                 **({"reply": {"opened": "адресат может тебе отвечать", "asked": "разрешить адресату отвечать — спросили твоего человека"}[back]}
                    if back else {})}
+
+    def by_note(self, src, by, html=False):
+        """Приписка «написал не сам агент, а его человек» — в конце текста письма. Под LOCK."""
+        n = (self.db.execute("SELECT nick FROM owners WHERE id=?", (by,)).fetchone() or [by])[0]
+        t = f"[написал не сам {self.addr_of(src)}, а его человек @{n} (владелец) — от имени агента]"
+        return f"<p>{t}</p>" if html else "\n\n" + t
 
     def inbox(self, q):
         """Почта агента долгим опросом. `wake: true` (так ждёт воркер) — только письма, которые будят агента по его
@@ -855,6 +879,12 @@ class Relay:
                 if rows or left <= 0:
                     break
                 WAKE.wait(left)
+            # будящее письмо — с контекстом чата: сколько писем было раньше, когда читал, 3 прошлых письма
+            ctxs = {}
+            if only_wake:
+                for r in rows:
+                    if r[1] not in ctxs:
+                        ctxs[r[1]] = self.chat_ctx(me, r[1])
         # from_human — ТОЛЬКО свой человек: воркер пишет агенту «это слово твоего человека». Чужой человек —
         # from_person: старый воркер, не знающий поля, покажет его как письмо чужого агента — это безопасная сторона
         return {"msgs": [{"mid": r[0], "from": r[1], "from_name": r[2] or (f"@{r[7]}" if r[8] else None), "text": r[3], "reply_to": r[4],
@@ -862,7 +892,8 @@ class Relay:
                           **({"from_human": True} if r[8] and r[8] == mine else {"from_person": True} if r[8] else {}),
                           **({"format": r[9]} if r[9] else {}), **({"files": self.files_out(r[10])} if r[10] else {}),
                           **({"thread": r[11]} if r[11] else {}), **({"by_human": "@" + r[12]} if r[12] else {}),
-                          **({"kind": r[13]} if r[13] else {}), **({"woke": r[14]} if only_wake else {})} for r in rows],
+                          **({"kind": r[13]} if r[13] else {}), **({"woke": r[14]} if only_wake else {}),
+                          **({"chat": ctxs.pop(r[1])} if r[1] in ctxs else {})} for r in rows],
                 **({"quiet": quiet} if only_wake else {})}
 
     def history(self, q):
@@ -891,6 +922,114 @@ class Relay:
                    for mid, src, dst, t, r, at, ak, f, fl, th, bn in rows]
         return {"msgs": out, **({"next": out[-1]["at"]} if len(out) == lim else {}),
                 "hint": "свежее сначала; следующая страница — before из next; peer — переписка с одним адресатом; thread — одна ветка"}
+
+    def chat_ctx(self, me, peer, n=3):
+        """Контекст чата к будящему письму: письма до первого непрочитанного — сколько и `n` последних кратко, когда
+        агент читал этот чат, сколько в нём непрочитанного. Под LOCK."""
+        ch = "((src=? AND dst=?) OR (src=? AND dst=?)) AND at>?"
+        a = (me, peer, peer, me, time.time() - KEEP)
+        first = self.db.execute("SELECT MIN(at), COUNT(*) FROM msgs WHERE " + ch + " AND dst=? AND acked IS NULL", (*a, me)).fetchone()
+        if first[0] is None:
+            return None
+        n_before = self.db.execute("SELECT COUNT(*) FROM msgs WHERE " + ch + " AND at<?", (*a, first[0])).fetchone()[0]
+        prev = self.db.execute("SELECT mid, src, text, at FROM msgs WHERE " + ch + " AND at<? ORDER BY at DESC LIMIT ?", (*a, first[0], n)).fetchall()[::-1]
+        tl = self.tools_of([x[0] for x in prev])
+        last_read = self.db.execute("SELECT MAX(acked) FROM msgs WHERE " + ch + " AND dst=?", (*a, me)).fetchone()[0]
+        return {"unread": first[1], "before": n_before, "last_read_at": last_read,
+                "context": [{"dir": "out" if s_ == me else "in", "at": at, "text": " ".join(TAGS.sub(" ", t or "").split())[:400],
+                             **({"tools": tl[m]} if m in tl else {})} for m, s_, t, at in prev]}
+
+    def tools_of(self, mids):
+        """Какие тулзы служба вызывала, готовя письмо: {mid: [имена]}. Таблица шагов есть
+        только у сайта; у местной сети — пусто. Под LOCK."""
+        if not mids:
+            return {}
+        try:
+            rows = self.db.execute("SELECT mid, steps FROM svc_steps WHERE mid IN (" + ",".join("?" * len(mids)) + ")", list(mids)).fetchall()
+        except sqlite3.Error:
+            return {}
+        out = {}
+        for mid, st in rows:
+            try:
+                names = [str(x.get("tool") or "") for x in json.loads(st or "[]") if isinstance(x, dict)]
+            except ValueError:
+                continue
+            names = [n for n in names if n]
+            if names:
+                out[mid] = names
+        return out
+
+    def read_chat(self, me, peer, th, lim, ctx, mark):
+        """Хвост одного чата: непрочитанное в обе стороны начиная с первого непрочитанного, свежие `lim` из него;
+        сколько скрыто; `ctx` уже прочитанных писем перед хвостом; сколько было до хвоста и когда агент читал последний раз.
+        Под LOCK."""
+        w, args = "((m.src=? AND m.dst=?) OR (m.src=? AND m.dst=?)) AND m.at>?", [me, peer, peer, me, time.time() - KEEP]
+        if th is not None:
+            w += " AND COALESCE(m.thread, '')=?"
+            args.append(th)
+        first = self.db.execute("SELECT MIN(m.at) FROM msgs m WHERE " + w + " AND m.dst=? AND m.acked IS NULL", (*args, me)).fetchone()[0]
+        last_read = self.db.execute("SELECT MAX(m.acked) FROM msgs m WHERE " + w + " AND m.dst=?", (*args, me)).fetchone()[0]
+        cols = "SELECT m.mid, m.src, m.text, m.at, m.acked, m.fmt, m.files, m.thread, b.nick, m.kind FROM msgs m LEFT JOIN owners b ON b.id=m.by WHERE "
+        if first is None:
+            tail, hidden, hidden_in = [], 0, 0
+            before = self.db.execute(cols + w + " ORDER BY m.at DESC LIMIT ?", (*args, ctx)).fetchall()[::-1]
+            n_before = self.db.execute("SELECT COUNT(*) FROM msgs m WHERE " + w, args).fetchone()[0]
+        else:
+            alltail = self.db.execute("SELECT m.mid, m.src FROM msgs m WHERE " + w + " AND m.at>=? ORDER BY m.at", (*args, first)).fetchall()
+            hidden = max(0, len(alltail) - lim)
+            hidden_in = sum(1 for _, s in alltail[:hidden] if s != me)
+            tail = self.db.execute(cols + w + " AND m.at>=? ORDER BY m.at DESC LIMIT ?", (*args, first, lim)).fetchall()[::-1]
+            before = self.db.execute(cols + w + " AND m.at<? ORDER BY m.at DESC LIMIT ?", (*args, first, ctx)).fetchall()[::-1]
+            n_before = self.db.execute("SELECT COUNT(*) FROM msgs m WHERE " + w + " AND m.at<?", (*args, first)).fetchone()[0]
+        tools = self.tools_of([r[0] for r in tail + before])
+
+        def one(r, cut=None):
+            mid, src, t, at, ak, f, fl, thr, bn, kd = r
+            if cut and len(t) > cut:
+                t = t[:cut] + f"… (ещё {len(t) - cut} знаков — /v1/history)"
+            return {"mid": mid, "dir": "out" if src == me else "in", "text": t, "at": at,
+                    **({"new": True} if src != me and not ak else {}), **({"format": f} if f else {}),
+                    **({"files": self.files_out(fl)} if fl else {}), **({"thread": thr} if thr else {}),
+                    **({"by_human": "@" + bn} if bn else {}), **({"kind": kd} if kd else {}),
+                    **({"tools": tools[mid]} if mid in tools else {})}
+        out = {"peer": self.addr_of(peer), "id": peer, "type": self.peer_kind(me, peer), "human": self.human_nick(peer),
+               **({"thread": th} if th else {}),
+               "unread": sum(1 for r in tail if r[1] != me and not r[4]) + hidden_in,
+               "tail": [one(r) for r in tail], "hidden": hidden,
+               "context": [one(r, 1500) for r in before],
+               "before_tail": {"count": n_before, **({"last_at": before[-1][3]} if before else {})},
+               "last_read_at": last_read}
+        if mark:
+            ids = [r[0] for r in tail if r[1] != me and not r[4]]
+            if first is not None and hidden:        # скрытое старое тоже прочитано: агент видел, что его было N
+                ids += [m for m, s in self.db.execute("SELECT m.mid, m.src FROM msgs m WHERE " + w + " AND m.at>=? AND m.dst=? AND m.acked IS NULL",
+                                                      (*args, first, me)).fetchall()]
+            now = time.time()
+            for m in set(ids):
+                self.db.execute("UPDATE msgs SET acked=? WHERE mid=? AND dst=?", (now, m, me))
+        return out
+
+    def read(self, q):
+        """Прочитать хвост переписки, как человек открывает чат: непрочитанное (свежие `limit`, по умолчанию 10, до 50;
+        сколько скрыто), перед ним `context` уже прочитанных (по умолчанию 3), сколько было до хвоста, когда читал последний
+        раз, пометки тулз служб. `peer` — один чат (и `thread`), без него — все чаты с непрочитанным. `mark: false` — не отмечать."""
+        me = self.auth(q)
+        lim = max(1, min(50, int(q.get("limit") or 10)))
+        ctx = max(0, min(20, int(q["context"]) if q.get("context") is not None else 3))
+        mark = q.get("mark", True) is not False
+        th = (thread_of(q) or "") if "thread" in q else None
+        with LOCK:
+            if q.get("peer"):
+                chats = [self.read_chat(me, self.target(q["peer"]), th, lim, ctx, mark)]
+                more = 0
+            else:
+                peers = [p for p, in self.db.execute("SELECT src FROM msgs WHERE dst=? AND acked IS NULL AND at>? GROUP BY src ORDER BY MAX(at) DESC",
+                                                     (me, time.time() - KEEP))]
+                chats = [self.read_chat(me, p, None, lim, ctx, mark) for p in peers[:10]]
+                more = max(0, len(peers) - 10)
+        return {"chats": chats, **({"more_chats": more} if more else {}), "marked": mark,
+                "hint": "tail — непрочитанное и твои ответы после него, старое сверху; hidden — сколько писем хвоста не показано "
+                        "(больше — limit до 50 или /v1/history); context — прочитанное перед хвостом; new — письмо не было прочитано"}
 
     def human_nick(self, aid):
         """Чей это участник: ник человека или None. Под LOCK."""
@@ -1262,7 +1401,7 @@ class Relay:
             extra = self.unread_extra(me)
         total = sum(c["unread"] for c in chats)
         return {"unread": total, "chats": chats, "actions": {"asks_to_me": asks_in, "my_asks_waiting": asks_out, **extra},
-                "hint": "прочитать — /v1/inbox (без wake) и /v1/ack; переписка — /v1/history с peer; будит ли — /v1/wake"}
+                "hint": "прочитать хвост чата — /v1/read {\"peer\": адрес} (отмечает прочитанным, даёт 3 прошлых письма для контекста); переписка целиком — /v1/history; будит ли — /v1/wake"}
 
     def unread_extra(self, me):
         """Действия, которые знает только сайт (одобрения). Под LOCK."""
@@ -1361,7 +1500,7 @@ class Relay:
 
 ROUTES = {"/v1/owner": "owner_register", "/v1/owner/me": "owner_me", "/v1/register": "register", "/v1/profile": "profile", "/v1/trust": "trust", "/v1/send": "send",
           "/v1/inbox": "inbox", "/v1/ack": "ack", "/v1/directory": "directory", "/v1/ask": "ask", "/v1/agent": "public", "/v1/unreply": "unreply",
-          "/v1/history": "history", "/v1/chats": "chats", "/v1/wake": "wake", "/v1/unread": "unread",
+          "/v1/history": "history", "/v1/chats": "chats", "/v1/wake": "wake", "/v1/unread": "unread", "/v1/read": "read",
           "/v1/owner/send": "owner_send", "/v1/owner/chats": "owner_chats", "/v1/owner/thread": "owner_thread",
           "/v1/owner/seen": "owner_seen"}
 
