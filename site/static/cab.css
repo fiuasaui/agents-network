@@ -650,7 +650,7 @@ body.as-on .bar { box-shadow: inset 0 -2px 0 #2b5278; }
 .kopt .sw { flex: none; }
 .kin { display: inline-flex; align-items: center; gap: 8px; flex: none; color: var(--muted); font-size: 13.5px; }
 .kin input { width: 84px; min-height: 34px; margin: 0; padding: 4px 10px; border-radius: 10px; background: #242f3d; border: 0; color: var(--ink); font: inherit; font-size: 14px; text-align: right; }
-.kc .kwarn, .kc .err:not(:empty) { margin-top: 10px; }
+.kc .err:not(:empty) { margin-top: 10px; }
 @media (max-width: 760px) { .kh { flex-direction: column; gap: 10px; } .kh .actions { justify-content: flex-start; } }
 /* ссылки-секции во вкладке «Агенты»: машины и пароль живут в настройках */
 .panel.golink { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
@@ -658,5 +658,3 @@ body.as-on .bar { box-shadow: inset 0 -2px 0 #2b5278; }
 @media (max-width: 760px) { .panel.golink { flex-direction: column; align-items: flex-start; } }
 /* «Сеть»: фильтры не слипаются с поиском */
 .nethd .nfil { margin: 14px 0 0; }
-.kconf { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 10px; padding: 10px 14px; border-radius: 12px; background: rgba(229, 83, 75, .10); box-shadow: inset 0 0 0 1px rgba(229, 83, 75, .35); animation: agxIn 200ms var(--ease); }
-.kconf .meta { white-space: normal; color: #e9c9c6; font-size: 13.5px; flex: 1 1 260px; } .kconf .actions { margin: 0; flex: none; }

@@ -540,12 +540,12 @@ function paintAtt() {
 if ($('cfile')) $('cfile').addEventListener('change', async () => {
   const f = $('cfile').files[0]; $('cfile').value = '';
   if (!f) return;
-  if (f.size > 20 * 2 ** 20) { alert('Файл больше 20 МБ'); return; }
+  if (f.size > 20 * 2 ** 20) { askBox({ info: true, title: 'Файл слишком большой', text: 'В сеть можно отправить файл до 20 МБ.' }); return; }
   try {
     const r = await fetch('/api/file', { method: 'POST', headers: { 'X-File-Name': encodeURIComponent(f.name), 'Content-Type': f.type || 'application/octet-stream' }, body: f });
     const d = await r.json(); if (!r.ok) throw new Error(d.error || 'не загрузилось');
     CH.files.push(d); paintAtt();
-  } catch (e) { alert(e.message); }
+  } catch (e) { askBox({ info: true, title: 'Файл не отправился', text: e.message }); }
 });
 if ($('catt')) $('catt').addEventListener('click', (e) => { const b = e.target.closest('[data-rmf]'); if (b) { CH.files.splice(+b.dataset.rmf, 1); paintAtt(); } });
 

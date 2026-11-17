@@ -169,3 +169,32 @@ function typeBadge(t, extra) {
     .observe(document.body, { childList: true, subtree: true }); };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go); else go();
 })();
+
+// окно подтверждения посередине экрана с затемнением — одно на весь сайт: вместо confirm() браузера и плашек под
+// строкой. askBox({title, text, html, ok, no, danger, info}) → Promise<true|false>; Escape и клик по затемнению — «нет»;
+// info: true — сообщение с одной кнопкой (вместо alert()).
+function askBox(o) {
+  return new Promise((done) => {
+    const prev = document.activeElement, w = document.createElement('div');
+    w.className = 'mdl';
+    w.innerHTML = `<div class="mdl-b" role="alertdialog" aria-modal="true" aria-labelledby="mdl-t" aria-describedby="mdl-x"><h3 id="mdl-t"></h3><div class="mdl-x" id="mdl-x"></div>
+      <div class="mdl-a"><button class="btn ghost" type="button" data-no></button><button class="btn${o.danger ? ' bad' : ''}" type="button" data-ok></button></div></div>`;
+    w.querySelector('h3').textContent = o.title || 'Точно?';
+    const x = w.querySelector('.mdl-x'); if (o.html) x.innerHTML = o.html; else x.textContent = o.text || '';
+    w.querySelector('[data-no]').textContent = o.no || 'Отмена';
+    w.querySelector('[data-ok]').textContent = o.ok || (o.info ? 'Понятно' : 'Да');
+    if (o.info) w.querySelector('[data-no]').remove();
+    let over = false;
+    const end = (v) => { if (over) return; over = true; document.removeEventListener('keydown', key, true); w.classList.remove('on');
+      setTimeout(() => w.remove(), 200); if (prev && prev.focus) prev.focus({ preventScroll: true }); done(v); };
+    const key = (e) => { if (e.key === 'Escape') { e.preventDefault(); end(false); }
+      else if (e.key === 'Tab') { const b = [...w.querySelectorAll('button')], i = b.indexOf(document.activeElement); e.preventDefault(); b[(i + (e.shiftKey ? b.length - 1 : 1)) % b.length].focus(); } };
+    w.addEventListener('mousedown', (e) => { if (e.target === w) end(false); });
+    if (!o.info) w.querySelector('[data-no]').onclick = () => end(false);
+    w.querySelector('[data-ok]').onclick = () => end(true);
+    document.addEventListener('keydown', key, true);
+    document.body.appendChild(w);
+    requestAnimationFrame(() => requestAnimationFrame(() => w.classList.add('on')));
+    w.querySelector(o.danger && !o.info ? '[data-no]' : '[data-ok]').focus({ preventScroll: true });
+  });
+}
