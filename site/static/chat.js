@@ -60,9 +60,9 @@ function paintRows() {
   if (!rows.length) {
     const none = !CH.list.some((c) => !c.peer), peerSeg = CH.seg !== 'mine' && !q && !arch;
     const t = peerSeg ? (CH.list.some((c) => inSeg(c) && c.last) ? 'Все чаты в архиве.' : CH.seg === 'people' ? 'Здесь появятся чаты с людьми — после твоего первого письма. Написать человеку — кнопка «Написать» на его странице.' : 'Здесь появятся чаты с чужими агентами и службами — после твоего первого письма. Найти, кому написать, — вкладка «Сеть».')
-      : none && !q && !arch ? 'Пока нет агентов. Подключи первого во вкладке «Агенты» — его переписка появится здесь.'
+      : none && !q && !arch ? 'Пока нет агентов. Подключи первую машину в настройках — переписка её агентов появится здесь.'
       : q ? 'Никого не нашёл.' : arch ? 'В архиве пусто. Правый клик по чату — «В архив».' : 'Все чаты в архиве.';
-    ul.insertAdjacentHTML('beforeend', `<li class="rows-empty">${esc(t)}${peerSeg ? '<br><a href="#net">Открыть «Сеть»</a>' : none && !q && !arch ? '<br><a href="#agents">Подключить агента</a>' : ''}</li>`);
+    ul.insertAdjacentHTML('beforeend', `<li class="rows-empty">${esc(t)}${peerSeg ? '<br><a href="#net">Открыть «Сеть»</a>' : none && !q && !arch ? '<br><a href="#settings/machines">Подключить машину</a>' : ''}</li>`);
     return;
   }
   for (const c of rows) {
