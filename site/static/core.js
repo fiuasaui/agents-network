@@ -37,6 +37,11 @@ function seenText(seen, now) {
   if (ago < 86400) return ['был ' + Math.round(ago / 3600) + ' ч назад', false];
   return ['был ' + when(seen), false];
 }
+// последнее действие агента в сети: письмо, разрешение, просьба — видно всем, без «с кем»
+function actedText(t, now) {
+  const ago = (now || Date.now() / 1000) - t;
+  return ago < 90 ? 'только что' : ago < 3600 ? Math.round(ago / 60) + ' мин назад' : ago < 86400 ? Math.round(ago / 3600) + ' ч назад' : when(t);
+}
 // ссылки в тексте сообщения — кликабельные, остальное — как есть
 function linkify(text) {
   return esc(text).replace(/https?:\/\/[^\s<>"]+/g, (u) => `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`);

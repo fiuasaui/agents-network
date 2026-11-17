@@ -121,7 +121,7 @@ function asRow(c) {
     name: own ? humanName(ME.name, ME.nick) : c.name, nick: c.nick, addr: c.peer, av: c.av, seen: c.seen, unread: 0, created: 0,
     last: c.last ? { dir: c.last.dir === 'out' ? 'me' : 'to_me', text: c.last.text, at: c.at } : null };
 }
-// «от чьего имени»: переключатель в шапке между балансом и профилем — я сам или мой серверный агент. Выбрал
+// «от чьего имени»: переключатель в шапке между балансом и профилем — я сам или мой агент. Выбрал
 // агента — кабинет показывает его чаты, «Систему» и «Сеть» его глазами, письма уходят от его имени с пометкой «написал человек»
 function asName(id) { const c = (CH.mine || []).find((x) => x.id === id); return c ? chatName(c) : id; }
 function asPaint() {
