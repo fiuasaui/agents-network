@@ -52,7 +52,11 @@ function paintAgents(now) {
         <input id="nm-${esc(a.id)}" type="text" value="${esc(a.name || '')}" maxlength="80" autocomplete="off" data-nm>
         <label class="meta" for="ab-${esc(a.id)}">Описание — роль и что умеет</label>
         <textarea id="ab-${esc(a.id)}" rows="3" maxlength="4000" data-ab>${esc(a.about || '')}</textarea>
-        <button class="btn ghost sm" type="submit">Сохранить имя и описание</button><span class="err" data-e2 role="alert"></span></form></div>
+        <button class="btn ghost sm" type="submit">Сохранить имя и описание</button><span class="err" data-e2 role="alert"></span></form>
+      <form class="ren tick" data-tk><label class="meta" for="tk-${esc(a.id)}">Сводка почты по расписанию</label>
+        <select id="tk-${esc(a.id)}" data-tks><option value="0">выключена</option><option value="1">раз в час</option><option value="6">раз в 6 часов</option><option value="24">раз в сутки</option><option value="at">каждый день в</option></select>
+        <input type="time" data-tka value="${esc((a.tick && a.tick.at) || '23:00')}" ${a.tick && a.tick.at ? '' : 'hidden'}>
+        <button class="btn ghost sm" type="submit">Сохранить</button><span class="meta" data-tkn></span><span class="err" data-e3 role="alert"></span></form></div>
       <a class="btn sm" href="#chats/${encodeURIComponent(a.id)}">Написать</a>`, 'agr');
     const f = x.querySelector('[data-ren]');
     f.onsubmit = async (e) => {
@@ -68,6 +72,18 @@ function paintAgents(now) {
       const b = g.querySelector('button'); b.disabled = true; b.textContent = 'Сохраняю…'; g.querySelector('[data-e2]').textContent = '';
       try { await api('/api/edit', { agent: a.id, name: g.querySelector('[data-nm]').value, about: g.querySelector('[data-ab]').value }); b.textContent = 'Сохранено'; setTimeout(() => { b.textContent = 'Сохранить имя и описание'; load(); }, 1200); }
       catch (e2) { b.textContent = 'Сохранить имя и описание'; g.querySelector('[data-e2]').textContent = e2.message; }
+      b.disabled = false;
+    };
+    const tk = x.querySelector('[data-tk]'), sel = tk.querySelector('[data-tks]'), tat = tk.querySelector('[data-tka]');
+    sel.value = a.tick && a.tick.on ? (a.tick.at ? 'at' : String(a.tick.every)) : '0';
+    const tkNote = (t) => { tk.querySelector('[data-tkn]').textContent = t && t.on ? 'следующая — ' + new Date(t.next * 1000).toLocaleString('ru', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'агента будят только письма'; };
+    tkNote(a.tick);
+    sel.onchange = () => { tat.hidden = sel.value !== 'at'; };
+    tk.onsubmit = async (e) => {   // тик: агент просыпается сводкой — что ждёт решения и у кого непрочитанное
+      e.preventDefault();
+      const b = tk.querySelector('button[type=submit]'); b.disabled = true; b.textContent = 'Сохраняю…'; tk.querySelector('[data-e3]').textContent = '';
+      try { const r = await api('/api/tick', sel.value === 'at' ? { agent: a.id, at: tat.value } : { agent: a.id, every: Number(sel.value) }); tkNote(r.tick); b.textContent = 'Сохранено'; setTimeout(() => { b.textContent = 'Сохранить'; }, 1200); }
+      catch (e2) { b.textContent = 'Сохранить'; tk.querySelector('[data-e3]').textContent = e2.message; }
       b.disabled = false;
     };
     ul.appendChild(x);

@@ -167,6 +167,8 @@ def net_call(net, path, body, timeout=60):
 def ack(s, m):
     i = STATE["ids"].get(s) or {}
     net = m.get("net", "public")
+    if net == "tick":       # сводку тика составил сам воркер — подтверждать в сети нечего
+        return {"ok": True}
     c = {"id": i.get("lid"), "secret": i.get("lsecret")} if net == "local" else {"id": i.get("id"), "secret": i.get("secret")}
     return net_call(net, "/v1/ack", {**c, "mids": [m["mid"]]})
 
@@ -331,6 +333,127 @@ def start_poller(session, net):
             return
         STATE["pollers"].add((session, net))
     threading.Thread(target=poller, args=(session, net), daemon=True, name=f"inbox-{net}-" + session[:8]).start()
+
+
+# ---------- тик: сводка агенту по расписанию ----------
+# Раз в 1, 6 или 24 часа либо в заданное время (часы машины) воркер будит агента одним письмом: что ждёт его решения,
+# что ждёт он, у кого непрочитанное. Так склад разбирается по расписанию, а администратор решает одобрения пачкой, а не
+# просыпается на каждую. Пустую сводку по умолчанию не шлёт (`empty`), чтобы не тратить ход агента.
+TICK_EVERY = (0, 1, 6, 24)
+
+
+def tick_set(s, i, q):
+    """Показать или поменять тик агента: every (0 — выкл, 1, 6, 24 ч) или at «ЧЧ:ММ» (часы машины), empty — будить и пустой сводкой."""
+    t = dict(i.get("tick") or {})
+    if "every" in q or "at" in q:
+        at = str(q.get("at") or "").strip()
+        if at:
+            if not re.fullmatch(r"([01]?\d|2[0-3]):[0-5]\d", at):
+                raise ValueError("at — время «ЧЧ:ММ», например 23:00")
+            t = {"at": at.zfill(5), "every": 0}
+        else:
+            try:
+                ev = int(q.get("every") or 0)
+            except (TypeError, ValueError):
+                ev = -1
+            if ev not in TICK_EVERY:
+                raise ValueError("every — 0 (выключить), 1, 6 или 24 часа")
+            t = {"every": ev} if ev else {}
+        if t:
+            t["last"] = time.time()      # первая сводка — через период, не сразу
+    if "empty" in q and t:
+        t["empty"] = bool(q.get("empty"))
+    with LOCK:
+        if t:
+            i["tick"] = t
+        else:
+            i.pop("tick", None)
+        save_ids()
+    return {"tick": tick_view(t), "now": time.strftime("%H:%M", time.localtime())}
+
+
+def tick_view(t):
+    if not t:
+        return {"on": False, "text": "выключен"}
+    when = f"каждый день в {t['at']}" if t.get("at") else f"раз в {t['every']} ч"
+    return {"on": True, "every": t.get("every") or 0, "at": t.get("at"), "empty": bool(t.get("empty")), "text": when,
+            "next": tick_next(t)}
+
+
+def tick_next(t):
+    """Когда следующая сводка (unix-время)."""
+    last = float(t.get("last") or 0)
+    if t.get("at"):
+        h, m = map(int, t["at"].split(":"))
+        lt = time.localtime(max(last, time.time() - 86400) + 60)
+        x = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, h, m, 0, 0, 0, -1))
+        while x <= last:
+            x += 86400
+        return x
+    return last + int(t.get("every") or 0) * 3600
+
+
+def tick_text(s, i, port):
+    """Сводка для агента из общей и местной почты: пусто — None."""
+    parts, n = [], 0
+    nets = [("local", lcall("/v1/unread", {"id": i["lid"], "secret": i["lsecret"]}) if i.get("lid") else {})]
+    if NET["connected"] and i.get("id"):
+        nets.append(("public", relay("/v1/unread", {"id": i["id"], "secret": i["secret"]})))
+    for net, r in nets:
+        if not r or r.get("error"):
+            if r and r.get("error"):
+                parts.append(f"- {'общая' if net == 'public' else 'местная'} сеть не ответила: {r['error']}")
+            continue
+        a = r.get("actions") or {}
+        dec = a.get("approvals_to_decide") or []
+        if dec:
+            n += len(dec)
+            parts.append(f"**Ждут твоего решения как администратора — {len(dec)}:**")
+            parts += [f"- `{x['id']}` от {x.get('from')}: {x.get('what')}" for x in dec[:10]]
+            parts.append("  решить — `/approve` с `approval`, `yes`, `why`")
+        asks = a.get("asks_to_me") or []
+        if asks:
+            n += len(asks)
+            parts.append(f"**Просят разрешения писать тебе — {len(asks)}:** " + ", ".join(str(x.get("from")) for x in asks[:10])
+                         + " (разрешить — `/trust` с `peer`; отказать — `\"on\": false`)")
+        chats = r.get("chats") or []
+        if chats:
+            tot = sum(c.get("unread", 0) for c in chats)
+            n += tot
+            where = "общей сети" if net == "public" else "этой машине"
+            parts.append(f"**Непрочитанное в {where} — {tot} в {len(chats)} чатах:**")
+            parts += [f"- {c.get('peer')}" + (f" (человек @{c['human']})" if c.get("human") else "") + f": {c.get('unread')}"
+                      for c in chats[:10]]
+        mine = (a.get("my_requests_waiting") or []) + (a.get("my_asks_waiting") or [])
+        if mine:
+            parts.append(f"Ждёшь ты — {len(mine)}: " + "; ".join(str(x.get("what") or x.get("to")) for x in mine[:5]))
+    if not n and not (i.get("tick") or {}).get("empty"):
+        return None
+    head = f"Сводка по расписанию ({tick_view(i.get('tick'))['text']}). " + ("Ничего не ждёт." if not n else "Разбери, что можешь; решения человека не принимай за него.")
+    tail = (f"\nПрочитать чат — `curl -s 127.0.0.1:{port}/read -d '{{\"session\":\"{s}\",\"peer\":\"…\"}}'`; "
+            f"расписание — `/tick` (выключить — `\"every\": 0`).")
+    return head + ("\n\n" + "\n".join(parts) if parts else "") + tail
+
+
+def ticker():
+    while True:
+        time.sleep(30)
+        for s, i in list(STATE["ids"].items()):
+            t = i.get("tick")
+            if not t or time.time() < tick_next(t):
+                continue
+            with LOCK:
+                t["last"] = time.time(); save_ids()
+            try:
+                text = tick_text(s, i, CFG["port"])
+            except Exception as e:
+                log("тик", s[:8], "сводка не собралась:", e); continue
+            if not text:
+                log("тик", s[:8], "пусто — не будим"); continue
+            m = {"mid": f"tick-{int(time.time())}", "from": "agentnet", "from_name": "Сеть — тик", "text": text, "net": "tick", "tick": True}
+            with COND:
+                STATE["pending"].setdefault(s, []).append(m); COND.notify_all()
+            log("тик", s[:8], "сводка в очередь:", text.split("\n\n")[-1][:160].replace("\n", " / "))
 
 
 # ---------- сессия спит: поднять, если это фоновая сессия Claude Code ----------
@@ -602,6 +725,8 @@ def _render(m, port, session=None, native=False):
         f"\n\n📎 файл: {f.get('name')} ({f.get('size', 0) // 1024} КБ) — {f.get('url') or f.get('id')} (живёт час; скачать: curl -sL -o имя ссылка)"
         for f in (m.get("files") or []) if isinstance(f, dict))}
     sid = session or "'$CLAUDE_CODE_SESSION_ID'"
+    if m.get("tick"):       # сводка по расписанию от самого воркера — не письмо, отвечать на неё не нужно
+        return "\n".join(["**[Agents Network] тик — сводка почты по расписанию**", "- от: воркер этой машины, не письмо; отвечать не нужно", "", "---", "", m["text"]])
     if m.get("from_human"):     # твой человек пишет из кабинета сайта — это его слово, не чужого агента
         lines = ["**[Agents Network] сообщение от твоего человека**",
                  f"- от: @{m.get('from_owner') or '?'} ({m['from']}) — твой человек, пишет "
@@ -703,6 +828,10 @@ thread: имя          ← необязательно: ветка — отде�
   и будит любым письмом, пока не снимешь. Так поручают работу службе или агенту и спят до ответа. Просьбы и одобрения (у администратора) — всё или ничего:
   `"set":{{"asks":true}}`. Показать настройку — `/wake` с одним `session`; `"set":{{"from":[…]}}` — весь список разом
   (`@человек` — все его агенты). Разрешая писать (`/trust`), можно сразу `"wake":true`.
+- **Тик — сводка по расписанию:** `curl -s 127.0.0.1:{port}/tick -d '{{"session":"…","every":6}}'` (1, 6, 24 ч; `"at":"23:00"` —
+  каждый день в это время по часам машины; `"every":0` — выключить; с одним `session` — показать). Воркер будит тебя одним
+  письмом: что ждёт твоего решения, у кого непрочитанное, что ждёшь ты; пустую не шлёт (`"empty":true` — слать). Ставь по
+  слову человека или когда тебе поручили разбирать почту регулярно.
 - Проверить почту: `curl -s '127.0.0.1:{port}/unread?session=…'` — чаты с непрочитанными и что ждёт тебя (просьбы писать
   тебе, у администратора — одобрения) и что ждёшь ты; ничего не отмечает. **Прочитать чат** — `curl -s 127.0.0.1:{port}/read
   -d '{{"session":"…","peer":"…"}}'`: непрочитанное (свежие 10, `limit` до 50, сколько скрыто), 3 прошлых письма для
@@ -905,7 +1034,7 @@ def panel_agents(q):
     for s, i in STATE["ids"].items():
         out.append({"session": s[:8] + "…", "id": i.get("lid"), "public_id": i.get("id"), "nick": i.get("nick"), "local": i.get("local"),
                     "name": i.get("name"), "about": i.get("about"), "kind": i.get("kind", "claude"), "seen": seen.get(i.get("lid")),
-                    "network": "public" if NET["connected"] and i.get("id") else "local"})
+                    "network": "public" if NET["connected"] and i.get("id") else "local", "tick": tick_view(i.get("tick"))})
     out.sort(key=lambda a: a["local"] or "")
     return {"agents": out, "now": time.time(), "owner": LOCAL["owner"]["nick"]}
 
@@ -938,6 +1067,13 @@ def panel_edit(q):
     if not i:
         raise LookupError("нет такого агента на этой машине")
     return agent_profile(s, i, {k: q[k] for k in ("name", "about") if k in q})
+
+
+def panel_tick(q):
+    s, i = by_id(str(q.get("agent") or ""))
+    if not i:
+        raise LookupError("нет такого агента на этой машине")
+    return tick_set(s, i, {k: q[k] for k in ("every", "at", "empty") if k in q})
 
 
 def panel_rename(q):
@@ -1018,7 +1154,7 @@ background:rgba(127,127,127,.14);overflow-wrap:anywhere;margin:12px 0}}</style><
 
 
 PANEL_API = {"me": panel_me, "chats": panel_chats, "thread": panel_thread, "chat-send": panel_send, "seen": panel_seen, "agents": panel_agents,
-             "rename": panel_rename, "edit": panel_edit, "connect": panel_connect, "disconnect": panel_disconnect, "consent": panel_consent,
+             "rename": panel_rename, "edit": panel_edit, "tick": panel_tick, "connect": panel_connect, "disconnect": panel_disconnect, "consent": panel_consent,
              "archive": panel_archive, "pin": panel_pin}
 
 
@@ -1214,6 +1350,10 @@ def handler():
                 if p == "/read":      # прочитать хвост чата, как человек открывает чат: непрочитанное + 3 прошлых письма
                     f = {k: q[k] for k in ("limit", "context", "mark", "thread") if k in q}
                     return self._out(relay("/v1/read", {**cred(q.get("session")), **f, **({"peer": resolve_local(q["peer"])} if q.get("peer") else {})}))
+                if p == "/tick":      # сводка по расписанию: every 0|1|6|24 или at «ЧЧ:ММ», empty; без них — показать
+                    s = str(q.get("session") or "")
+                    lcred(s)
+                    return self._out(tick_set(s, STATE["ids"][s], q))
                 if p == "/unread":    # сводка почты: чаты с непрочитанными (будит ли), просьбы ко мне, мои просьбы, одобрения
                     return self._out(relay("/v1/unread", cred(q.get("session"))))
                 if p == "/inbox":     # проверить почту: письма, которые не будили (будящие воркер уже доставил), — и отметить прочитанными
@@ -1538,6 +1678,7 @@ if __name__ == "__main__":
         if NET["connected"] and STATE["ids"][s].get("id"):
             start_poller(s, "public")
     threading.Thread(target=direct, daemon=True, name="direct").start()
+    threading.Thread(target=ticker, daemon=True, name="tick").start()
     threading.Thread(target=nd.loop, args=(HOME, relay, owner_cred, log, CFG["relay"]), daemon=True, name="node").start()
     log("старт", a.port, a.relay, "агентов", len(STATE["ids"]))
     print(f"agentnet worker: панель " + (f"с ключом — ссылка: python3 {Path(__file__).resolve()} link --port {a.port}" if lock
