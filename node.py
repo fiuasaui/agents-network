@@ -1,22 +1,22 @@
-"""node.py — узел владельца в Agents Network: воркер исполняет тулзы его служб на этой машине.
+"""node.py — узел владельца в Agents Network: воркер исполняет тулзы его чат-агентов на этой машине.
 
 Набор тулз (toolkit) — файл ~/.agentnet/toolkits/<имя>.json:
   {"name": "billing", "about": "…", "public": false,
    "tools": [{"name": "get_balance", "description": "что делает и когда звать", "parameters": {JSON-схема},
               "danger": false, "run": {"url": "http://127.0.0.1:9000/balance"}  или  {"cmd": ["python3", "/путь/tool.py"]}}]}
-"danger": true — опасная тулза (меняет данные, тратит деньги, видит лишнее; прежнее имя пометки — "mutates"): служба зовёт
+"danger": true — опасная тулза (меняет данные, тратит деньги, видит лишнее; прежнее имя пометки — "mutates"): чат-агент зовёт
 её, только если владелец включил. "intro": true — хук-подсказка: Сеть сама зовёт её в начале чата и после простоя, ответ
 (последние заказы собеседника, тариф) идёт в контекст модели; хук-подсказка не может быть опасной.
 Сеть видит всё, кроме "run": как исполнять, знает только эта машина. Воркер объявляет наборы в Сети при старте и при
 каждой правке, затем длинным опросом /v1/node/calls забирает вызовы и исполняет: url — POST JSON {tool, args, ctx},
 ответ — тело; cmd — тот же JSON на stdin, ответ — stdout (таймаут 50 с). Отдать собеседнику файл (PDF, видео):
-тулза возвращает JSON с "attach_paths": ["/путь/файл"] — узел загрузит файлы, и служба приложит их к ответу. ctx.client — кто пишет службе (агент, человек,
+тулза возвращает JSON с "attach_paths": ["/путь/файл"] — узел загрузит файлы, и чат-агент приложит их к ответу. ctx.client — кто пишет чат-агенту (агент, человек,
 посетитель, пользователь сайта владельца); его ставит Сеть, модель подменить не может.
 
-Свой движок (engine=node): модель службы крутится здесь — ~/.agentnet/engine.json {url, key, model}, OpenAI-совместимый
+Свой движок (engine=node): модель чат-агента крутится здесь — ~/.agentnet/engine.json {url, key, model}, OpenAI-совместимый
 адрес; Сеть присылает ход (tool=__turn__: промпт, история, тулзы), узел гоняет модель и свои тулзы и отдаёт ответ.
 
-🔴 Безопасность: тулза открыта собеседникам служб, к которым подключён набор, — то есть чужим людям и агентам.
+🔴 Безопасность: тулза открыта собеседникам чат-агентов, к которым подключён набор, — то есть чужим людям и агентам.
 Делай тулзы узкими (читают данные одного собеседника по ctx.client), опасные помечай "danger": true. Только stdlib.
 """
 import json, os, subprocess, threading, time, urllib.request
@@ -132,7 +132,7 @@ def run_tool(k, tool, args, ctx):
 
 
 def run_turn(home, kits, args, ctx, relay_url, cred, relay=None):
-    """Ход службы со своим движком: модель владельца (~/.agentnet/engine.json — OpenAI-совместимый адрес, ключ,
+    """Ход чат-агента со своим движком: модель владельца (~/.agentnet/engine.json — OpenAI-совместимый адрес, ключ,
     модель) и его тулзы — здесь, на машине; Сеть прислала промпт, историю и список тулз, ждёт {text, steps, attach}."""
     try:
         eng = json.loads((home / "engine.json").read_text())
@@ -159,7 +159,7 @@ def run_turn(home, kits, args, ctx, relay_url, cred, relay=None):
                 a = json.loads(c["function"].get("arguments") or "{}")
             except ValueError:
                 a = {}
-            if fn.startswith("net__") and relay:   # тулза Сети: написать, приложить, найти — исполняет Сеть от имени службы
+            if fn.startswith("net__") and relay:   # тулза Сети: написать, приложить, найти — исполняет Сеть от имени чат-агента
                 r = relay("/v1/node/sys", {**(cred() or {}), "service": args.get("service"), "tool": fn, "args": a,     # чат — куда вернётся ответ адресата
                                            "client": (ctx.get("client") or {}).get("id"), "thread": ctx.get("thread")})
                 ok, res = bool(r.get("ok")), str(r.get("result") or r.get("error") or "")
@@ -202,7 +202,7 @@ def loop(home, relay, cred, log, relay_url=""):
                     if call["tool"] == "__turn__":
                         ok, res = run_turn(home, kits, call["args"], call["ctx"], relay_url, cred, relay)
                         ST["calls"] += 1
-                        log("node: ход службы", call["ctx"].get("service"), "ok" if ok else "ошибка")
+                        log("node: ход чат-агента", call["ctx"].get("service"), "ok" if ok else "ошибка")
                         relay("/v1/node/result", {**c, "call": call["call"], "ok": ok, "result": res[:50_000]})
                         return
                     k = kits.get(call["toolkit"])

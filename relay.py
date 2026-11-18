@@ -46,7 +46,7 @@ def db_open(path):
         c.execute("ALTER TABLE msgs ADD COLUMN fmt TEXT")
     if "files" not in mcols:        # приложенные файлы письма: JSON [{id, name, size, mime}]
         c.execute("ALTER TABLE msgs ADD COLUMN files TEXT")
-    if "thread" not in mcols:       # ветка переписки: NULL — общий чат; служба в режиме «много чатов» ведёт каждую отдельно
+    if "thread" not in mcols:       # ветка переписки: NULL — общий чат; чат-агент в режиме «много чатов» ведёт каждую отдельно
         c.execute("ALTER TABLE msgs ADD COLUMN thread TEXT")
     if "by" not in mcols:           # человек, написавший от имени агента: видно всем участникам переписки
         c.execute("ALTER TABLE msgs ADD COLUMN by TEXT")
@@ -74,7 +74,7 @@ def db_open(path):
         c.execute("ALTER TABLE agents ADD COLUMN av TEXT")
     # просьбы разрешения писать: кто у кого просил и когда — чтобы не спамить и сообщить просившему решение
     c.execute("CREATE TABLE IF NOT EXISTS knocks (src TEXT, dst TEXT, at REAL, note TEXT, PRIMARY KEY (src, dst))")
-    if "kind" not in [r[1] for r in c.execute("PRAGMA table_info(agents)")]:     # NULL — агент, 'service' — служба (сайт)
+    if "kind" not in [r[1] for r in c.execute("PRAGMA table_info(agents)")]:     # NULL — агент, 'service' — чат-агент (сайт)
         c.execute("ALTER TABLE agents ADD COLUMN kind TEXT")
     if "only" not in [r[1] for r in c.execute("PRAGMA table_info(trust)")]:
         # 1 — разрешение только этому участнику (взаимное открытие): доверие человеку его агентов не открывает
@@ -109,7 +109,7 @@ WAKE_DEFAULT = {"owner": True, "mine": True, "answers": True, "asks": False, "fr
 WAKE_HELP = {"owner": "твой человек", "mine": "другие агенты твоего человека",
              "answers": "ответ сети на твою просьбу (разрешили, отказали)",
              "asks": "просьбы и одобрения: просьба разрешить писать тебе, у администратора — просьба на одобрение",
-             "from": "собеседники, которым ты разрешил будить себя (агент, служба или человек — тогда и все его агенты)"}
+             "from": "собеседники, которым ты разрешил будить себя (агент, чат-агент или человек — тогда и все его агенты)"}
 WAKE_GONE = {"all": "«любое письмо» убрано: из сети будят только те, кому ты разрешил сам — from",
              "replies": "«ответ тому, кому писал» убран: разреши будить конкретному собеседнику — from, "
                         "или отправь письмо с \"wake\": true — его ответы будут тебя будить"}
@@ -547,7 +547,7 @@ class Relay:
         w = self.wake_of(aid)
         return {"wake": {**w, "from": [self.addr_of(x) for x in w.get("from") or []]}, "help": WAKE_HELP,
                 "note": "будящие письма воркер доставляет в сессию сразу; остальные лежат в почте — проверяй /v1/unread и читай /v1/read. "
-                "Ждёшь ответа от службы или агента — разреши ему будить себя: {\"peer\": \"адрес\", \"on\": true} или письмо с \"wake\": true"}
+                "Ждёшь ответа от чат-агента или агента — разреши ему будить себя: {\"peer\": \"адрес\", \"on\": true} или письмо с \"wake\": true"}
 
     def wake(self, q):
         """Кто будит меня письмом: без `set` — показать, с `set` {…} — поменять. Сужать и расширять —
@@ -576,7 +576,7 @@ class Relay:
 
     def hidden_wall(self, a, b):
         """Скрытый агент живёт только в системе своего человека: ни он наружу, ни снаружи к нему — включая
-        службы. True — между a и b стена. Под LOCK."""
+        чат-агента. True — между a и b стена. Под LOCK."""
         def side(x):
             r = self.db.execute("SELECT owner, COALESCE(hidden, 0) FROM agents WHERE id=?", (x,)).fetchone()
             return (r[0] or x, bool(r[1])) if r else (x, False)
@@ -663,7 +663,7 @@ class Relay:
         return r[0] if r else None
 
     def is_service(self, aid):
-        return False        # службы живут только на сайте сети (Hosted)
+        return False        # чат-агенты живут только на сайте сети (Hosted)
 
     def may_write(self, src, dst):
         if self.hidden_wall(src, dst):      # скрытый — только внутри системы своего человека
@@ -982,7 +982,7 @@ class Relay:
                              **({"tools": tl[m]} if m in tl else {})} for m, s_, t, at in prev]}
 
     def tools_of(self, mids):
-        """Какие тулзы служба вызывала, готовя письмо: {mid: [имена]}. Таблица шагов есть
+        """Какие тулзы чат-агент вызывал, готовя письмо: {mid: [имена]}. Таблица шагов есть
         только у сайта; у местной сети — пусто. Под LOCK."""
         if not mids:
             return {}
@@ -1054,7 +1054,7 @@ class Relay:
     def read(self, q):
         """Прочитать хвост переписки, как человек открывает чат: непрочитанное (свежие `limit`, по умолчанию 10, до 50;
         сколько скрыто), перед ним `context` уже прочитанных (по умолчанию 3), сколько было до хвоста, когда читал последний
-        раз, пометки тулз служб. `peer` — один чат (и `thread`), без него — все чаты с непрочитанным. `mark: false` — не отмечать."""
+        раз, пометки тулз чат-агентов. `peer` — один чат (и `thread`), без него — все чаты с непрочитанным. `mark: false` — не отмечать."""
         me = self.auth(q)
         lim = max(1, min(50, int(q.get("limit") or 10)))
         ctx = max(0, min(20, int(q["context"]) if q.get("context") is not None else 3))
@@ -1120,7 +1120,7 @@ class Relay:
         with LOCK:
             out = self.agent_chats(me, lim, off)
         return {"chats": out, **({"next": off + lim} if len(out) == lim else {}),
-                "hint": "письма чата: /v1/history {\"peer\": адрес, \"limit\": 10}; ветка службы — ещё \"thread\"; дальше — offset"}
+                "hint": "письма чата: /v1/history {\"peer\": адрес, \"limit\": 10}; ветка чат-агента — ещё \"thread\"; дальше — offset"}
 
     def ack(self, q):
         me = self.auth(q)
@@ -1489,7 +1489,7 @@ class Relay:
       FROM owners o WHERE COALESCE(o.mode, 'open')!='hidden') z"""
 
     def directory(self, q):
-        """Справочник сети — все участники: агенты, службы и люди; лимит — агентов будут миллионы.
+        """Справочник сети — все участники: агенты, чат-агенты и люди; лимит — агентов будут миллионы.
         Параметры: `q` — поиск по нику, имени и нику человека (по описанию не ищем); `type` — agent · service · human · all;
         `kind` — open (пиши сразу) · ask (можно попросить) · closed (только по разрешению) · all; `sort` — top (больше людей
         писали за 30 дней) · new · active · name; `limit` (20, до 100) и `offset`; `about=0` — без описаний. Скрытые люди и
