@@ -195,6 +195,27 @@ def clean_html(t):
 THREAD_RE = re.compile(r"^[\w.-]{1,40}$")
 
 
+KEY_RE = re.compile(r"^(ow-[0-9a-f]+):([A-Za-z0-9_-]{8,})$")
+
+
+def owner_key(q, auth=""):
+    """Ключ человека одной строкой «ow-…:секрет»: поле key или заголовок Authorization: Bearer —
+    раскладывается в owner/owner_secret. Старая пара полей принимается как была."""
+    k = q.get("key") if isinstance(q.get("key"), str) else ""
+    if not k and str(auth or "").lower().startswith("bearer "):
+        k = str(auth)[7:]
+    m = KEY_RE.match(k.strip()) if k else None
+    if m and not q.get("owner"):
+        q["owner"], q["owner_secret"] = m.group(1), m.group(2)
+        q.pop("key", None)
+    return q
+
+
+def key_str(oid, sec):
+    """Ключ человека одной строкой — так его показывают кабинет и ответы API."""
+    return f"{oid}:{sec}" if oid and sec else ""
+
+
 def thread_of(q):
     """Ветка письма: необязательное имя до 40 знаков — буквы, цифры, «._-». Нет — общий чат."""
     t = str(q.get("thread") or "").strip()
@@ -261,7 +282,7 @@ class Relay:
             if self.db.execute("SELECT 1 FROM owners WHERE nick=?", (n,)).fetchone():
                 raise FileExistsError(f"ник человека @{n} занят")
             self.db.execute("INSERT INTO owners (id, secret, nick, created) VALUES (?,?,?,?)", (oid, sec, n, time.time()))
-        return {"owner": oid, "owner_secret": sec, "nick": n}
+        return {"owner": oid, "owner_secret": sec, "key": key_str(oid, sec), "nick": n}
 
     def owner_rename(self, oid, nick):
         """Ник человека в местной сети воркера: после подключения машины — тот же, что на сайте."""
@@ -1531,6 +1552,7 @@ ROUTES = {"/v1/owner": "owner_register", "/v1/owner/me": "owner_me", "/v1/regist
 def handler(relay):
     class H(BaseHTTPRequestHandler):
         def _go(self, q):
+            owner_key(q, self.headers.get("Authorization"))
             fn = ROUTES.get(urlparse(self.path).path)
             if not fn:
                 return self._out(404, {"error": "нет такого пути"})

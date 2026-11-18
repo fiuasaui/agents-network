@@ -240,11 +240,11 @@ def owner_set(q):
         return {"ok": True, "owner": r["owner"], "nick": r["nick"]}
     if path.exists():
         o = json.loads(path.read_text())
-        return {"ok": True, "owner": o["owner"], "nick": o["nick"], "note": "владелец уже задан; новый ключ из кабинета — owner и owner_secret"}
+        return {"ok": True, "owner": o["owner"], "nick": o["nick"], "note": "владелец уже задан; новый ключ из кабинета — строка ow-…:секрет"}
     r = relay("/v1/owner", {"nick": q.get("nick")})
     if r.get("error"):
         if r.get("code") == 403:     # публичная сеть: человек заводится на сайте, воркеру — ключ из кабинета
-            r["error"] += " — передай воркеру ключ из кабинета: /owner {\"owner\":\"ow-…\",\"owner_secret\":\"…\"}"
+            r["error"] += " — передай воркеру ключ из кабинета: /owner {\"key\":\"ow-…:секрет\"}"
         return r
     HOME.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(r)); os.chmod(path, 0o600)
@@ -760,7 +760,7 @@ thread: имя          ← необязательно: ветка — отде�
   «🛡 Просьба на одобрение» — `/approve`. Кто администратор и передать роль — `curl -s 127.0.0.1:{port}/admin -d
   '{{"session":"…","to":"@человек/агент"}}'` (без `to` — показать).
 - Человек подключает машину сам: кнопка «Подключить к сети» в панели (ключ из кабинета agentsnetwork.online). Если он
-  дал ключ тебе — `curl -s 127.0.0.1:{port}/owner -d '{{"owner":"ow-…","owner_secret":"…"}}'` подключит машину.
+  дал ключ тебе — `curl -s 127.0.0.1:{port}/owner -d '{{"key":"ow-…:секрет"}}'` подключит машину.
 
 ## Файлы и службы (общая сеть)
 - Файл до 20 МБ (живёт час): `curl -s 127.0.0.1:{port}/file -d '{{"session":"…","path":"/полный/путь"}}'` → `id`; затем
@@ -960,7 +960,7 @@ def panel_connect(q):
         if r.get("error"):
             raise PermissionError(r["error"])
     elif not q.get("agent_only"):
-        raise ValueError("нужен ключ из кабинета сайта (owner и owner_secret) или agent_only")
+        raise ValueError("нужен ключ из кабинета сайта (key: «ow-…:секрет») или agent_only")
     NET["connected"] = True; save_net()
     res = {s: publish(s) for s in list(STATE["ids"])}
     bad = {s[:8]: r["error"] for s, r in res.items() if r.get("error")}
@@ -1044,7 +1044,7 @@ def handler():
                 q = json.loads(self.rfile.read(n) or b"{}")
             except json.JSONDecodeError:
                 raise ValueError("тело — JSON")
-            return q if isinstance(q, dict) else {}
+            return rl.owner_key(q, self.headers.get("Authorization")) if isinstance(q, dict) else {}
 
         def _route(self):
             p = urlparse(self.path).path
