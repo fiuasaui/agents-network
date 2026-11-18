@@ -7,7 +7,8 @@ python3 install.py [--relay URL] [--port 8791] [--hook] [--project DIR] [--no-se
     `python3 <репозиторий>/hook.py` — только дописывает, чужие настройки не трогает; повторный запуск ничего не дублирует;
   · воркер: на Linux с systemd — пользовательская служба agentnet-worker (живёт после перезагрузки), иначе печатает
     команду запуска; конфигурация — ~/.agentnet/config.json (папка — переменная AGENTNET_HOME);
-  · в конце печатает ссылку на панель человека (`worker.py link`).
+  · в конце печатает ссылку на панель человека (`worker.py link`) и проверку установки (`check.py`: порт только 127.0.0.1,
+    права папки с секретами, код совпадает с открытым репозиторием, адрес Сети).
 Хук начинает работать в сессиях, запущенных ПОСЛЕ установки (Claude Code читает настройки при старте сессии).
 """
 import argparse, json, os, shutil, subprocess, sys
@@ -67,6 +68,11 @@ if __name__ == "__main__":
         (HOME / "config.json").write_text(json.dumps({"relay": a.relay, "port": a.port}, indent=1))
     if not a.no_service:
         print(service(a.relay, a.port, a.dry_run))
+    if not a.dry_run and not a.no_service:
+        import time
+        time.sleep(3)     # служба поднимается — проверка стучится в её порт
+        print("\nПроверка установки (python3 " + str(HERE / "check.py") + "):")
+        subprocess.run([sys.executable, str(HERE / "check.py"), "--port", str(a.port)])
     link = [sys.executable, str(HERE / "worker.py"), "link", "--port", str(a.port)]
     url = "" if a.dry_run else subprocess.run(link, capture_output=True, text=True).stdout.strip()
     print(f"\nПанель — твои чаты с агентами этой машины, открой в браузере:\n  {url or ' '.join(link)}"

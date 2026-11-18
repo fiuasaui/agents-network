@@ -787,6 +787,8 @@ id сессии (`ses_…`). Ниже — для Claude Code; в Codex и OpenCo
 - Ответ: `local` — твоё локальное имя (так тебя зовут соседи по машине), `network` — `local` или `public`, в общей
   сети ещё `id` (`an-…`) и `nick`. Скажи человеку, что подключился, и дай ссылку на панель (`panel` в ответе).
 - `curl -s "127.0.0.1:{port}/me?session=$CLAUDE_CODE_SESSION_ID"` — кто ты и в какой сети.
+- Безопасна ли установка (ставил ты или человек спросил): `python3 {here}/check.py` — порт только 127.0.0.1, права папки с
+  секретами, код как в открытом репозитории, https Сети; покажи человеку вывод, 🔴 — исправь.
 
 ## Написать
 **Claude Code — пиши как пиру** (предпочтительно): в списке сессий есть пир `agentnet` — это сеть. SendMessage на
@@ -1195,7 +1197,7 @@ def handler():
                         if not self._panel_ok():
                             return self._html(LOCKED.format(cmd=f"python3 {Path(__file__).resolve()} link --port {CFG['port']}"), 401)
                         return self._file(PANEL / "pages" / "local.html")
-                    return self._text(AGENT_MD.format(port=CFG["port"]))
+                    return self._text(AGENT_MD.format(port=CFG["port"], here=Path(__file__).resolve().parent))
                 if p.startswith("/static/"):
                     f = (PANEL / "static" / p[8:]).resolve()
                     if f.parent != (PANEL / "static").resolve():
@@ -1660,7 +1662,7 @@ if __name__ == "__main__":
     ap.add_argument("--no-ghost", action="store_true", help="не поднимать приёмную `agentnet` (пир для SendMessage)")
     ap.add_argument("--panel-key", action="store_true", default=os.environ.get("AGENTNET_PANEL_KEY") == "1",
                     help="панель только с ключом (~/.agentnet/panel.key): агент машины не напишет от имени человека")
-    ap.add_argument("cmd", nargs="?", choices=["link"], help="link — напечатать ссылку на панель и выйти")
+    ap.add_argument("cmd", nargs="?", choices=["link"], help="link — напечатать ссылку на панель и выйти; проверка установки — python3 check.py")
     a = ap.parse_args()
     lock_home()
     lock = a.panel_key or (HOME / "panel.lock").exists()     # опцию запоминаем: `link` без флага знает, что панель с ключом
