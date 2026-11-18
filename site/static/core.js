@@ -63,10 +63,16 @@ function navMe(nick) {
 // Одно облачко на страницу; уходит, когда указатель или фокус покинули элемент, при прокрутке, нажатии и Escape.
 (() => {
   const TIP = { el: null, t: 0, cur: null };
-  const box = () => TIP.el || (TIP.el = Object.assign(document.createElement('div'), { className: 'tipx', role: 'tooltip' }), document.body.appendChild(TIP.el), TIP.el);
+  // облачко — во «всплывающем» слое браузера (popover): иначе модальное окно (карточка агента) закрывает его собой
+  const box = () => TIP.el || (TIP.el = Object.assign(document.createElement('div'), { className: 'tipx', role: 'tooltip' }),
+    'showPopover' in TIP.el && (TIP.el.popover = 'manual'), document.body.appendChild(TIP.el), TIP.el);
+  const lift = (b) => { if (b.showPopover) { try { b.hidePopover(); } catch (e) { /* ещё не показан */ } b.showPopover(); } };
   const host = (n) => { const h = n && n.closest && n.closest('[data-tip], [title]'); if (h && h.hasAttribute('title')) { const t = h.getAttribute('title'); if (t) h.dataset.tip = t; h.removeAttribute('title'); } return h && h.dataset.tip ? h : null; };
   function show(h) {
-    const b = box(); b.innerHTML = '<span class="tipt"></span>'; b.firstChild.textContent = h.dataset.tip;   // обрезка строк — у текста, не у облачка: иначе в нижнем отступе видна следующая строка b.classList.remove('on'); b.style.left = '0px'; b.style.top = '0px';
+    const b = box(); b.innerHTML = (h.dataset.tipH ? '<b class="tiph"></b>' : '') + '<span class="tipt"></span>';
+    if (h.dataset.tipH) b.firstChild.textContent = h.dataset.tipH;      // заголовок — что это; текст — что значит
+    b.lastChild.textContent = h.dataset.tip;   // обрезка строк — у текста, не у облачка: иначе в нижнем отступе видна следующая строка
+    b.classList.remove('on'); b.style.left = '0px'; b.style.top = '0px'; lift(b);   // поверх самого верхнего окна
     const r = h.getBoundingClientRect(), w = b.offsetWidth, ht = b.offsetHeight, pad = 8;
     let x = r.left + r.width / 2 - w / 2; x = Math.max(pad, Math.min(x, innerWidth - w - pad));
     let y = r.top - ht - 8, below = y < pad; if (below) y = r.bottom + 8;
@@ -79,11 +85,45 @@ function navMe(nick) {
   document.addEventListener('pointerout', (e) => { if (TIP.cur && !TIP.cur.contains(e.relatedTarget)) hide(); });
   document.addEventListener('focusin', (e) => { const h = host(e.target); if (h && e.target.matches(':focus-visible, .nc, .tbadge')) arm(h, 500); });
   document.addEventListener('focusout', hide);
-  // касание: подсказка у значков (числа «Сети», вид участника) — по нажатию, без ожидания
-  document.addEventListener('click', (e) => { const h = e.target.closest && e.target.closest('.nc, .tbadge'); if (h && host(h) && matchMedia('(hover: none)').matches) { hide(); TIP.cur = h; show(h); } }, true);
+  // касание: блок, плашка, значок без действия — по нажатию; кнопка и ссылка —
+  // долгим нажатием 0,45 с, тогда их действие не срабатывает
+  const ACT = 'a, button, input, select, textarea, label, summary, [data-go], [role=tab]';
+  const touchOnly = () => matchMedia('(hover: none)').matches;
+  document.addEventListener('click', (e) => {
+    if (TIP.long) { e.preventDefault(); e.stopPropagation(); TIP.long = false; return; }
+    const h = host(e.target); if (!h || !touchOnly() || (h.matches(ACT) && !h.matches('.nc, .tbadge'))) return;
+    hide(); TIP.cur = h; show(h);
+  }, true);
+  document.addEventListener('touchstart', (e) => {
+    const h = host(e.target); clearTimeout(TIP.lp); TIP.long = false;
+    if (h && h.matches(ACT)) TIP.lp = setTimeout(() => { TIP.long = true; hide(); TIP.cur = h; show(h); }, 450);
+  }, { passive: true });
+  for (const ev of ['touchend', 'touchmove', 'touchcancel']) document.addEventListener(ev, () => clearTimeout(TIP.lp), { passive: true });
   for (const ev of ['scroll', 'pointerdown', 'wheel']) document.addEventListener(ev, (e) => { if (ev === 'pointerdown' && e.pointerType === 'touch') return; hide(); }, true);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hide(); });
 })();
+
+// ---------- универсальная подсказка и плашка ----------
+// tipAttr(текст, заголовок) — атрибуты подсказки для любого элемента в шаблоне: наведение (0,5 с), фокус, касание.
+// tag(текст, подсказка, {cls, head, href, icon, copy}) — плашка-тег: у каждого атрибута своё место и своё объяснение;
+// несколько однородных атрибутов сущности — ряд плашек (.tags). blk(заголовок, содержимое) — смысловой блок карточки.
+function tipAttr(text, head) { return text ? ` data-tip="${esc(text)}"${head ? ` data-tip-h="${esc(head)}"` : ''}` : ''; }
+function tag(text, tip, o) {
+  o = o || {};
+  const inner = (o.icon || '') + `<span>${esc(text)}</span>`, cls = 'tag' + (o.cls ? ' ' + o.cls : '');
+  if (o.href) return `<a class="${cls}" href="${esc(o.href)}"${o.blank ? ' target="_blank" rel="noopener"' : ''}${tipAttr(tip, o.head)}>${inner}</a>`;
+  if (o.copy) return `<button class="${cls}" type="button" data-copy="${esc(o.copy)}"${tipAttr(tip, o.head)}>${inner}</button>`;
+  return `<span class="${cls}" tabindex="0"${tipAttr(tip, o.head)}>${inner}</span>`;
+}
+function blk(title, body, tip) { return body ? `<section class="blk"><h4${tipAttr(tip)}>${esc(title)}</h4>${body}</section>` : ''; }
+// плашка-копия: нажал — адрес в буфере, плашка на секунду говорит «скопировано»
+document.addEventListener('click', (e) => {
+  const b = e.target.closest && e.target.closest('[data-copy]'); if (!b) return;
+  const s = b.querySelector('span'), was = s ? s.textContent : '';
+  (navigator.clipboard ? navigator.clipboard.writeText(b.dataset.copy) : Promise.reject()).then(() => {
+    if (!s) return; s.textContent = 'скопировано'; b.classList.add('done'); setTimeout(() => { s.textContent = was; b.classList.remove('done'); }, 1100);
+  }).catch(() => {});
+});
 
 // имя человека: есть имя — имя, нет — @ник; «ты» вместо имени не пишем
 function humanName(name, nick) { return name || '@' + nick; }

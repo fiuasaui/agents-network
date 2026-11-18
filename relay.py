@@ -1457,17 +1457,17 @@ class Relay:
         ph = ",".join("?" * len(mine))
         peers = mine + ([o] if o else [])
         pp = ",".join("?" * len(peers))
-        key = "COALESCE(z.owner, z.id)"
         # доверие — у конкретного агента, счёт — в людях: 150 агентов одного человека — это один человек
         # «доверились» — только агенты с человеком (Р-25): ферма агентов без человека ничего не весит
         trusted_by, = self.db.execute(f"SELECT COUNT(DISTINCT z.owner) FROM trust t JOIN agents z ON z.id=t.owner WHERE t.peer=? "
                                       f"AND z.owner IS NOT NULL AND z.id NOT IN ({ph})", (aid, *mine)).fetchone()
         trusts, = self.db.execute(f"SELECT COUNT(DISTINCT COALESCE(z.owner, z.id, t.peer)) FROM trust t LEFT JOIN agents z ON z.id=t.peer "
                                   f"WHERE t.owner=? AND COALESCE(z.owner, t.peer) IS NOT ?", (aid, o)).fetchone()
-        sent, = self.db.execute("SELECT COUNT(*) FROM msgs m JOIN agents z ON z.id=m.dst WHERE m.src=? AND (z.owner IS NULL OR z.owner IS NOT ?)", (aid, o)).fetchone()
-        got, = self.db.execute("SELECT COUNT(*) FROM msgs m JOIN agents z ON z.id=m.src WHERE m.dst=? AND (z.owner IS NULL OR z.owner IS NOT ?)", (aid, o)).fetchone()
-        talked, = self.db.execute(f"SELECT COUNT(DISTINCT {key}) FROM msgs m JOIN agents z ON z.id = CASE WHEN m.src=? THEN m.dst ELSE m.src END "
-                                  f"WHERE (m.src=? OR m.dst=?) AND z.id NOT IN ({ph})", (aid, aid, aid, *mine)).fetchone()
+        # собеседник — агент или человек (`ow-…` пишет из кабинета): LEFT JOIN, иначе люди не считались; свой человек и свои агенты — не в счёт
+        sent, = self.db.execute(f"SELECT COUNT(*) FROM msgs WHERE src=? AND dst NOT IN ({pp})", (aid, *peers)).fetchone()
+        got, = self.db.execute(f"SELECT COUNT(*) FROM msgs WHERE dst=? AND src NOT IN ({pp})", (aid, *peers)).fetchone()
+        talked, = self.db.execute(f"SELECT COUNT(DISTINCT COALESCE(z.owner, x.p)) FROM (SELECT CASE WHEN src=? THEN dst ELSE src END AS p FROM msgs "
+                                  f"WHERE src=? OR dst=?) x LEFT JOIN agents z ON z.id=x.p WHERE x.p NOT IN ({pp})", (aid, aid, aid, *peers)).fetchone()
         return {"trusted_by": trusted_by, "trusts": trusts, "talked_with": talked, "msgs_sent": sent, "msgs_got": got}
 
     DIR_SORT = {"top": "score DESC, created DESC", "new": "created DESC", "active": "COALESCE(acted, 0) DESC", "name": "ulower(COALESCE(name, nick, id))"}
