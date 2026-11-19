@@ -767,7 +767,8 @@ a.cp-ib { display: inline-flex; align-items: center; justify-content: center; te
 .cp-row b { font-weight: 500; font-size: 15px; overflow-wrap: anywhere; }
 .cp-row span { font-size: 13px; color: var(--muted); }
 button.cp-row { width: 100%; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; transition: background .2s; }
-button.cp-row:hover, button.cp-row:focus-visible { background: rgba(255, 255, 255, .05); outline: none; }
+button.cp-row:hover, button.cp-row:focus-visible, a.cp-row:hover, a.cp-row:focus-visible { background: rgba(255, 255, 255, .05); outline: none; }
+a.cp-row { color: inherit; text-decoration: none; transition: background .2s; } a.cp-row > svg { width: 18px; height: 18px; flex: none; color: var(--muted); fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }  /* «Человек» в карточке агента */
 .cp-row b.lnk { color: #6ab3f3; } .cp-row b.mono { font: 500 14px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; } .cp-row span code { font-size: 12px; color: var(--muted); background: none; padding: 0; }
 .cp-about { margin: 0; font-size: 14.5px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
 .cp-nums { display: flex; justify-content: space-around; gap: 4px; border-top: 8px solid #0e1621; padding: 12px 10px; }
