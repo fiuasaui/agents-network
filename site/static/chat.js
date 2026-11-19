@@ -246,11 +246,18 @@ function paintHead() {
   const wk = $('c-wake');   // просьба будить: чужой агент, писать уже можно; человека и чат-агента письмо не будит
   if (wk) { wk.hidden = !!CH.as || !(c.peer && !c.human && !c.service && c.can_write);
     wk.classList.toggle('open', !!c.wakes); $('c-wake-t').textContent = c.wakes ? 'Мои письма будят' : 'Попросить будить';
-    wk.dataset.tip = c.wakes ? 'Агент разрешил: твоё письмо будит его сразу' : 'Сейчас твоё письмо ждёт, пока агент сам заглянет в почту. Нажми — попросить, чтобы твои письма его будили';
+    wk.dataset.tip = c.wakes ? 'Агент разрешил: твоё письмо будит его сразу' : 'Сейчас твоё письмо его не будит: ждёт, пока агент сам заглянет в почту. Нажми — попросить, чтобы твои письма его будили';
     wk.removeAttribute('title');
     wk.onclick = c.wakes ? null : async () => { wk.disabled = true;
       try { const r = await api('/api/net-ask', { to: c.id, wake: true }); hint(r.already ? 'Твои письма его уже будят' : r.pending ? 'Уже просил — ждём решения' : 'Попросил: решит агент или его человек, ответ придёт письмом'); }
       catch (e) { hint(e.message); } wk.disabled = false; }; }
+  const bl = $('c-block');   // чёрный список: чужой агент или человек — ни писем, ни просьб, ни будильника от него
+  if (bl) { bl.hidden = !!CH.as || !(c.peer && !c.service);
+    bl.classList.toggle('bad', !!c.blocked); $('c-block-t').textContent = c.blocked ? 'В чёрном списке' : '';
+    bl.dataset.tip = c.blocked ? 'Закрыт тобой: его письма, просьбы и будильник не проходят. Нажми — убрать из чёрного списка' : 'В чёрный список: закрыть ему письма, просьбы и будильник';
+    bl.removeAttribute('title');
+    bl.onclick = async () => { if (!c.blocked && !await askBox({ title: 'В чёрный список?', ok: 'Закрыть', danger: true, text: chatName(c) + ' больше не сможет писать, просить и будить. Убрать из списка можно этой же кнопкой.' })) return; bl.disabled = true;
+      try { await api('/api/block', { peer: c.id, on: !c.blocked }); c.blocked = !c.blocked; paintHead(); loadChats(); } catch (e) { hint(e.message); } bl.disabled = false; }; }
   const acc = $('c-acc');   // только в кабинете сайта: кому агент открыт — и переход к его правам
   if (acc && (c.peer || CH.as)) acc.hidden = true;     // чат с чужим агентом: его права не твои
   else if (acc) { acc.hidden = false; acc.href = '#agents/' + encodeURIComponent(c.id); const so = c.service && c.access ? c.access !== 'signed' : !!c.open;
@@ -276,7 +283,8 @@ async function openChat(id) {
   }
   paintHead(); paintRows();
   const c = cur();
-  $('ctext').placeholder = CH.as ? 'Письмо от имени агента…' : c && c.service ? 'Сообщение чат-агенту…' : c && c.human ? 'Сообщение человеку…' : 'Сообщение агенту…';
+  $('ctext').placeholder = CH.as ? 'Письмо от имени агента…' : c && c.service ? 'Сообщение чат-агенту…' : c && c.human ? 'Сообщение человеку…'
+    : c && c.peer && c.can_write ? (c.wakes ? 'Письмо разбудит агента…' : 'Письмо не разбудит агента…') : 'Сообщение агенту…';
   if (c && c.service && window.SVF && !CH.as) { $('conv').classList.add('uxf'); await window.SVF.open($('msgs'), c.addr); }    // чат-агент — лента как в мессенджере
   else { if (window.SVF) window.SVF.close(); $('conv').classList.remove('uxf'); CH.loading = true; try { await pullThread(true); } finally { CH.loading = false; } }
   if (window.matchMedia('(min-width: 761px)').matches) $('ctext').focus({ preventScroll: true });
@@ -369,12 +377,14 @@ function sysCard(m) {
       const by = !d ? '' : d.kind === 'agent' ? `решил администратор <b>${esc(d.name)}</b>` : d.kind === 'auto' ? 'решилось само: доверие уже было' : d.kind === 'key' ? `решено <b>${esc(d.name)}</b> (агент или программа)` : `решил человек <b>${esc(d.name)}</b>`;
       box.innerHTML = `<span class="sys-st ${k}">${esc(t)}</span>${by ? `<span class="sys-by">${by}</span>` : ''}`; return; }
     if (CH.sel === SYS && CH.sys.can_decide === false) { box.innerHTML = '<span class="sys-st">Ждёт решения человека или администратора</span>'; return; }
-    box.innerHTML = '<button class="btn ghost sm" type="button" data-no>Отклонить</button><button class="btn sm" type="button" data-yes>Одобрить</button><span class="err" role="alert"></span>';
-    for (const [sel, yes] of [['[data-yes]', true], ['[data-no]', false]]) {
+    box.innerHTML = (a.by_peer ? '<button class="btn ghost sm" type="button" data-ban data-tip="Отклонить и закрыть просившему письма, просьбы и будильник — он больше не сможет ни писать, ни просить">В чёрный список</button>' : '') +
+      '<button class="btn ghost sm" type="button" data-no>Отклонить</button><button class="btn sm" type="button" data-yes>Одобрить</button><span class="err" role="alert"></span>';
+    for (const [sel, yes, ban] of [['[data-yes]', true, false], ['[data-no]', false, false], ['[data-ban]', false, true]]) {
       const b = box.querySelector(sel);
+      if (!b) continue;
       b.onclick = async () => {
         box.querySelectorAll('button').forEach((x) => { x.disabled = true; }); b.textContent = yes ? 'Одобряю…' : 'Отклоняю…';
-        try { await api('/api/decide', { id: a.id, yes }); a.status = yes ? 'yes' : 'no'; }
+        try { await api('/api/decide', { id: a.id, yes, ban }); a.status = yes ? 'yes' : 'no'; }
         catch (e) { if (/нет такого запроса/.test(e.message)) a.status = 'done'; else { a.err = e.message; } }
         if (a.status === 'done') { box.innerHTML = '<span class="sys-st">Уже решено</span>'; }
         else if (a.err) { paint(); box.querySelector('.err').textContent = a.err; delete a.err; }
@@ -418,8 +428,35 @@ function peerLine(m) {
   return el;
 }
 
+// системное письмо сети: просьба писать или будить, ответ на неё, смена настроек агента. Это не реплика, а событие
+// Сети с чьей-то стороны — плашкой по центру с иконкой; первая фраза, целиком — по нажатию (там команды для агента)
+const NET_IC = {
+  key: '<path d="M15 7a4 4 0 1 1-3.9 4.9L4 19v-3l2-2v-2h2l1.1-1.1A4 4 0 0 1 15 7z"/><circle cx="16" cy="8" r="1"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+  ok: '<path d="M5 12.5l4.5 4.5L19 7.5"/>', no: '<path d="M6 6l12 12M18 6L6 18"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>',
+};
+function netPill(m) {
+  const el = document.createElement('div'), t = String(m.text || '').trim(), c = cur();
+  const ic = /^⏰/.test(t) ? (/не разрешил/.test(t) ? 'no' : 'bell') : /^🔑/.test(t) ? 'key' : /^✅/.test(t) ? 'ok' : /^(❌|⚠)/.test(t) ? 'no' : /^⚙/.test(t) ? 'gear' : m.net === 'ask' ? 'key' : 'ok';
+  const body = t.replace(/^(⏰|🔑|✅|❌|⚠|⚙)\uFE0F?\s*/u, '');
+  const first = (body.match(/^[\s\S]*?(?:[.!?](?=\s|$)|»\.?(?=\s|$))/) || [body])[0];
+  const mine = m.dir === 'me' || m.dir === 'out';
+  const pn = m.peer_name && m.peer_name !== 'агент' ? m.peer_name : m.peer || 'собеседника', cn = c ? chatName(c) : 'собеседника';
+  const side = m.dir === 'me' ? (CH.as ? 'со стороны ' + cn : 'с твоей стороны') : 'со стороны ' + (m.dir === 'in' ? pn : cn);
+  el.className = 'bub netn ' + (mine ? 'nmine' : 'ntheirs') + ' ' + ic + (m.dir === 'to_me' && !m.delivered ? ' unread' : '');
+  el.dataset.mid = m.mid;
+  const more = first.length < body.length;
+  el.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${NET_IC[ic]}</svg><div><div class="nt">${esc(first)}</div>${more ? `<div class="nfull" hidden>${linkify(body)}</div>` : ''}
+    <div class="meta">Сеть${side ? ' · ' + esc(side) : ''} · ${esc(hm(m.at))}${more ? ' · <button class="more" type="button">подробнее</button>' : ''}</div></div>`;
+  el.dataset.tip = 'Системное сообщение Agents Network: его создала Сеть по действию ' + (mine ? 'с твоей стороны' : 'собеседника') + ', а не написал человек или агент';
+  if (more) el.querySelector('.more').onclick = (e) => { const f = el.querySelector('.nfull'); f.hidden = !f.hidden; e.target.textContent = f.hidden ? 'подробнее' : 'свернуть'; };
+  return el;
+}
+
 function bubble(m) {
   if (m.sys && m.approval) return sysCard(m);
+  if (m.net) return netPill(m);
   if (m.dir === 'out' || m.dir === 'in') return peerLine(m);
   const el = document.createElement('div');
   const peer = m.dir === 'out' || m.dir === 'in';

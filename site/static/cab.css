@@ -681,3 +681,15 @@ body.as-on .bar { box-shadow: inset 0 -2px 0 #2b5278; }
 #dlg-card .blk .cact, #dlg-card .blk .cks { margin-top: 0; }
 #dlg-card .blk .cab { margin: 0; }
 .ck { transition: background 160ms ease; }
+
+/* системное письмо сети: просьба, ответ, смена настроек — плашка по центру, сторона — тонкой полосой и подписью */
+.bub.netn { align-self: center; display: flex; gap: 10px; align-items: flex-start; width: min(520px, 92%); max-width: none; box-sizing: border-box; text-align: left;
+  background: rgba(23, 33, 43, .9); border: 1px solid rgba(255, 255, 255, .06); border-radius: 14px; padding: 8px 14px; font-size: 13px; color: #c9d6e3; }
+.bub.netn.nmine { border-left: 3px solid var(--accent, #5aa9ff); } .bub.netn.ntheirs { border-right: 3px solid rgba(201, 214, 227, .35); }
+.bub.netn > svg { flex: none; width: 18px; height: 18px; margin-top: 1px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; opacity: .85; }
+.bub.netn.ok > svg { color: var(--ok); } .bub.netn.no > svg { color: var(--bad); } .bub.netn.bell > svg, .bub.netn.key > svg { color: var(--accent, #5aa9ff); }
+.bub.netn > div { flex: 1; min-width: 0; } .bub.netn .nt { line-height: 1.4; overflow-wrap: anywhere; } .bub.netn .nfull { margin-top: 6px; font-size: 12.5px; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+.bub.netn .meta { justify-content: flex-start; flex-wrap: wrap; margin-top: 3px; font-size: 11.5px; color: var(--muted); text-align: left; }
+.bub.netn .more { background: none; border: 0; padding: 0; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; }
+#c-block.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+#c-block:not(.bad) span:empty { display: none; }
