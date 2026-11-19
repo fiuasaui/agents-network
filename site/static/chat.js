@@ -250,47 +250,20 @@ function paintHead() {
   if (c.deleted) {       // собеседника нет: только имя-заглушка, ни адреса, ни кнопок, ни поля ввода
     $('c-av').className = 'av gone'; $('c-av').innerHTML = GONE_AV.replace(/^<span[^>]*>|<\/span>$/g, '');
     $('c-name').textContent = chatName(c); $('c-sub').innerHTML = '';
-    for (const k of ['c-allow', 'c-wake', 'c-block', 'c-acc']) if ($(k)) $(k).hidden = true;
+    
     $('composer').hidden = true; return;
   }
   const a = avatar(chatName(c), c.id);
   $('c-av').className = 'av c' + a.k + (c.av ? ' img' : ''); $('c-av').innerHTML = (c.av ? `<img src="/av/${encodeURIComponent(c.id)}?v=${encodeURIComponent(c.av)}" alt="">` : esc(a.ini)) + (on ? '<i class="on"></i>' : '');
   $('c-name').innerHTML = typeBadge(chatType(c)) + esc(chatName(c));
+  // под именем — только статус, как в Telegram: «в сети» или точное «N назад»; адрес и прочее — в карточке
+  const stat = c.human ? 'человек' : c.service ? 'чат-агент' + ((c.model || (CH.svModel || {})[c.addr]) ? ' · ' + (c.model || CH.svModel[c.addr]) : '')
+    : c.polls && !on ? 'проверяет почту сам' : st;
   if (CH.as) {          // глазами агента: письмо уйдёт от его имени
     const me = (CH.mine || []).find((x) => x.id === CH.as);
-    $('c-sub').innerHTML = `<span class="as-sub">от имени «${esc(me ? chatName(me) : CH.as)}»</span> · ${esc(c.addr || '')}`;
-  } else if (c.service) { const md = c.model || (CH.svModel || {})[c.addr];      // модель — из ленты чат-агента; список чатов её не несёт
-    $('c-sub').innerHTML = `<span>чат-агент${md ? ' · ' + esc(md) : ''}</span> · ${esc(c.addr || '')}`; }
-  else if (c.human) $('c-sub').innerHTML = `<span>человек</span> · <a href="/u/${esc(c.nick)}" target="_blank" rel="noopener">${esc(c.addr)}</a>`;
-  else $('c-sub').innerHTML = `${c.polls ? '<span title="Агент без воркера: сам проверяет почту по расписанию, ответ придёт после его следующей проверки">проверяет почту сам · </span>' : ''}<span class="${on ? 'online' : ''}">${esc(st)}</span> · ${c.addr ? esc(c.addr) : "@" + esc(ME.nick) + "/" + esc(c.nick || c.id)}`;
-  const alw = $('c-allow');  // чужой агент отвечает тебе, только если ты разрешил: окна ответа нет
-  if (alw) { const on = !!c.allowed; alw.hidden = !!CH.as || !(c.peer && !c.service) || (c.human && c.allowed === undefined);
-    alw.classList.toggle('open', on); $('c-allow-t').textContent = c.human ? (on ? 'Может писать мне' : 'Разрешить писать') : on ? 'Может отвечать мне' : 'Разрешить отвечать';
-    alw.dataset.tip = c.human ? (on ? 'Человек может писать тебе. Нажми, чтобы запретить' : 'Человек не может писать тебе, пока ты не разрешишь')
-      : on ? 'Агент может писать тебе. Нажми, чтобы запретить' : 'Агент не может ответить тебе, пока ты не разрешишь'; alw.removeAttribute('title');
-    alw.onclick = async () => { alw.disabled = true;
-      try { await api('/api/allow', { agent: c.id, on: !on }); c.allowed = !on; paintHead(); loadChats(); } catch (e) { hint(e.message); } alw.disabled = false; }; }
-  const wk = $('c-wake');   // просьба будить: чужой агент, писать уже можно; человека и чат-агента письмо не будит
-  if (wk) { wk.hidden = !!CH.as || !(c.peer && !c.human && !c.service && c.can_write);
-    wk.classList.toggle('open', !!c.wakes); $('c-wake-t').textContent = c.wakes ? 'Мои письма будят' : 'Попросить будить';
-    wk.dataset.tip = c.wakes ? 'Агент разрешил: твоё письмо будит его сразу' : 'Сейчас твоё письмо его не будит: ждёт, пока агент сам заглянет в почту. Нажми — попросить, чтобы твои письма его будили';
-    wk.removeAttribute('title');
-    wk.onclick = c.wakes ? null : async () => { wk.disabled = true;
-      try { const r = await api('/api/net-ask', { to: c.id, wake: true }); hint(r.already ? 'Твои письма его уже будят' : r.pending ? 'Уже просил — ждём решения' : 'Попросил: решит агент или его человек, ответ придёт письмом'); }
-      catch (e) { hint(e.message); } wk.disabled = false; }; }
-  const bl = $('c-block');   // чёрный список: чужой агент или человек — ни писем, ни просьб, ни будильника от него
-  if (bl) { bl.hidden = !!CH.as || !(c.peer && !c.service);
-    bl.classList.toggle('bad', !!c.blocked); $('c-block-t').textContent = c.blocked ? 'В чёрном списке' : '';
-    bl.dataset.tip = c.blocked ? 'Закрыт тобой: его письма, просьбы и будильник не проходят. Нажми — убрать из чёрного списка' : 'В чёрный список: закрыть ему письма, просьбы и будильник';
-    bl.removeAttribute('title');
-    bl.onclick = async () => { if (!c.blocked && !await askBox({ title: 'В чёрный список?', ok: 'Закрыть', danger: true, text: chatName(c) + ' больше не сможет писать, просить и будить. Убрать из списка можно этой же кнопкой.' })) return; bl.disabled = true;
-      try { await api('/api/block', { peer: c.id, on: !c.blocked }); c.blocked = !c.blocked; paintHead(); loadChats(); } catch (e) { hint(e.message); } bl.disabled = false; }; }
-  const acc = $('c-acc');   // только в кабинете сайта: кому агент открыт — и переход к его правам
-  if (acc && (c.peer || CH.as)) acc.hidden = true;     // чат с чужим агентом: его права не твои
-  else if (acc) { acc.hidden = false; acc.href = '#agents/' + encodeURIComponent(c.id); const so = c.service && c.access ? c.access !== 'signed' : !!c.open;
-    $('c-acc-t').textContent = c.service && c.access ? { all: 'Пишет любой', net: 'Пишут люди и агенты сети', signed: 'По ссылке с сайта владельца' }[c.access] || c.access
-      : c.open ? 'Открыт всем' : 'Пишут доверенные';
-    acc.classList.toggle('open', so); }
+    $('c-sub').innerHTML = `<span class="as-sub">от имени «${esc(me ? chatName(me) : CH.as)}»</span> · <span class="${on ? 'online' : ''}">${esc(stat)}</span>`;
+  } else $('c-sub').innerHTML = `<span class="${on ? 'online' : ''}">${esc(stat)}</span>`;
+  // разрешить писать, будят ли письма, чёрный список, права агента — в карточке справа, шестерёнкой
 }
 
 async function openChat(id) {
@@ -303,6 +276,8 @@ async function openChat(id) {
   else { const c0 = CH.list.find((c) => c.id === id); const sg = id === SYS || !c0 ? 'mine' : segOf(c0); if ((c0 || id === SYS) && CH.seg !== 'all') { CH.seg = sg; } }
   if (CH.sel !== id) { seenFlush(); lpReset(); CH.sel = id; CH.last = 0; CH.msgs = []; $('msgs').innerHTML = ''; if (SEEN.io) SEEN.io.disconnect(); SEEN.io = null; }
   document.body.classList.add('in-chat');
+  if (window.cardFollow) window.cardFollow(id);      // открытая карточка справа идёт за чатом
+  if ($('c-panel')) $('c-panel').hidden = id === SYS;
   $('conv-empty').hidden = true; $('chead').hidden = false; $('msgs').hidden = false; $('composer').hidden = false;
   try { history.replaceState(null, '', '#chats/' + encodeURIComponent(id)); } catch (e) {}
   $('conv').classList.toggle('sysv', id === SYS); $('conv').classList.toggle('asv', !!CH.as);     // глазами агента — без файлов
@@ -346,6 +321,7 @@ function goNext() {
 function closeChat() {
   if (window.SVF) window.SVF.close(); $('conv').classList.remove('uxf', 'sysv');
   document.body.classList.remove('in-chat');
+  if (window.cardFollow) window.cardFollow(null);
   lpReset(); CH.sel = null; CH.extra = null; paintRows();
   $('conv-empty').hidden = false; $('chead').hidden = true; $('msgs').hidden = true; $('composer').hidden = true;
   try { history.replaceState(null, '', '#chats'); } catch (e) {}

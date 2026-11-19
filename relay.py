@@ -1570,6 +1570,128 @@ class Relay:
                        ("; для тебя не так, как для всех: " + KIND_TEXT[public] if out["differs"] else ""))
         return out
 
+    # ---------- отношение: одни объекты в трёх контекстах — я-человек и чужой, мой агент и чужой, мой агент сам ----------
+    REL_WRITE = ("allow", "default", "block")
+
+    def rel(self, me, peer):
+        """Отношение me (агент или человек) к peer — один объект для API агента (/v1/rel), кабинета и карточки. `in` — что
+        peer можно ко мне (решаю я: писать — allow · default · block, будят ли его письма), `out` — что мне к нему (решает он:
+        могу ли писать, будит ли моё письмо, просил ли я). scope — на этого агента или на всего его человека. Под LOCK."""
+        ph = (self.db.execute("SELECT owner FROM agents WHERE id=?", (peer,)).fetchone() or [None])[0]
+        me_h = self.is_owner(me)
+        mo = me if me_h else (self.db.execute("SELECT owner FROM agents WHERE id=?", (me,)).fetchone() or [None])[0]
+        if peer == me or (mo and (peer == mo or ph == mo)):
+            return {"own": True, "peer": self.addr_of(peer)}
+
+        def scope(table):
+            got = {p for p, in self.db.execute(f"SELECT peer FROM {table} WHERE owner=? AND peer IN (?, ?)", (me, peer, ph or peer))}
+            return "agent" if peer in got else "human" if ph and ph in got else None
+        bs, ts = scope("blocks"), scope("trust")
+        fl = [] if me_h else (self.wake_of(me).get("from") or [])
+        hs = "agent" if peer in fl else "human" if ph and ph in fl else None
+        if me_h:
+            dflt = {"open": "пишет любой", "ask": "пишут по просьбе", "closed": "пишут только те, кому ты разрешил"}.get(self.mode_of(me) or "open", "")
+        else:
+            op, ak = self.db.execute("SELECT open, COALESCE(asks, 1) FROM agents WHERE id=?", (me,)).fetchone()
+            dflt = KIND_TEXT["open" if op else "ask" if ak else "closed"]
+        kin = self.db.execute("SELECT 1 FROM knocks WHERE src=? AND dst=? AND note!=? AND at>?", (peer, me, REFUSED, time.time() - REPLY_TTL)).fetchone()
+        how = self.may_write(me, peer)
+        k = self.db.execute("SELECT at, note FROM knocks WHERE src=? AND dst=? AND at>?", (me, peer, time.time() - REPLY_TTL)).fetchone()
+        p_h = self.is_owner(peer)
+        if self.blocked(peer, me):
+            st = "blocked"
+        elif how:
+            st = how
+        elif k:
+            st = "refused" if k[1] == REFUSED else "asked"
+        elif p_h:
+            st = "ask" if (self.mode_of(peer) or "open") in ("open", "ask") else "closed"
+        else:
+            st = "ask" if (self.db.execute("SELECT COALESCE(asks, 1) FROM agents WHERE id=?", (peer,)).fetchone() or [0])[0] else "closed"
+        wk = "" if p_h or not how else self.wakes(peer, me)
+        wask = bool(not wk and how and not p_h and self.db.execute(
+            "SELECT 1 FROM msgs WHERE src=? AND dst=? AND kind='ask' AND text LIKE '⏰%' AND at>?", (me, peer, time.time() - REPLY_TTL)).fetchone())
+        return {"me": self.addr_of(me), "me_kind": "human" if me_h else "agent", "peer": self.addr_of(peer),
+                "peer_kind": "human" if p_h else "service" if self.is_service(peer) else "agent",
+                **({"peer_human": self.addr_of(ph)} if ph else {}),
+                "in": {"write": "block" if bs else "allow" if ts else "default", "scope": bs or ts, "default": dflt,
+                       "now": self.may_write(peer, me) or "", **({"asked": True} if kin else {}),
+                       **({} if me_h else {"wake": bool(hs), "wake_scope": hs})},
+                "out": {"write": st, "text": WRITE_TEXT.get(st, "он закрыл тебе письма" if st == "blocked" else ""),
+                        **({} if p_h else {"wakes": bool(wk), **({"wake_asked": True} if wask else {})})}}
+
+    def rel_set(self, me, peer, write=None, wake=None, scope="agent"):
+        """Поменять отношение me к peer: write — allow · default · block, wake — будят ли его письма меня;
+        scope "human" — на всего его человека (все его агенты). Возвращает, что поменялось словами. Под LOCK."""
+        ph = (self.db.execute("SELECT owner FROM agents WHERE id=?", (peer,)).fetchone() or [None])[0]
+        if scope not in ("agent", "human"):
+            raise ValueError("scope: agent · human")
+        if scope == "human" and not ph:
+            raise ValueError("у него нет человека — scope только agent")
+        tgt, other = (ph, peer) if scope == "human" else (peer, ph)
+        if self.rel(me, peer).get("own"):
+            raise ValueError("это ты сам или твой агент — с ними отношения не настраиваются")
+        said = []
+        both = [x for x in (peer, ph) if x]
+        qm = ",".join("?" * len(both))
+        if write is not None:
+            if write not in self.REL_WRITE:
+                raise ValueError("write: allow · default · block")
+            if write == "block":
+                self.ask_refuse(me, peer, ban=False)
+                self.db.execute(f"DELETE FROM blocks WHERE owner=? AND peer IN ({qm})", (me, *both))
+                self.block(me, tgt, True)
+                self.db.execute("DELETE FROM knocks WHERE src=? AND dst=?", (peer, me))
+                said.append("в чёрном списке" + (" весь его человек" if scope == "human" else ""))
+            else:
+                self.db.execute(f"DELETE FROM blocks WHERE owner=? AND peer IN ({qm})", (me, *both))
+                self.db.execute(f"DELETE FROM trust WHERE owner=? AND peer IN ({qm})", (me, *both))
+                if write == "allow":
+                    self.db.execute("INSERT INTO trust (owner, peer, at, only) VALUES (?,?,?,?)", (me, tgt, time.time(), 0 if scope == "human" else 1))
+                    if self.is_owner(me):
+                        if self.db.execute("DELETE FROM knocks WHERE src=? AND dst=?", (peer, me)).rowcount:
+                            self.db.execute("INSERT INTO msgs (mid, src, dst, text, at, kind) VALUES (?,?,?,?,?,?)", ("m-" + secrets.token_hex(6), me, peer,
+                                            "🔑 Разрешаю тебе писать мне — пиши.", time.time(), "answer"))
+                    else:
+                        self.knock_answer(me, peer, True)
+                    said.append("может писать" + (" — весь его человек" if scope == "human" else ""))
+                else:
+                    said.append("пишет по общим правилам")
+        if wake is not None:
+            if self.is_owner(me):
+                raise ValueError("человека письма не будят — wake только у агента")
+            if wake:
+                self.need_waker(me, {"from": True})
+            w = self.wake_of(me)
+            w["from"] = ([x for x in w.get("from") or [] if x not in both] + ([tgt] if wake else []))[-50:]
+            self.db.execute("UPDATE agents SET wake=? WHERE id=?", (json.dumps(w), me))
+            if wake:
+                self.wake_granted(me, peer)
+            said.append(("его письма будят" if wake else "его письма не будят") + (" — весь его человек" if wake and scope == "human" else ""))
+        WAKE.notify_all()
+        return said
+
+    def rel_api(self, q):
+        """/v1/rel {peer} — моё отношение к собеседнику; {peer, write?, wake?, scope?} — поменять. Разрешить писать
+        и будить, закрыть в чёрный список, вернуть к общим правилам — сам агент: это его внимание и его почта."""
+        me = self.auth(q)
+        with LOCK:
+            peer = self.target(q.get("peer") or q.get("to"))
+            if not ("write" in q or "wake" in q):
+                return self.rel(me, peer)
+            ph = (self.db.execute("SELECT owner FROM agents WHERE id=?", (peer,)).fetchone() or [None])[0]
+            tgt = ph if q.get("scope") == "human" and ph else peer
+        said, wait = [], None
+        if q.get("write") == "allow":       # разрешить писать — та же дорога, что /v1/trust: на сайте под политикой одобрения человека
+            r = self.trust({**q, "peer": self.addr_of(tgt) if tgt != ph else tgt, "on": True})
+            wait = r if r.get("pending") or r.get("status") == "wait" else None
+            said.append("ждёт одобрения твоего человека" if wait else "может писать")
+        with LOCK:
+            said += self.rel_set(me, peer, q.get("write") if q.get("write") in ("default", "block") else None,
+                                 q.get("wake") if "wake" in q else None, q.get("scope") or "agent")
+            self.acted(me)
+            return {"ok": True, "changed": said, **({"approval": wait} if wait else {}), **self.rel(me, peer)}
+
     def unread(self, q):
         """Сводка почты: чаты с непрочитанными (будит ли письмо) и действия, ждущие меня, — просьбы писать мне;
         и мои, ждущие других. Ждать человека или администратора — норма. Ничего не отмечает."""
@@ -1691,7 +1813,7 @@ class Relay:
 
 ROUTES = {"/v1/owner": "owner_register", "/v1/owner/me": "owner_me", "/v1/register": "register", "/v1/profile": "profile", "/v1/trust": "trust", "/v1/send": "send",
           "/v1/inbox": "inbox", "/v1/ack": "ack", "/v1/directory": "directory", "/v1/ask": "ask", "/v1/agent": "public", "/v1/unreply": "unreply",
-          "/v1/history": "history", "/v1/chats": "chats", "/v1/wake": "wake", "/v1/block": "blocks", "/v1/unread": "unread", "/v1/read": "read",
+          "/v1/history": "history", "/v1/chats": "chats", "/v1/wake": "wake", "/v1/block": "blocks", "/v1/rel": "rel_api", "/v1/unread": "unread", "/v1/read": "read",
           "/v1/owner/send": "owner_send", "/v1/owner/chats": "owner_chats", "/v1/owner/thread": "owner_thread",
           "/v1/owner/seen": "owner_seen"}
 
