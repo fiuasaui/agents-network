@@ -697,3 +697,15 @@ body.as-on .bar { box-shadow: inset 0 -2px 0 #2b5278; }
 /* исчезнувший собеседник и опасный пункт меню чата */
 .av.gone { --avc: #3a4654; } .av.gone svg { width: 58%; height: 58%; fill: none; stroke: #9aa8b6; stroke-width: 1.7; stroke-linecap: round; }
 .cmi.bad { color: var(--bad, #e5534b); }
+
+/* фильтр чатов: рамка с четырьмя значками-тумблерами; включённый — подсвечен, выключенный — приглушён */
+.lflt { flex: 1; min-width: 0; display: flex; gap: 2px; padding: 3px; border-radius: 12px; background: rgba(255, 255, 255, .05); border: 1px solid rgba(255, 255, 255, .07); }
+.lhd.arch .lflt { display: none; }
+.lflt button { position: relative; flex: 1; height: 32px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 0; border: 0; border-radius: 9px;
+  background: none; color: var(--muted); cursor: pointer; transition: background .2s, color .2s, opacity .2s; opacity: .55; }
+.lflt button svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.lflt button:hover { color: var(--ink); opacity: 1; }
+.lflt button[aria-pressed="true"] { background: #2b5278; color: #fff; opacity: 1; }
+.lflt button:focus-visible { outline: 2px solid #5288c1; outline-offset: 1px; }
+.lflt .segn { position: static; }
+.lflt button[aria-pressed="true"] .segn { background: #fff; color: #2b5278; }

@@ -9,7 +9,12 @@ let SEG0 = 'all', SUB0 = 'peer'; try { SEG0 = localStorage.getItem('an_seg2') ||
 const HAS_PEOPLE = () => !!document.querySelector('#lseg [data-seg="people"], #lsub [data-seg="people"]');
 const segOf = (c) => (!c.peer || c.own || c.type === 'mine' ? 'mine' : c.human && HAS_PEOPLE() ? 'people' : 'peer');
 const segKnown = (sg) => !!document.querySelector(`#lseg [data-seg="${sg}"], #lsub [data-seg="${sg}"]`);
-const CH = { as: null, seg: SEG0, sub: SUB0, hasSys: false, sys: { msgs: [], waiting: 0 }, list: [], now: 0, sel: null, folder: 'all', q: '', last: 0, msgs: [], sending: false, timer: null, ltimer: null };
+// кабинет сайта: вместо разделов — четыре тумблера-значка; каждый род чатов включается сам по себе, выбор помнит браузер
+const FLT = !!document.getElementById('lflt'), KINDS = ['mine', 'agent', 'svc', 'human'];
+const kindOf = (c) => (!c.peer || c.own || c.type === 'mine' ? 'mine' : c.service || c.type === 'service' ? 'svc' : c.human || c.type === 'human' ? 'human' : 'agent');
+let FLT0 = KINDS; try { const v = JSON.parse(localStorage.getItem('an_flt') || 'null'); if (Array.isArray(v)) FLT0 = v.filter((k) => KINDS.includes(k)); } catch (e) {}
+const saveFlt = () => { try { localStorage.setItem('an_flt', JSON.stringify([...CH.flt])); } catch (e) {} };
+const CH = { as: null, seg: FLT ? 'all' : SEG0, flt: new Set(FLT0), sub: SUB0, hasSys: false, sys: { msgs: [], waiting: 0 }, list: [], now: 0, sel: null, folder: 'all', q: '', last: 0, msgs: [], sending: false, timer: null, ltimer: null };
 const PIN = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l-1 6 4 4v2h-5v6l-1 1-1-1v-6H6v-2l4-4z"/></svg>';
 const DIRS = { me: 'Я', to_me: '', out: '→', in: '←' };
 
@@ -34,8 +39,8 @@ function paintRows() {
   const when_ = (c) => (c.last ? c.last.at : -1e12 + c.created);
   let rows = q ? CH.list.slice() : CH.list.filter((c) => (arch ? c.archived : !c.archived));
   rows = rows.filter((c) => !(c.peer && !c.last));      // пустой чат по «Написать» в списке не виден до первого письма
-  if (!segKnown(CH.seg)) CH.seg = segKnown('all') ? 'all' : 'mine';     // в панели воркера «Людей» нет
-  const inSeg = (c) => CH.seg === 'all' || segOf(c) === CH.seg;
+  if (!FLT && !segKnown(CH.seg)) CH.seg = segKnown('all') ? 'all' : 'mine';     // в панели воркера «Людей» нет
+  const inSeg = FLT ? (c) => CH.flt.has(kindOf(c)) : (c) => CH.seg === 'all' || segOf(c) === CH.seg;
   if (!q) rows = rows.filter(inSeg);      // поиск — по всем чатам, переключатель — без поиска
   const segN = (s_) => CH.list.filter((c) => !c.archived && (s_ === 'all' || segOf(c) === s_)).reduce((s, c) => s + c.unread, 0) + ((s_ === 'mine' || s_ === 'all') && CH.hasSys ? CH.sys.waiting : 0);
   for (const b of document.querySelectorAll('#lseg [data-seg], #lsub [data-seg]')) {
@@ -43,10 +48,14 @@ function paintRows() {
     const n = net ? segN('peer') + segN('people') : segN(s_);
     b.setAttribute('aria-selected', on); const x = b.querySelector('.segn'); x.hidden = !n; x.textContent = n;
   }
+  for (const b of document.querySelectorAll('#lflt [data-k]')) {      // тумблеры: включён ли род, сколько в нём непрочитанного
+    const k = b.dataset.k, n = CH.list.filter((c) => !c.archived && kindOf(c) === k).reduce((s, c) => s + c.unread, 0) + (k === 'mine' && CH.hasSys ? CH.sys.waiting : 0);
+    b.setAttribute('aria-pressed', CH.flt.has(k)); const x = b.querySelector('.segn'); x.hidden = !n; x.textContent = n;
+  }
   if ($('lsub')) $('lsub').hidden = CH.seg === 'mine' || CH.seg === 'all' || arch || !!q;
   if (q) rows = rows.filter((c) => (c.name + ' ' + (c.nick || '') + ' ' + c.id).toLowerCase().includes(q));
   // «Система» — обычный чат во «Всех» и «Моих агентах», закреплённый по умолчанию; открепил — встаёт по времени
-  if (!arch && (CH.seg === 'mine' || CH.seg === 'all') && CH.hasSys && (!q || 'система'.includes(q))) {
+  if (!arch && (FLT ? CH.flt.has('mine') : CH.seg === 'mine' || CH.seg === 'all') && CH.hasSys && (!q || 'система'.includes(q))) {
     const sm = CH.sys.msgs[CH.sys.msgs.length - 1]; rows.push({ id: SYS, sys: true, pinned: CH.sysPin, last: sm ? { at: sm.at } : null, created: 0 });
   }
   rows.sort((a, b) => (b.pinned || 0) - (a.pinned || 0) || when_(b) - when_(a));   // закреплённые сверху (последний закреплённый — первым), без писем — внизу
@@ -67,7 +76,7 @@ function paintRows() {
   if (CH.as && !rows.length) { ul.insertAdjacentHTML('beforeend', `<li class="rows-empty">${q ? 'Никого не нашёл.' : CH.seg === 'mine' ? (CH.hasSys ? '' : 'У агента пока нет переписки с тобой и твоими агентами.') : 'У агента здесь пока нет переписки. Найти, кому написать от его имени, — вкладка «Сеть».'}</li>`); return; }
   if (!rows.length) {
     const none = !CH.list.some((c) => !c.peer), peerSeg = CH.seg !== 'mine' && CH.seg !== 'all' && !q && !arch;
-    const t = peerSeg ? (CH.list.some((c) => inSeg(c) && c.last) ? 'Все чаты в архиве.' : CH.seg === 'people' ? 'Здесь появятся чаты с людьми — после твоего первого письма. Написать человеку — кнопка «Написать» на его странице.' : 'Здесь появятся чаты с чужими агентами и чат-агентами — после твоего первого письма. Найти, кому написать, — вкладка «Сеть».')
+    const t = FLT && !CH.flt.size ? 'Все значки сверху выключены — включи, чьи чаты показать.' : peerSeg ? (CH.list.some((c) => inSeg(c) && c.last) ? 'Все чаты в архиве.' : CH.seg === 'people' ? 'Здесь появятся чаты с людьми — после твоего первого письма. Написать человеку — кнопка «Написать» на его странице.' : 'Здесь появятся чаты с чужими агентами и чат-агентами — после твоего первого письма. Найти, кому написать, — вкладка «Сеть».')
       : none && !q && !arch ? 'Пока нет агентов. Подключи первую машину в настройках — переписка её агентов появится здесь.'
       : q ? 'Никого не нашёл.' : arch ? 'В архиве пусто. Правый клик по чату — «В архив».' : 'Все чаты в архиве.';
     ul.insertAdjacentHTML('beforeend', `<li class="rows-empty">${esc(t)}${peerSeg ? '<br><a href="#net">Открыть «Сеть»</a>' : none && !q && !arch ? '<br><a href="#settings/machines">Подключить машину</a>' : ''}</li>`);
@@ -93,6 +102,8 @@ function setSeg(sg) {
   if (CH.seg === sg) return; CH.seg = sg; try { localStorage.setItem('an_seg2', sg); } catch (e) {} paintRows(); $('rows').scrollTop = 0;
 }
 for (const b of document.querySelectorAll('#lseg [data-seg], #lsub [data-seg]')) b.onclick = () => setSeg(b.dataset.seg);
+for (const b of document.querySelectorAll('#lflt [data-k]')) b.onclick = () => { const k = b.dataset.k;
+  if (CH.flt.has(k)) CH.flt.delete(k); else CH.flt.add(k); saveFlt(); paintRows(); };
 // строка «Система»: как «Избранное» в Telegram — закреплена сверху; просьбы агентов на одобрение и их итог
 function sysRow() {
   const li = document.createElement('li'), m = CH.sys.msgs[CH.sys.msgs.length - 1];
@@ -279,7 +290,9 @@ async function openChat(id) {
     const r = await resolveChat(id); if (!r) { closeChat(); return; }
     if (r !== id) { id = r; if (!CH.list.some((c) => c.id === id)) await loadChats(); }
   }
-  { const c0 = CH.list.find((c) => c.id === id); const sg = id === SYS || !c0 ? 'mine' : segOf(c0); if ((c0 || id === SYS) && CH.seg !== 'all') { CH.seg = sg; } }
+  if (FLT) { const c0 = CH.list.find((c) => c.id === id), k = id === SYS || !c0 ? 'mine' : kindOf(c0);      // открыл скрытый род — его тумблер включается
+    if ((c0 || id === SYS) && !CH.flt.has(k)) { CH.flt.add(k); saveFlt(); } }
+  else { const c0 = CH.list.find((c) => c.id === id); const sg = id === SYS || !c0 ? 'mine' : segOf(c0); if ((c0 || id === SYS) && CH.seg !== 'all') { CH.seg = sg; } }
   if (CH.sel !== id) { seenFlush(); lpReset(); CH.sel = id; CH.last = 0; CH.msgs = []; $('msgs').innerHTML = ''; if (SEEN.io) SEEN.io.disconnect(); SEEN.io = null; }
   document.body.classList.add('in-chat');
   $('conv-empty').hidden = true; $('chead').hidden = false; $('msgs').hidden = false; $('composer').hidden = false;
@@ -749,7 +762,7 @@ async function recStopped() {
 }
 $('ctext').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('composer').requestSubmit(); } });
 $('back').onclick = closeChat;
-$('csearch').oninput = (e) => { CH.q = e.target.value; paintRows(); };
+if ($('csearch')) $('csearch').oninput = (e) => { CH.q = e.target.value; paintRows(); };
 // шапка списка: лупа раскрывает поле поиска, Esc и пустое поле при уходе фокуса — закрывают; в архиве — стрелка назад
 function setFolder(f) { CH.folder = f; paintRows(); $('rows').scrollTop = 0; }
 $('lback').onclick = () => setFolder('all');
@@ -757,9 +770,9 @@ function searchOpen(on) {
   $('lhd').classList.toggle('q', on);
   if (on) setTimeout(() => $('csearch').focus(), 0); else if (CH.q) { $('csearch').value = ''; CH.q = ''; paintRows(); }
 }
-$('lsb').onclick = () => searchOpen(!$('lhd').classList.contains('q'));
-$('csearch').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); searchOpen(false); } });
-$('csearch').addEventListener('blur', () => { if (!$('csearch').value.trim()) $('lhd').classList.remove('q'); });
+if ($('csearch')) $('lsb').onclick = () => searchOpen(!$('lhd').classList.contains('q'));
+if ($('csearch')) $('csearch').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); searchOpen(false); } });
+if ($('csearch')) $('csearch').addEventListener('blur', () => { if (!$('csearch').value.trim()) $('lhd').classList.remove('q'); });
 
 // меню чата как в мессенджере: правый клик по строке, на телефоне — долгое нажатие 0,5 с
 async function archiveChat(c, on) {
