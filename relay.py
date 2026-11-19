@@ -1361,6 +1361,23 @@ class Relay:
             raise LookupError("нет человека " + t)
         return r[0]
 
+    GONE = "Удалённый пользователь"     # чат с исчезнувшим собеседником: без имени, ника и сведений, как в Telegram
+
+    def gone(self, x):
+        """Собеседника больше нет в Сети: человек или агент удалён (в будущем — и забанен). Под LOCK."""
+        x = str(x or "")
+        return x[:3] in ("an-", "ow-") and not self.db.execute("SELECT 1 FROM agents WHERE id=? UNION ALL SELECT 1 FROM owners WHERE id=?", (x, x)).fetchone()
+
+    def resolve_peer(self, agent):
+        """Собеседник чата человека: агент, человек или исчезнувший (по ID, если переписка с ним осталась). Под LOCK."""
+        a = str(agent or "")
+        try:
+            return self.resolve_human(a) if a.startswith("ow-") else self.resolve(a)
+        except LookupError:
+            if self.gone(a):
+                return a
+            raise
+
     def peer_chats(self, owner):
         """Чаты человека с чужими агентами и с людьми: все, с кем он сам переписывался. Под LOCK."""
         out = []
@@ -1386,6 +1403,20 @@ class Relay:
             out.append({"id": aid, "peer": True, "type": "service" if self.is_service(aid) else "agent", "allowed": self.trusts(owner, aid), "nick": nick, "name": name, "about": about, "open": bool(op), "seen": seen,
                         "created": created, "av": av, "addr": self.addr_of(aid), "unread": unread,
                         "can_write": bool(self.may_write(owner, aid)), "wakes": self.wakes(aid, owner) == "from", "blocked": self.blocked(owner, aid),
+                        "last": ({"dir": "me" if last[0] == owner else "to_me", "at": last[2],
+                                  "text": (" ".join(TAGS.sub(" ", last[1]).split()) if last[3] == "html" else last[1])[:200]} if last else None)})
+        # собеседник исчез: переписка осталась — чат «Удалённый пользователь», без имени, ника и сведений
+        for gid, first in self.db.execute(
+                "SELECT x, MIN(at) FROM (SELECT dst x, at FROM msgs WHERE src=? UNION ALL SELECT src, at FROM msgs WHERE dst=?) "
+                "WHERE (x LIKE 'an-%' OR x LIKE 'ow-%') AND x NOT IN (SELECT id FROM agents) AND x NOT IN (SELECT id FROM owners) GROUP BY x",
+                (owner, owner)).fetchall():
+            last = self.db.execute("SELECT src, text, at, fmt FROM msgs WHERE (src=? AND dst=?) OR (src=? AND dst=?) ORDER BY at DESC LIMIT 1",
+                                   (owner, gid, gid, owner)).fetchone()
+            unread, = self.db.execute("SELECT COUNT(*) FROM msgs WHERE src=? AND dst=? AND acked IS NULL", (gid, owner)).fetchone()
+            hum = gid.startswith("ow-")
+            out.append({"id": gid, "peer": True, "deleted": True, "type": "human" if hum else "agent", **({"human": True} if hum else {}),
+                        "allowed": False, "blocked": False, "can_write": False, "nick": None, "name": self.GONE, "about": "", "open": False,
+                        "seen": None, "created": first, "av": None, "addr": "", "unread": unread,
                         "last": ({"dir": "me" if last[0] == owner else "to_me", "at": last[2],
                                   "text": (" ".join(TAGS.sub(" ", last[1]).split()) if last[3] == "html" else last[1])[:200]} if last else None)})
         return out
@@ -1445,7 +1476,7 @@ class Relay:
 
     def peer_thread(self, owner, agent, after=0, limit=200):
         """Переписка человека с чужим агентом или с человеком: только их письма друг другу. Под LOCK."""
-        aid = self.resolve_human(agent) if str(agent or "").startswith("ow-") else self.resolve(agent)
+        aid = self.resolve_peer(agent)
         rows = self.db.execute("SELECT m.mid, m.src, m.text, m.reply_to, m.at, m.acked, m.fmt, m.files, b.nick, m.via, m.kind FROM msgs m LEFT JOIN owners b ON b.id=m.by "
                                "WHERE ((m.src=? AND m.dst=?) OR (m.src=? AND m.dst=?)) AND m.at>? "
                                "ORDER BY m.at DESC LIMIT ?", (owner, aid, aid, owner, float(after or 0), int(limit))).fetchall()
@@ -1461,7 +1492,7 @@ class Relay:
             try:
                 aid, _ = self.own_agent(owner, agent)
             except LookupError:
-                aid = self.resolve_human(agent) if str(agent or "").startswith("ow-") else self.resolve(agent)
+                aid = self.resolve_peer(agent)
             n = 0
             for m in [str(x) for x in (mids or [])][:200]:
                 n += self.db.execute("UPDATE msgs SET acked=? WHERE mid=? AND src=? AND dst=? AND acked IS NULL", (time.time(), m, aid, owner)).rowcount

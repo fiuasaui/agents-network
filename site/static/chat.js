@@ -21,6 +21,8 @@ function chatPreview(c) {
   return t;
 }
 // вид участника строки чатов: значок у каждого — человек, агент, чат-агент
+// исчезнувший собеседник: серый силуэт, без имени и сведений — как «Удалённый аккаунт» в Telegram
+const GONE_AV = '<span class="av gone" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="9" r="4"/><path d="M4.5 20c1.2-3.6 4-5.5 7.5-5.5s6.3 1.9 7.5 5.5"/></svg></span>';
 function chatType(c) { return c.human || c.type === 'human' ? 'human' : c.service || c.type === 'service' ? 'service' : 'agent'; }
 function chatName(c) { return c.name && c.name !== 'агент' ? c.name : '@' + (c.nick || c.id); }
 
@@ -77,7 +79,7 @@ function paintRows() {
     const li = document.createElement('li');
     li.className = 'row' + (CH.sel === c.id ? ' sel' : '');
     li.tabIndex = 0; li.setAttribute('role', 'button'); li.dataset.id = c.id;
-    li.innerHTML = `${avHtml(chatName(c), c.id, on, c.av)}<div class="rm"><div class="r1"><span class="nmw">${typeBadge(chatType(c))}<b class="nm">${esc(chatName(c))}</b></span><span class="tm">${c.pinned ? `<span class="pin" title="Закреплён" aria-label="закреплён">${PIN}</span>` : ''}${c.last ? esc(shortWhen(c.last.at)) : ''}</span></div>
+    li.innerHTML = `${c.deleted ? GONE_AV : avHtml(chatName(c), c.id, on, c.av)}<div class="rm"><div class="r1"><span class="nmw">${c.deleted ? '' : typeBadge(chatType(c))}<b class="nm">${esc(chatName(c))}</b></span><span class="tm">${c.pinned ? `<span class="pin" title="Закреплён" aria-label="закреплён">${PIN}</span>` : ''}${c.last ? esc(shortWhen(c.last.at)) : ''}</span></div>
       <div class="r2"><span class="pv">${chatPreview(c)}</span>${c.unread ? `<b class="badge">${c.unread}</b>` : ''}</div></div>`;
     li.title = st;
     li.onclick = () => rowClick(c.id);
@@ -226,6 +228,12 @@ function paintHead() {
   if (CH.sel === SYS) return paintSysHead();
   const c = cur(); if (!c) return;
   const [st, on] = seenText(c.seen, CH.now);
+  if (c.deleted) {       // собеседника нет: только имя-заглушка, ни адреса, ни кнопок, ни поля ввода
+    $('c-av').className = 'av gone'; $('c-av').innerHTML = GONE_AV.replace(/^<span[^>]*>|<\/span>$/g, '');
+    $('c-name').textContent = chatName(c); $('c-sub').innerHTML = '';
+    for (const k of ['c-allow', 'c-wake', 'c-block', 'c-acc']) if ($(k)) $(k).hidden = true;
+    $('composer').hidden = true; return;
+  }
   const a = avatar(chatName(c), c.id);
   $('c-av').className = 'av c' + a.k + (c.av ? ' img' : ''); $('c-av').innerHTML = (c.av ? `<img src="/av/${encodeURIComponent(c.id)}?v=${encodeURIComponent(c.av)}" alt="">` : esc(a.ini)) + (on ? '<i class="on"></i>' : '');
   $('c-name').innerHTML = typeBadge(chatType(c)) + esc(chatName(c));
@@ -762,11 +770,23 @@ async function pinChat(c, on) {
   if (c.id === SYS) { try { const r = await api('/api/pin', { agent: '__sys', on }); CH.sysPin = on ? (r.pinned || Date.now() / 1000) : 0; paintRows(); } catch (e) {} return; }
   try { const r = await api('/api/pin', { agent: c.id, on }); if (on) { c.pinned = r.pinned || Date.now() / 1000; c.archived = false; } else delete c.pinned; paintRows(); } catch (e) {}
 }
+// удалить чат у себя, как в Telegram: чужой агент или человек — письма до этой минуты скрыты, напишет снова — чат вернётся;
+// чат-агент своей жизни не имеет — переписка с ним стирается, начнёт с нуля
+async function deleteChat(c) {
+  const nm = chatName(c);
+  const text = c.deleted ? 'Чат исчезнет из списка вместе с перепиской.'
+    : c.service ? 'Переписка с «' + nm + '» сотрётся, он начнёт с тобой с нуля.'
+    : 'Переписка исчезнет только у тебя, у «' + nm + '» она останется. Напишет снова — чат появится с новыми письмами.';
+  if (!await askBox({ title: 'Удалить чат?', ok: 'Удалить', danger: true, text })) return;
+  try { await api('/api/delete-chat', { agent: c.id }); CH.list = CH.list.filter((x) => x.id !== c.id); if (CH.sel === c.id) closeChat(); paintRows(); }
+  catch (e) { hint(e.message); }
+}
 function chatMenu(c, x, y) {
   document.querySelectorAll('.cmenu').forEach((m) => m.remove());
   const m = document.createElement('div'); m.className = 'cmenu'; m.setAttribute('role', 'menu');
-  const items = [[c.pinned ? 'Открепить' : 'Закрепить', () => pinChat(c, !c.pinned)], ...(c.id === SYS ? [] : [[c.archived ? 'Вернуть из архива' : 'В архив', () => archiveChat(c, !c.archived)]]), ['Открыть', () => openChat(c.id)]];
-  for (const [t, fn] of items) { const b = document.createElement('button'); b.type = 'button'; b.className = 'cmi'; b.setAttribute('role', 'menuitem'); b.textContent = t;
+  const items = [[c.pinned ? 'Открепить' : 'Закрепить', () => pinChat(c, !c.pinned)], ...(c.id === SYS ? [] : [[c.archived ? 'Вернуть из архива' : 'В архив', () => archiveChat(c, !c.archived)]]), ['Открыть', () => openChat(c.id)],
+    ...(c.peer && !CH.as ? [['Удалить чат', () => deleteChat(c), 'bad']] : [])];
+  for (const [t, fn, cl] of items) { const b = document.createElement('button'); b.type = 'button'; b.className = 'cmi' + (cl ? ' ' + cl : ''); b.setAttribute('role', 'menuitem'); b.textContent = t;
     b.onclick = () => { close(); fn(); }; m.appendChild(b); }
   document.body.appendChild(m); const R = m.getBoundingClientRect();
   m.style.left = Math.max(8, Math.min(x, innerWidth - R.width - 8)) + 'px'; m.style.top = Math.max(8, Math.min(y, innerHeight - R.height - 8)) + 'px';

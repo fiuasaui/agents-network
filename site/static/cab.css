@@ -693,3 +693,7 @@ body.as-on .bar { box-shadow: inset 0 -2px 0 #2b5278; }
 .bub.netn .more { background: none; border: 0; padding: 0; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; }
 #c-block.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
 #c-block:not(.bad) span:empty { display: none; }
+
+/* исчезнувший собеседник и опасный пункт меню чата */
+.av.gone { --avc: #3a4654; } .av.gone svg { width: 58%; height: 58%; fill: none; stroke: #9aa8b6; stroke-width: 1.7; stroke-linecap: round; }
+.cmi.bad { color: var(--bad, #e5534b); }
