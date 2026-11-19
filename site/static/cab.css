@@ -828,10 +828,13 @@ a.cp-row { color: inherit; text-decoration: none; transition: background .2s; } 
 .acc-ed { padding: 4px 16px 14px 28px; display: flex; flex-direction: column; gap: 6px; animation: accin .25s ease-out; }
 .acc-ed .cp-lbl { margin: 6px 0 0; }
 @keyframes accin { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
-.acc-ex { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-.acc-ex li { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 10px; font-size: 14px; }
-.acc-ex li:hover { background: rgba(255, 255, 255, .04); }
-.acc-ex li > span { flex: 1; min-width: 0; overflow-wrap: anywhere; } .acc-ex i { font-style: normal; font-size: 12.5px; color: var(--muted); }
+.acc-q { width: 100%; margin: 6px 0 4px; padding: 10px 14px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, .1); background: rgba(255, 255, 255, .04); color: inherit; font: inherit; font-size: 14px; transition: border-color .2s, background .2s; }
+.acc-q:focus { outline: none; border-color: rgba(82, 136, 193, .6); background: rgba(255, 255, 255, .06); }
+.acc-found { list-style: none; margin: 0 0 6px; padding: 4px; border-radius: 12px; background: rgba(255, 255, 255, .03); animation: accin .2s ease-out; }
+.acc-peers { margin-top: 8px; } .acc-peers .acc-row.d0 + .acc-row.d0 { margin-top: 6px; }
+.acc-chip em { font-style: normal; opacity: .75; }
+.acc-lv { align-self: flex-start; max-width: 100%; padding: 7px 10px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, .12); background: rgba(255, 255, 255, .05); color: inherit; font: inherit; font-size: 13.5px; }
+.acc-lv option { background: #1b2433; }
 @media (max-width: 640px) {
   .acc-hd { flex-wrap: wrap; row-gap: 6px; } .acc-nm { flex-basis: calc(100% - 20px); } .acc-chips { max-width: 100%; justify-content: flex-start; }
   .acc-row.d2 > .acc-hd { padding-left: 36px; } .acc-ed { padding-left: 16px; }
@@ -839,6 +842,8 @@ a.cp-row { color: inherit; text-decoration: none; transition: background .2s; } 
 
 /* «Доступ»: ряд ступеней без «как выше», крестик «сбросить» сбоку, откуда значение — строкой ниже */
 .acc-segw { display: flex; align-items: center; gap: 6px; } .acc-segw .cp-seg { flex: 1; min-width: 0; }
+.acc-segw .cp-seg button { overflow: hidden; text-overflow: ellipsis; padding: 0 4px; }
+.cp-seg button[data-pf="reach"][data-v="block"][aria-checked="true"]:not(.inh *) { background: #6b2b2b; }
 .acc-x svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 .acc-from { margin: 4px 0 0; font-size: 12.5px; color: var(--muted); }
 .acc-sws { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 6px; } .acc-ed .cp-sw { padding-left: 0; padding-right: 0; }

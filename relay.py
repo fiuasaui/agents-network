@@ -2075,7 +2075,7 @@ class Relay:
         brief = str(q.get("about", "1")) in ("0", "false", "no")
         out = []
         for i, name, about, nick, onick, k, seen, created, av, acted, t, oid, score in rows:
-            out.append({"id": i, "type": t, "nick": nick, "owner": onick,
+            out.append({"id": i, "type": t, "nick": nick, "owner": onick, **({"oid": oid} if oid else {}),
                         "address": f"@{onick}/{nick}" if onick and nick else f"@{nick}" if nick else i,
                         "name": name or (("@" + nick) if t == "human" else nick), **({} if brief or t == "human" else {"about": about}),
                         "open": k == "open", "kind": k, "people": score, "seen": seen, **({"acted": acted} if acted else {}), **({"av": av} if av else {})})
