@@ -140,6 +140,16 @@ const numIco = (k) => `<svg viewBox="0 0 24 24" aria-hidden="true">${NUM_IC[k] |
 // атрибут со значком: значок + фраза (в фразе <b> — для числа), та же плашка, что у цифр
 function attrChip(k, html, tip, head) { return `<span class="cp-n cp-at" tabindex="0"${tipAttr(tip, head)}>${numIco(k)}<span>${html}</span></span>`; }
 function numChip(k, v, tip, head, label) { return `<span class="cp-n" tabindex="0"${tipAttr(tip, head)}>${numIco(k)}<b>${v}</b>${label ? `<i>${esc(label)}</i>` : ''}</span>`; }
+// ошибка действия — рядом с тем, что нажали: красная строка сразу под переключателем или кнопкой, а не вверху
+// раздела, куда не смотрят. target — элемент или селектор (после перерисовки элемент новый — ищем заново).
+function errAt(target, msg) {
+  const el = typeof target === 'string' ? document.querySelector(target) : target;
+  if (!el) { if (typeof hint === 'function') hint(msg); return; }
+  const box = el.closest('.acc-segw, .acc-sws') || el.closest('.cp-seg, .cp-sw, .cp-row, .cp-acts') || el;   // внешняя обёртка ряда, иначе строка встанет в ряд
+  box.parentNode.querySelectorAll(':scope > .err-near').forEach((x) => x.remove());
+  const p = document.createElement('p'); p.className = 'err-near'; p.setAttribute('role', 'alert'); p.textContent = msg;
+  box.after(p); p.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
 function tipAttr(text, head) { return text ? ` data-tip="${esc(text)}"${head ? ` data-tip-h="${esc(head)}"` : ''}` : ''; }
 function tag(text, tip, o) {
   o = o || {};
@@ -264,6 +274,15 @@ async function dangerSwitch(cb, o, apply) {
 // окно подтверждения посередине экрана с затемнением — одно на весь сайт: вместо confirm() браузера и плашек под
 // строкой. askBox({title, text, html, ok, no, danger, info}) → Promise<true|false>; Escape и клик по затемнению — «нет»;
 // info: true — сообщение с одной кнопкой (вместо alert()).
+// всплывающее поверх всего: карточка и кошелёк — модальные <dialog>, они в верхнем слое браузера, и элемент,
+// добавленный в body, оказывается ПОД ними, сколько ни ставь z-index (окно «Заблокировать?» пряталось за карточкой).
+// Кладём внутрь открытого модального окна (иначе оно делает всё вне себя неживым) и поднимаем в верхний слой поповером.
+function onTop(el) {
+  const host = [...document.querySelectorAll('dialog[open]')].filter((d) => { try { return d.matches(':modal'); } catch (e) { return true; } }).pop() || document.body;
+  host.appendChild(el); el.classList.add('ontop');
+  if ('showPopover' in el) { el.popover = 'manual'; try { el.showPopover(); } catch (e) { /* уже показан */ } }
+  return el;
+}
 function askBox(o) {
   return new Promise((done) => {
     const prev = document.activeElement, w = document.createElement('div');
@@ -284,7 +303,7 @@ function askBox(o) {
     if (!o.info) w.querySelector('[data-no]').onclick = () => end(false);
     w.querySelector('[data-ok]').onclick = () => end(true);
     document.addEventListener('keydown', key, true);
-    document.body.appendChild(w);
+    onTop(w);
     requestAnimationFrame(() => requestAnimationFrame(() => w.classList.add('on')));
     w.querySelector(o.danger && !o.info ? '[data-no]' : '[data-ok]').focus({ preventScroll: true });
   });

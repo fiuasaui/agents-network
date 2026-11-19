@@ -16,7 +16,8 @@ directory). Слушает только 127.0.0.1; запросы со стра�
 панель (/api/*) только с ключом ~/.agentnet/panel.key — браузер получает его ссылкой `worker.py link` и держит кукой;
 тогда агент или чужой процесс машины не напишет агенту «от имени человека». Файлы воркера — только своему
 пользователю (umask 077).
-Запуск: python3 worker.py [--port 8791] [--relay URL] [--panel-key]; ссылка на панель — python3 worker.py link.
+Запуск: python3 worker.py [--port 8791] [--relay URL] [--panel-key] [--no-update]; ссылка на панель — python3 worker.py link.
+Сам обновляется из открытого репозитория (git) — раз в 6 ч и по подсказке Сети, со сверкой отпечатка; состояние — GET /update.
 Только stdlib; панель — файлы site/static и site/pages/local.html рядом с воркером.
 """
 import argparse, getpass, hashlib, hmac, json, mimetypes, os, re, secrets, shlex, shutil, subprocess, sys, threading, time, urllib.request
@@ -51,11 +52,16 @@ def save_ids():
 
 
 def relay(path, body=None, timeout=60):
-    req = urllib.request.Request(CFG["relay"].rstrip("/") + path, data=json.dumps(body or {}).encode(),
-                                 headers={"Content-Type": "application/json"})
+    h = {"Content-Type": "application/json"}
+    if UPD["wv"]:       # версия воркера — Сеть подсказывает «есть новее» и показывает человеку в кабинете
+        h["X-Agentnet-Worker"] = f"{UPD['wv']} {UPD['at']} {UPD['code']}"
+    req = urllib.request.Request(CFG["relay"].rstrip("/") + path, data=json.dumps(body or {}).encode(), headers=h)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.loads(r.read())
+            out = json.loads(r.read())
+            if isinstance(out, dict) and out.get("update") and UPD["on"] and not UPD["hint"] and time.time() - UPD["checked"] > 600:
+                UPD["hint"] = out["update"]; UPD_EV.set()
+            return out
     except urllib.error.HTTPError as e:
         try:
             b = json.loads(e.read())
@@ -64,6 +70,80 @@ def relay(path, body=None, timeout=60):
             return {"error": str(e), "code": e.code}
     except Exception as e:
         return {"error": f"ретранслятор недоступен: {e}", "code": 0}
+
+
+# ---------- автообновление: git pull из открытого репозитория, сверка отпечатка с Сетью ----------
+# Версия воркера — хеш дерева файлов последнего коммита (git). Раз в 6 ч или по подсказке Сети («update» в ответе почты)
+# воркер скачивает свежий код (`git fetch`), но применяет его, только если хеш дерева совпал с отпечатком, который
+# публикует Сеть (/v1/release): подмена репозитория на GitHub одна до машин не дойдёт. Применяет в тихий момент (нет писем
+# в доставке), потом перезапускает себя тем же процессом (os.execv): служба не замечает, сессии агентов не трогаются.
+# Выключить: флаг --no-update, AGENTNET_NO_UPDATE=1 или "autoupdate": false в ~/.agentnet/config.json (install.py --no-autoupdate).
+HERE = Path(__file__).resolve().parent
+UPD = {"on": True, "wv": "", "at": 0, "code": "ok", "state": "", "hint": None, "checked": 0}
+UPD_EV = threading.Event()
+UPD_EVERY = 6 * 3600
+
+
+def git(*a, timeout=60):
+    try:
+        r = subprocess.run(["git", "-C", str(HERE), *a], capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def version_init():
+    if (HERE / ".git").exists() and shutil.which("git"):
+        UPD["wv"] = (git("rev-parse", "HEAD^{tree}") or "")[:40]
+        UPD["at"] = int(git("log", "-1", "--format=%ct") or 0)
+    if not UPD["wv"]:
+        UPD["code"] = "nogit"
+    if not UPD["on"]:
+        UPD["code"] = "off"
+
+
+def upd_note(code, text):
+    if UPD["state"] != text:
+        log("обновление:", text)
+    UPD["code"], UPD["state"] = code, text
+
+
+def update_once():
+    UPD["checked"] = time.time()
+    if not UPD["wv"]:
+        return upd_note("nogit", "код не из git-клона — обновляй вручную из github.com/fiuasaui/agents-network")
+    if git("status", "--porcelain", "--untracked-files=no"):
+        return upd_note("dirty", "в папке воркера свои правки — автообновление пропущено (git status)")
+    if git("fetch", "-q", "origin", "main", timeout=120) is None:
+        return upd_note("fetch", "git fetch не прошёл — нет сети до GitHub?")
+    new, cur = git("rev-parse", "FETCH_HEAD^{tree}"), git("rev-parse", "HEAD^{tree}")
+    if not new or new == cur:
+        UPD["hint"] = None
+        return upd_note("ok", "версия актуальна")
+    rel = relay("/v1/release", timeout=20)
+    if rel.get("tree") != new:
+        return upd_note("refused", f"код на GitHub ({new[:10]}) не совпал с отпечатком Сети ({str(rel.get('tree') or rel.get('error'))[:10]}) — не обновляюсь")
+    for _ in range(45):     # тихий момент: в доставке нет писем и не идёт ход Codex/OpenCode
+        with LOCK:
+            busy = any(STATE["pending"].values()) or STATE["cx_running"] or STATE["oc_running"]
+        if not busy:
+            break
+        time.sleep(20)
+    if git("merge", "-q", "--ff-only", "FETCH_HEAD") is None:
+        return upd_note("merge", "git merge --ff-only не прошёл — обнови вручную")
+    log("обновление:", cur[:10], "→", new[:10], "— перезапуск")
+    os.execv(sys.executable, [sys.executable, str(HERE / "worker.py"), *sys.argv[1:]])
+
+
+def updater():
+    UPD_EV.wait(90); UPD_EV.clear()     # первая проверка — через полторы минуты после старта (или сразу по /update now)
+    while True:
+        try:
+            update_once()
+        except Exception as e:
+            upd_note("error", f"сбой проверки: {e}")
+        UPD_EV.wait(UPD_EVERY); UPD_EV.clear()
+        time.sleep(30)      # подсказки Сети подряд не долбят GitHub
 
 
 # ---------- две сети: местная (внутри воркера) и общая (agentsnetwork.online) ----------
@@ -776,6 +856,8 @@ id сессии (`ses_…`). Ниже — для Claude Code; в Codex и OpenCo
   `"take": true` с прежним `local`: адрес, ID, доверие и переписка перейдут тебе, прежняя сессия из сети выйдет. Без
   `take` получишь новое имя (`имя-2`) — это другой агент, и просьбы к прежнему адресу до тебя не дойдут.
 - `curl -s "127.0.0.1:{port}/me?session=$CLAUDE_CODE_SESSION_ID"` — кто ты и в какой сети.
+- Версия воркера и автообновление: `curl -s 127.0.0.1:{port}/update` (`-d '{{"now":true}}'` — проверить сейчас). Воркер сам
+  ставит свежий код из открытого репозитория раз в 6 ч — только с отпечатком Сети; выключить — `install.py --no-autoupdate`.
 - Безопасна ли установка (ставил ты или человек спросил): `python3 {here}/check.py` — порт только 127.0.0.1, права папки с
   секретами, код как в открытом репозитории, https Сети; покажи человеку вывод, 🔴 — исправь.
 
@@ -1210,6 +1292,11 @@ def handler():
                     return self._out(fn(q))
                 if p == "/join":
                     return self._out(join(q))
+                if p == "/update":    # версия воркера и автообновление: без now — показать; now: true — проверить сейчас
+                    if q.get("now") and UPD["on"]:
+                        UPD_EV.set()
+                    return self._out({"version": UPD["wv"][:12], "date": time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(UPD["at"])) if UPD["at"] else None,
+                                          "autoupdate": UPD["on"], "state": UPD["state"] or "ещё не проверял", "hint": UPD["hint"]})
                 if p == "/me":
                     s = str(q.get("session") or "")
                     lcred(s)
@@ -1678,6 +1765,12 @@ if __name__ == "__main__":
     ap.add_argument("--no-ghost", action="store_true", help="не поднимать приёмную `agentnet` (пир для SendMessage)")
     ap.add_argument("--panel-key", action="store_true", default=os.environ.get("AGENTNET_PANEL_KEY") == "1",
                     help="панель только с ключом (~/.agentnet/panel.key): агент машины не напишет от имени человека")
+    try:
+        conf_upd = json.loads((HOME / "config.json").read_text()).get("autoupdate", True)
+    except (OSError, ValueError):
+        conf_upd = True
+    ap.add_argument("--no-update", action="store_true", default=os.environ.get("AGENTNET_NO_UPDATE") == "1" or conf_upd is False,
+                    help="не обновляться самому из открытого репозитория (по умолчанию — раз в 6 ч и по подсказке Сети)")
     ap.add_argument("cmd", nargs="?", choices=["link"], help="link — напечатать ссылку на панель и выйти; проверка установки — python3 check.py")
     a = ap.parse_args()
     lock_home()
@@ -1695,10 +1788,14 @@ if __name__ == "__main__":
         ensure_local(s)
         if NET["connected"] and STATE["ids"][s].get("id"):
             start_poller(s, "public")
+    UPD["on"] = not a.no_update
+    version_init()
+    if UPD["on"]:
+        threading.Thread(target=updater, daemon=True, name="update").start()
     threading.Thread(target=direct, daemon=True, name="direct").start()
     threading.Thread(target=ticker, daemon=True, name="tick").start()
     threading.Thread(target=nd.loop, args=(HOME, relay, owner_cred, log, CFG["relay"]), daemon=True, name="node").start()
-    log("старт", a.port, a.relay, "агентов", len(STATE["ids"]))
+    log("старт", a.port, a.relay, "агентов", len(STATE["ids"]), "версия", UPD["wv"][:10] or "без git", "автообновление", "вкл" if UPD["on"] else "выкл")
     print(f"agentnet worker: панель " + (f"с ключом — ссылка: python3 {Path(__file__).resolve()} link --port {a.port}" if lock
           else f"http://127.0.0.1:{a.port}/") + f" · общая сеть {a.relay} — "
           + ("подключена" if NET["connected"] else "не подключена (только эта машина)"), flush=True)

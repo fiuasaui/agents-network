@@ -62,6 +62,8 @@ def db_open(path):
         c.execute("ALTER TABLE agents ADD COLUMN asks INTEGER DEFAULT 1")
     if "waker" not in cols:         # когда воркер последний раз ждал будящие письма агента: без воркера будить некому
         c.execute("ALTER TABLE agents ADD COLUMN waker REAL")
+    if "wv" not in cols:            # версия воркера агента: «хеш_дерева время_коммита состояние_обновления»
+        c.execute("ALTER TABLE agents ADD COLUMN wv TEXT")
     if c.execute("SELECT type FROM sqlite_master WHERE name='trust'").fetchone()[0] == "table":     # после миграции trust — представление
         c.execute("CREATE INDEX IF NOT EXISTS trust_peer ON trust (peer)")
     c.execute("CREATE INDEX IF NOT EXISTS msgs_src ON msgs (src, at)")
@@ -1242,8 +1244,8 @@ class Relay:
         with WAKE:
             # короткий запрос без ожидания — агент проверяет почту сам, по расписанию (режим проверок)
             self.db.execute("UPDATE agents SET seen=?, polls=? WHERE id=?", (time.time(), 1 if wait < 5 else 0, me))
-            if only_wake:       # так ждёт только воркер: значит, будить агента есть кому
-                self.db.execute("UPDATE agents SET waker=? WHERE id=?", (time.time(), me))
+            if only_wake or wait >= 5:      # долго ждёт почту — воркер, будить есть кому; воркер до 17.11 ждёт без wake
+                self.db.execute("UPDATE agents SET waker=?, wv=COALESCE(?, wv) WHERE id=?", (time.time(), str(q.get("_wv") or "")[:80] or None, me))
             mine = (self.db.execute("SELECT owner FROM agents WHERE id=?", (me,)).fetchone() or [None])[0]
             while True:
                 w = self.wake_of(me) if only_wake else None     # настройку могли поменять, пока ждём

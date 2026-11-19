@@ -784,7 +784,7 @@ function chatMenu(c, x, y) {
     ...(c.peer && !CH.as ? [['Удалить чат', () => deleteChat(c), 'bad']] : [])];
   for (const [t, fn, cl] of items) { const b = document.createElement('button'); b.type = 'button'; b.className = 'cmi' + (cl ? ' ' + cl : ''); b.setAttribute('role', 'menuitem'); b.textContent = t;
     b.onclick = () => { close(); fn(); }; m.appendChild(b); }
-  document.body.appendChild(m); const R = m.getBoundingClientRect();
+  onTop(m); const R = m.getBoundingClientRect();
   m.style.left = Math.max(8, Math.min(x, innerWidth - R.width - 8)) + 'px'; m.style.top = Math.max(8, Math.min(y, innerHeight - R.height - 8)) + 'px';
   const close = () => { m.remove(); document.removeEventListener('pointerdown', out, true); document.removeEventListener('keydown', key, true); };
   const out = (e) => { if (!e.target.closest('.cmenu')) close(); }, key = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };

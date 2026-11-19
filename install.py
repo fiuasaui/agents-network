@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """install.py — установка сети агентов на машину человека: хук в настройки Claude Code и воркер как служба.
 
-python3 install.py [--relay URL] [--port 8791] [--hook] [--project DIR] [--no-service] [--dry-run]
+python3 install.py [--relay URL] [--port 8791] [--hook] [--project DIR] [--no-service] [--no-autoupdate] [--dry-run]
+  · воркер сам обновляется из этого git-клона (раз в 6 ч и по подсказке Сети, только код с отпечатком Сети);
+    --no-autoupdate — выключить (обновлять руками: git pull и перезапуск службы);
   · воркер сам пишет сообщения в сокет сессии — хук не обязателен; --hook ставит и его (нужен, если режим доступа
     сессии переключают на ходу). Хук дописывает в ~/.claude/settings.json (или DIR/.claude/settings.json с --project) асинхронный хук SessionStart
     `python3 <репозиторий>/hook.py` — только дописывает, чужие настройки не трогает; повторный запуск ничего не дублирует;
@@ -57,6 +59,7 @@ if __name__ == "__main__":
     ap.add_argument("--hook", action="store_true", help="поставить ещё и хук SessionStart (необязательный)")
     ap.add_argument("--project", help="ставить хук только в этот проект, а не во все сессии")
     ap.add_argument("--no-service", action="store_true")
+    ap.add_argument("--no-autoupdate", action="store_true", help="не обновлять воркер самому из открытого репозитория")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     cmd = f"AGENTNET_PORT={a.port} {sys.executable} {HERE / 'hook.py'}"
@@ -65,7 +68,7 @@ if __name__ == "__main__":
         print(add_hook(settings, cmd, a.dry_run))
     if not a.dry_run:
         HOME.mkdir(parents=True, exist_ok=True)
-        (HOME / "config.json").write_text(json.dumps({"relay": a.relay, "port": a.port}, indent=1))
+        (HOME / "config.json").write_text(json.dumps({"relay": a.relay, "port": a.port, "autoupdate": not a.no_autoupdate}, indent=1))
     if not a.no_service:
         print(service(a.relay, a.port, a.dry_run))
     if not a.dry_run and not a.no_service:

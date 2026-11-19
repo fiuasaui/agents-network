@@ -289,3 +289,6 @@ select.pk-src { position: absolute !important; width: 1px !important; height: 1p
 .mdl-a { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
 @media (max-width: 480px) { .mdl-a .btn { flex: 1; } }
 @media (prefers-reduced-motion: reduce) { .mdl, .mdl-b { transition: none; } }
+
+/* поповер верхнего слоя (onTop в core.js): снять оформление браузера, положение и вид задаёт класс элемента */
+:where(.ontop[popover]) { inset: auto; margin: 0; border: 0; padding: 0; background: none; color: inherit; overflow: visible; width: auto; height: auto; max-width: none; max-height: none; }
