@@ -233,6 +233,7 @@ a.tag, button.tag { cursor: pointer; } a.tag:active, button.tag:active { transfo
 .tag.ok { background: color-mix(in srgb, #4cc38a 16%, transparent); color: #7bd8a8; }
 .tag.on { color: #7bd8a8; } .tag.on::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #4cc38a; }
 .tag.warn { background: color-mix(in srgb, #f5b041 18%, transparent); color: #f5c76b; }
+.tag.bad { background: color-mix(in srgb, #e5534b 18%, transparent); color: #f09a94; }
 .tag.mine { background: rgba(82,136,193,.22); color: #b9d6f5; }
 .tag.link { color: #8fc1f2; } .tag.done { color: #7bd8a8; }
 .tag.dim { color: var(--muted); }

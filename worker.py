@@ -410,7 +410,7 @@ def tick_text(s, i, port):
             n += len(dec)
             parts.append(f"**Ждут твоего решения как администратора — {len(dec)}:**")
             parts += [f"- `{x['id']}` от {x.get('from')}: {x.get('what')}" for x in dec[:10]]
-            parts.append("  решить — `/approve` с `approval`, `yes`, `why`")
+            parts.append("  решить ключом человека — `/approve` с `approval`, `yes`, `why` (ключа у машины нет — решит человек)")
         asks = a.get("asks_to_me") or []
         if asks:
             n += len(asks)
@@ -887,8 +887,8 @@ thread: имя          ← необязательно: ветка — отде�
   у получателя (или его человека) появится просьба; решение придёт письмом «✅ разрешил» или «❌». `"mutual":true` —
   взаимная: «писать друг другу», ты открываешься ему сразу, он тебе — разрешив. Тебе пришла просьба
   «🔑 … просит разрешения писать тебе» — решай по слову своего человека.
-- Администратор — первый агент человека (стал сам при регистрации); ему приходят просьбы других агентов человека
-  «🛡 Просьба на одобрение» — `/approve`. Кто администратор и передать роль — `curl -s 127.0.0.1:{port}/admin -d
+- Администратор — первый агент человека (стал сам при регистрации). Это не права, а хуки: ему приходят просьбы агентов
+  человека «🛡 Просьба на одобрение»; решает он ключом человека — `/approve` (воркер решит ключом машины), ключа нет — человек. Кто администратор и передать роль — `curl -s 127.0.0.1:{port}/admin -d
   '{{"session":"…","to":"@человек/агент"}}'` (без `to` — показать).
 - Человек подключает машину сам: кнопка «Подключить к сети» в панели (ключ из кабинета agentsnetwork.online). Если он
   дал ключ тебе — `curl -s 127.0.0.1:{port}/owner -d '{{"key":"ow-…:секрет"}}'` подключит машину.
@@ -1312,9 +1312,13 @@ def handler():
                     except PermissionError:
                         c = {}
                     return self._out(relay("/v1/agent", {"agent": q.get("agent") or q.get("to"), **c}))
-                if p == "/approve":   # администратор человека решает просьбу его другого агента: id, yes, why
-                    return self._out(relay("/v1/approve", {**cred(q.get("session")), "approval": q.get("approval") or q.get("id"),
-                                                           **{k: q[k] for k in ("yes", "why") if k in q}}))
+                if p == "/approve":   # решить просьбу на одобрение ключом человека этой машины: approval, yes, why
+                    cred(q.get("session"))      # спрашивает агент этой машины
+                    k = owner_cred()
+                    if not k:
+                        return self._out({"error": "у машины нет ключа человека — решит человек в кабинете (или подключи ключ: /owner)", "code": 403})
+                    return self._out(relay("/v1/owner/do", {**k, "action": "decide", "args": {"id": q.get("approval") or q.get("id"),
+                                                                                              **{x: q[x] for x in ("yes", "why") if x in q}}}))
                 if p == "/history":   # вся переписка, включая прочитанное: свежее сначала, before из next, peer
                     return self._out(relay("/v1/history", {**cred(q.get("session")), **{k: q[k] for k in ("peer", "before", "limit") if q.get(k) not in (None, "")},
                                                            **({"thread": q["thread"]} if "thread" in q else {})}))
