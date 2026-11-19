@@ -15,7 +15,7 @@ const DIRS = { me: 'Я', to_me: '', out: '→', in: '←' };
 
 function chatPreview(c) {
   if (!c.last) return '<span class="pv-dim">нет сообщений</span>';
-  const l = c.last, t = esc(l.text.replace(/[*_`#>]+/g, '').replace(/\s+/g, ' ').trim().slice(0, 90));   // без разметки Markdown
+  const l = c.last, t = esc(l.text.replace(/^(⏰|🔑|✅|❌|⚠|⚙|🛡)\uFE0F?\s*/u, '').replace(/[*_`#>]+/g, '').replace(/\s+/g, ' ').trim().slice(0, 90));   // без разметки Markdown
   if (l.dir === 'me') return '<span class="pv-me">' + (CH.as ? 'Агент:' : 'Я:') + '</span> ' + t;
   if (l.dir === 'out' || l.dir === 'in') return '<span class="pv-peer">' + (l.dir === 'out' ? '← письмо агенту' : '→ письмо от агента') + '</span>';   // текст переписки агентов не показываем
   return t;
@@ -430,21 +430,31 @@ function peerLine(m) {
 
 // системное письмо сети: просьба писать или будить, ответ на неё, смена настроек агента. Это не реплика, а событие
 // Сети с чьей-то стороны — плашкой по центру с иконкой; первая фраза, целиком — по нажатию (там команды для агента)
+// Значок плашки — тема (о чём), цвет — исход (ждёт · да · нет · сведения)
 const NET_IC = {
-  key: '<path d="M15 7a4 4 0 1 1-3.9 4.9L4 19v-3l2-2v-2h2l1.1-1.1A4 4 0 0 1 15 7z"/><circle cx="16" cy="8" r="1"/>',
-  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
-  ok: '<path d="M5 12.5l4.5 4.5L19 7.5"/>', no: '<path d="M6 6l12 12M18 6L6 18"/>',
-  gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>',
+  write: '<path d="M4 5.5h16v10H9l-5 4z"/>',
+  wake: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+  ban: '<circle cx="12" cy="12" r="8.5"/><path d="M6 6l12 12"/>',
+  approve: '<path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6z"/>',
+  admin: '<path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6z"/><path d="M9.2 12l2 2 3.8-3.8"/>',
+  set: '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
 };
+function netKind(m, t) {
+  const topic = /закрыл тебе письма|чёрн/.test(t) ? 'ban' : /^⏰|будить/.test(t) ? 'wake' : /^🛡/.test(t) ? 'admin'
+    : /^⚙/.test(t) ? 'set' : /Одобрено|Отклонено/.test(t) ? 'approve' : 'write';
+  const res = /^(❌|⚠)|не разрешил|Отклонено|не выполнено/.test(t) ? 'no' : m.net === 'ask' ? 'wait'
+    : /^✅|разрешил|Разрешаю|принял|Одобрено/.test(t) ? 'yes' : 'info';
+  return [topic, res];
+}
 function netPill(m) {
   const el = document.createElement('div'), t = String(m.text || '').trim(), c = cur();
-  const ic = /^⏰/.test(t) ? (/не разрешил/.test(t) ? 'no' : 'bell') : /^🔑/.test(t) ? 'key' : /^✅/.test(t) ? 'ok' : /^(❌|⚠)/.test(t) ? 'no' : /^⚙/.test(t) ? 'gear' : m.net === 'ask' ? 'key' : 'ok';
-  const body = t.replace(/^(⏰|🔑|✅|❌|⚠|⚙)\uFE0F?\s*/u, '');
+  const [ic, res] = netKind(m, t);
+  const body = t.replace(/^(⏰|🔑|✅|❌|⚠|⚙|🛡)\uFE0F?\s*/u, '');
   const first = (body.match(/^[\s\S]*?(?:[.!?](?=\s|$)|»\.?(?=\s|$))/) || [body])[0];
   const mine = m.dir === 'me' || m.dir === 'out';
   const pn = m.peer_name && m.peer_name !== 'агент' ? m.peer_name : m.peer || 'собеседника', cn = c ? chatName(c) : 'собеседника';
   const side = m.dir === 'me' ? (CH.as ? 'со стороны ' + cn : 'с твоей стороны') : 'со стороны ' + (m.dir === 'in' ? pn : cn);
-  el.className = 'bub netn ' + (mine ? 'nmine' : 'ntheirs') + ' ' + ic + (m.dir === 'to_me' && !m.delivered ? ' unread' : '');
+  el.className = 'bub netn ' + (mine ? 'nmine' : 'ntheirs') + ' r-' + res + (m.dir === 'to_me' && !m.delivered ? ' unread' : '');
   el.dataset.mid = m.mid;
   const more = first.length < body.length;
   el.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${NET_IC[ic]}</svg><div><div class="nt">${esc(first)}</div>${more ? `<div class="nfull" hidden>${linkify(body)}</div>` : ''}
