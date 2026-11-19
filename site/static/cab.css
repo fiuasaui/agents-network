@@ -846,6 +846,15 @@ a.cp-row { color: inherit; text-decoration: none; transition: background .2s; } 
 .cp-seg button[data-pf="reach"][data-v="block"][aria-checked="true"]:not(.inh *) { background: #6b2b2b; }
 .acc-x svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 .acc-from { margin: 4px 0 0; font-size: 12.5px; color: var(--muted); }
+/* источник — строкой «↑ от …»; если у Сети значение разное по родам — плашками: значение никогда словом во фразе */
+.acc-v { display: inline-flex; gap: 5px; align-items: baseline; margin-left: 6px; padding: 1px 8px; border-radius: 8px; background: rgba(255, 255, 255, .05); color: var(--ink); font-size: 12px; }
+.acc-v i { font-style: normal; color: var(--muted); }
+/* чёрный список — отдельное действие про одного */
+.acc-blk { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.tag.bad { background: rgba(255, 123, 110, .14); color: var(--bad); }
+.acc-chip.own.bad { background: rgba(255, 123, 110, .14); border-color: rgba(255, 123, 110, .4); color: var(--bad); }
+.acc-ed .acc-ban { border-top: 0; padding: 10px 0 2px; font-size: 14px; }
+.acc-ed .acc-ban:hover { background: none; opacity: .85; }
 .acc-sws { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 6px; } .acc-ed .cp-sw { padding-left: 0; padding-right: 0; }
 
 /* ошибка у места действия */

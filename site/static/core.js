@@ -150,6 +150,25 @@ function errAt(target, msg) {
   const p = document.createElement('p'); p.className = 'err-near'; p.setAttribute('role', 'alert'); p.textContent = msg;
   box.after(p); p.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
+// перерисовка на месте: новый HTML сверяется с живым деревом, меняются только отличающиеся узлы и атрибуты.
+// Совпавшие элементы остаются теми же — окно не мигает, прокрутка и фокус не прыгают. Ключ узла — тег и data-lv / data-po / data-key.
+function morph(el, html) { const t = document.createElement(el.tagName); t.innerHTML = html; morphKids(el, t); }
+function morphKey(n) { return n.nodeType === 1 ? n.nodeName + '|' + (n.getAttribute('data-lv') || n.getAttribute('data-po') || n.getAttribute('data-key') || '') : n.nodeName; }
+function morphKids(a, b) {
+  const an = Array.from(a.childNodes), bn = Array.from(b.childNodes);
+  bn.forEach((y, i) => {
+    const x = an[i];
+    if (!x) { a.appendChild(y); return; }
+    if (morphKey(x) !== morphKey(y)) { a.replaceChild(y, x); return; }
+    if (x.nodeType !== 1) { if (x.nodeValue !== y.nodeValue) x.nodeValue = y.nodeValue; return; }
+    for (const at of Array.from(x.attributes)) if (!y.hasAttribute(at.name)) x.removeAttribute(at.name);
+    for (const at of Array.from(y.attributes)) if (x.getAttribute(at.name) !== at.value) x.setAttribute(at.name, at.value);
+    if (x.nodeName === 'INPUT') { x.checked = y.hasAttribute('checked'); x.disabled = y.hasAttribute('disabled'); if (x !== document.activeElement) x.value = y.getAttribute('value') || ''; }
+    morphKids(x, y);
+    if (x.nodeName === 'SELECT') { const o = y.querySelector('option[selected]'); if (o) x.value = o.value; }
+  });
+  for (let i = an.length - 1; i >= bn.length; i--) an[i].remove();
+}
 function tipAttr(text, head) { return text ? ` data-tip="${esc(text)}"${head ? ` data-tip-h="${esc(head)}"` : ''}` : ''; }
 function tag(text, tip, o) {
   o = o || {};

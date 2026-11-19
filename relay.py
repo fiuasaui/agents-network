@@ -116,6 +116,18 @@ def db_open(path):
         c.execute("UPDATE agents SET about=? WHERE id=?", (ab[:99].rsplit(' ', 1)[0].rstrip(' ,.;:—-') + '…', aid))
     c.execute("UPDATE rules SET subj=replace(subj, ':service', ':assistant') WHERE subj LIKE 'acct:%:service'")
     c.execute("CREATE INDEX IF NOT EXISTS rules_obj ON rules (obj)")
+    if "asks" not in [r[1] for r in c.execute("PRAGMA table_info(rules)")]:
+        # будят ли просьбы — поле правил, каскадом, как «будят ли письма»; оба — только у агентов: человека и
+        # ассистента будить нечем (ассистента будит всё дошедшее), поэтому с аккаунта колокольчик уходит в ветку «мои агенты»
+        c.execute("ALTER TABLE rules ADD COLUMN asks INTEGER")
+        for s, o, w in c.execute("SELECT subj, obj, wake FROM rules WHERE wake IS NOT NULL AND subj LIKE 'acct:%' AND subj NOT LIKE 'acct:%:%'").fetchall():
+            if not c.execute("SELECT 1 FROM rules WHERE subj=? AND obj=? AND wake IS NOT NULL", (s + ":agent", o)).fetchone():
+                if c.execute("SELECT 1 FROM rules WHERE subj=? AND obj=?", (s + ":agent", o)).fetchone():
+                    c.execute("UPDATE rules SET wake=? WHERE subj=? AND obj=?", (w, s + ":agent", o))
+                else:
+                    c.execute("INSERT INTO rules (subj, obj, wake, at) VALUES (?,?,?,?)", (s + ":agent", o, w, time.time()))
+        c.execute("UPDATE rules SET wake=NULL WHERE subj LIKE 'ow-%' OR subj LIKE 'acct:%:assistant' OR (subj LIKE 'acct:%' AND subj NOT LIKE 'acct:%:%')")
+        c.execute("DELETE FROM rules WHERE reach IS NULL AND wake IS NULL AND hidden IS NULL")
     if fresh:
         rules_migrate(c)
         # прежние таблицы — архив; на их месте представления из правил: чтения (счётчики, списки) работают как раньше,
@@ -134,8 +146,10 @@ REACH = ("block", "closed", "ask", "write")     # лестница: чёрный
 REACH_TEXT = {"block": "чёрный список", "closed": "закрыт: ни писем, ни просьб", "ask": "по просьбе: доходит только просьба",
               "write": "пишет"}
 # дефолты Сети при регистрации — нижний уровень каскада; колокольчик (будят ли) везде выключен
-NET_RULES = {"agent": {"reach": "ask", "wake": 0, "hidden": 0}, "assistant": {"reach": "write", "wake": 0, "hidden": 0},
-             "human": {"reach": "write", "wake": 0, "hidden": 0}}
+# asks — будят ли просьбы: по умолчанию да; у человека и ассистента не действует
+NET_RULES = {"agent": {"reach": "ask", "wake": 0, "hidden": 0, "asks": 1}, "assistant": {"reach": "write", "wake": 0, "hidden": 0, "asks": 1},
+             "human": {"reach": "write", "wake": 0, "hidden": 0, "asks": 1}}
+WAKE_LEVELS = "будят ли письма и просьбы — настройка агентов: человека будить нечем, ассистента будит всё дошедшее"
 
 
 def rules_migrate(c):
@@ -176,10 +190,12 @@ def rules_migrate(c):
 # кто будит агента письмом: воркер ждёт только будящие письма, прочие лежат в почте до проверки
 #: из сети по умолчанию не будит никто — только почта; будить агент разрешает сам конкретным собеседникам (from);
 # просьбы и одобрения — одним переключателем на всех; «любое письмо» убрано как бесполезное
-WAKE_DEFAULT = {"owner": True, "mine": True, "answers": True, "asks": False, "from": []}
-WAKE_HELP = {"owner": "твой человек", "mine": "другие агенты твоего человека",
-             "answers": "ответ сети на твою просьбу (разрешили, отказали)",
-             "asks": "просьбы — из Сети («разреши писать», «разреши будить») и на одобрение от агентов твоего человека",
+#: свои (человек, его агенты) и ответ на твою просьбу будят всегда — настроек нет; просьбы — поле asks правил
+WAKE_DEFAULT = {"asks": True, "from": []}
+WAKE_ALWAYS = {"owner", "mine", "answers"}
+WAKE_HELP = {"owner": "твой человек — будит всегда", "mine": "другие агенты твоего человека — будят всегда",
+             "answers": "ответ на твою просьбу (разрешили, отказали) — будит всегда; разрешение без твоей просьбы не будит",
+             "asks": "просьбы — из Сети («разреши писать», «разреши будить») и на одобрение от агентов твоего человека; по умолчанию будят",
              "from": "собеседники, которым ты разрешил будить себя (агент, ассистент или человек — тогда и все его агенты)"}
 WAKE_GONE = {"all": "«любое письмо» убрано: из сети будят только те, кому ты разрешил сам — from",
              "replies": "«ответ тому, кому писал» убран: разреши будить конкретному собеседнику — from, "
@@ -632,12 +648,7 @@ class Relay:
         """Настройки пробуждения агента — полные, с умолчаниями. Свои (owner, mine), ответы сети (answers), одобрения
         администратору (asks) — в настройках агента; кого из Сети будят письма (from) — колокольчики его правил.
         Под LOCK."""
-        r = self.db.execute("SELECT wake FROM agents WHERE id=?", (aid,)).fetchone()
-        try:
-            w = json.loads(r[0]) if r and r[0] else {}
-        except ValueError:
-            w = {}
-        w = {**WAKE_DEFAULT, **{k: v for k, v in w.items() if k in WAKE_DEFAULT and k != "from"}}
+        w = {"owner": True, "mine": True, "answers": True, "asks": bool(self.rule_eff(aid)["asks"][0])}
         w["from"] = [o[5:] if o.startswith("acct:") else o for o, in
                      self.db.execute("SELECT obj FROM rules WHERE subj=? AND obj!='*' AND wake=1 ORDER BY at", (aid,))]
         return w
@@ -647,27 +658,29 @@ class Relay:
         src (каскад), просьба (kind ask) — по переключателю asks, если ступень её пропускает. Причина словом или "". Под LOCK."""
         w = w or self.wake_of(me)
         o = self.owner_id(me)
-        if o and src == o:
-            return "owner" if w.get("owner") else ""
-        if self.same_side(me, src):     # просьбы на одобрение администратору — отдельным переключателем
-            return ("asks" if w.get("asks") else "") if kind == "ask" else ("mine" if w.get("mine") else "")
-        if kind == "answer" and w.get("answers"):
+        if o and src == o:      # свои и ответ на мою просьбу будят всегда
+            return "owner"
+        if self.same_side(me, src):     # просьбы на одобрение администратору — полем asks его правил
+            return ("asks" if self.rule_eff(me, src)["asks"][0] else "") if kind == "ask" else "mine"
+        if kind == "answer":
             return "answers"
         e = self.rule_eff(me, src)
         if e["reach"][0] in ("block", "closed"):
             return ""
-        if kind == "ask":               # просьба — свой объект: доходит со ступени «по просьбе», будит одним переключателем asks
-            return "asks" if w.get("asks") else ""
+        if kind == "ask":               # просьба — свой объект: доходит со ступени «по просьбе», будит полем asks
+            return "asks" if e["asks"][0] else ""
         return "from" if e["wake"][0] else ""
 
     def set_wake(self, aid, patch):
         """Поменять настройки пробуждения: ключи WAKE_DEFAULT; from — адреса (@ник, @человек/агент, ID; человек — весь его
         аккаунт) — заменяет колокольчики к конкретным собеседникам. Под LOCK."""
-        w = self.wake_of(aid)
-        own = {k: w[k] for k in WAKE_DEFAULT if k != "from"}
         for k, v in (patch or {}).items():
             if k in WAKE_GONE:
                 raise ValueError("wake: " + WAKE_GONE[k])
+            if k in WAKE_ALWAYS:
+                if v is False:
+                    raise ValueError(f"wake: {k} — {WAKE_HELP[k]}, настройки нет")
+                continue
             if k not in WAKE_DEFAULT:
                 raise ValueError(f"wake: неизвестная настройка {k}; есть " + ", ".join(WAKE_DEFAULT))
             if k == "from":
@@ -683,9 +696,8 @@ class Relay:
                         self.rule_put(aid, ob, wake=None)
                 for ob in want:
                     self.rule_put(aid, ob, wake=1)
-            else:
-                own[k] = bool(v)
-        self.db.execute("UPDATE agents SET wake=? WHERE id=?", (json.dumps(own), aid))
+            else:       # asks — своё правило агента «ко всем»; null — как у «мои агенты» и Сети
+                self.rule_put(aid, "*", asks=None if v is None or v == "default" else bool(v))
         WAKE.notify_all()       # ждущий опрос перечитает настройку: лежавшее письмо может теперь будить
         return self.wake_of(aid)
 
@@ -1021,15 +1033,15 @@ class Relay:
         источник "net" — дефолт Сети. Под LOCK."""
         sc, k = self.subj_chain(me)
         oc = self.obj_chain(peer)
-        rows = {(s, o): (r, w, h) for s, o, r, w, h in self.db.execute(
-            f"SELECT subj, obj, reach, wake, hidden FROM rules WHERE subj IN ({','.join('?' * len(sc))}) AND obj IN ({','.join('?' * len(oc))})",
+        rows = {(s, o): (r, w, h, a) for s, o, r, w, h, a in self.db.execute(
+            f"SELECT subj, obj, reach, wake, hidden, asks FROM rules WHERE subj IN ({','.join('?' * len(sc))}) AND obj IN ({','.join('?' * len(oc))})",
             (*sc, *oc))}
         out = {}
-        for i, f in enumerate(("reach", "wake", "hidden")):
+        for i, f in enumerate(("reach", "wake", "hidden", "asks")):
             hit = None
             for o in (oc if f != "hidden" else ["*"]):
                 for s in sc:
-                    v = rows.get((s, o), (None, None, None))[i]
+                    v = rows.get((s, o), (None, None, None, None))[i]
                     if v is not None:
                         hit = (v, s, o)
                         break
@@ -1063,8 +1075,8 @@ class Relay:
         return "acct:" + o if scope == "human" and o else peer
 
     def rule_get(self, subj, obj):
-        r = self.db.execute("SELECT reach, wake, hidden FROM rules WHERE subj=? AND obj=?", (subj, obj)).fetchone()
-        return dict(zip(("reach", "wake", "hidden"), r)) if r else {"reach": None, "wake": None, "hidden": None}
+        r = self.db.execute("SELECT reach, wake, hidden, asks FROM rules WHERE subj=? AND obj=?", (subj, obj)).fetchone()
+        return dict(zip(("reach", "wake", "hidden", "asks"), r)) if r else {"reach": None, "wake": None, "hidden": None, "asks": None}
 
     def rule_put(self, subj, obj, **f):
         """Поменять строку правила; поле None — снять (наследовать сверху), пустая строка удаляется. Витрина (agents.open,
@@ -1072,7 +1084,10 @@ class Relay:
         cur = self.rule_get(subj, obj)
         for k, v in f.items():
             if k not in cur:
-                raise ValueError(f"правило: поле {k} неизвестно — reach, wake, hidden")
+                raise ValueError(f"правило: поле {k} неизвестно — reach, wake, hidden, asks")
+            if k in ("wake", "asks") and v is not None and (subj.startswith("ow-") or subj.endswith(":assistant") or
+                                                            (subj.startswith("acct:") and subj.count(":") == 1) or self.kind3(subj) == "assistant"):
+                raise ValueError(WAKE_LEVELS + " — задай у «мои агенты» или у агента")
             if k == "reach" and v is not None and v not in REACH:
                 raise ValueError("reach: " + " · ".join(REACH))
             cur[k] = v if k == "reach" or v is None else int(bool(v))
@@ -1081,8 +1096,8 @@ class Relay:
         if all(v is None for v in cur.values()):
             self.db.execute("DELETE FROM rules WHERE subj=? AND obj=?", (subj, obj))
         else:
-            self.db.execute("INSERT OR REPLACE INTO rules (subj, obj, reach, wake, hidden, at) VALUES (?,?,?,?,?,?)",
-                            (subj, obj, cur["reach"], cur["wake"], cur["hidden"], time.time()))
+            self.db.execute("INSERT OR REPLACE INTO rules (subj, obj, reach, wake, hidden, asks, at) VALUES (?,?,?,?,?,?,?)",
+                            (subj, obj, cur["reach"], cur["wake"], cur["hidden"], cur["asks"], time.time()))
         self.rule_sync(subj)
         WAKE.notify_all()
         return cur
@@ -1125,7 +1140,7 @@ class Relay:
     def level_name(self, s, o):
         """Уровень правила словами — для «откуда взялось». Под LOCK."""
         if s == "net":
-            return "дефолт Сети"
+            return "по умолчанию Сети"
         who = ("мой аккаунт" if s.count(":") == 1 else {"agent": "все мои агенты", "assistant": "все мои ассистенты"}.get(s.rsplit(":", 1)[1], s)) \
             if s.startswith("acct:") else ("я сам" if s.startswith("ow-") else "этот агент")
         to = "все" if o == "*" else ("весь его аккаунт" if o.startswith("acct:") else "он сам")
@@ -1565,8 +1580,8 @@ class Relay:
                 self.allow(owner, aid, force=True)
                 asked = self.db.execute("DELETE FROM knocks WHERE src=? AND dst=?", (aid, owner)).rowcount
                 if asked:       # просил — ему письмо; разрешил заранее — без письма
-                    self.db.execute("INSERT INTO msgs (mid, src, dst, text, at) VALUES (?,?,?,?,?)", ("m-" + secrets.token_hex(6), owner, aid,
-                                    "🔑 Разрешаю тебе писать мне — пиши.", time.time()))
+                    self.db.execute("INSERT INTO msgs (mid, src, dst, text, at, kind) VALUES (?,?,?,?,?,?)", ("m-" + secrets.token_hex(6), owner, aid,
+                                    "🔑 Разрешаю тебе писать мне — пиши.", time.time(), "answer"))     # ответ на просьбу — будит всегда
                 WAKE.notify_all()
             else:
                 if self.rule_get(owner, aid)["reach"] == "write":
@@ -1895,16 +1910,17 @@ class Relay:
         if wake is not None:
             if self.is_owner(me) and subj == me:
                 raise ValueError("человека письма не будят — wake только у агента")
+            ws = subj + ":agent" if str(subj).startswith("acct:") and subj.count(":") == 1 else subj    # с аккаунта — в «мои агенты»
             if wake is True or wake == 1 or wake == "on":
-                if not str(subj).startswith("acct:"):
+                if not str(ws).startswith("acct:"):
                     self.need_waker(me, {"from": True})
             for ob in both:
-                if ob != tgt and self.rule_get(subj, ob)["wake"] is not None:
-                    self.rule_put(subj, ob, wake=None)
+                if ob != tgt and self.rule_get(ws, ob)["wake"] is not None:
+                    self.rule_put(ws, ob, wake=None)
             on = wake is True or wake in (1, "on")
-            self.rule_put(subj, tgt, wake=None if wake == "default" else 1 if on else None)
+            self.rule_put(ws, tgt, wake=None if wake == "default" else 1 if on else None)
             if wake != "default" and not on and self.rule_eff(me, peer)["wake"][0]:
-                self.rule_put(subj, tgt, wake=0)
+                self.rule_put(ws, tgt, wake=0)
             if on:
                 self.wake_granted(me, peer)
             said.append("будят — как у всех" if wake == "default" else ("его письма будят" if on else "его письма не будят") + (to if on else ""))
@@ -1918,6 +1934,7 @@ class Relay:
         return {"me": self.addr_of(me), "peer": "*", "reach": e["reach"][0], "reach_text": REACH_TEXT[e["reach"][0]],
                 "reach_from": self.level_name(*e["reach"][1:]), "wake": bool(e["wake"][0]), "wake_from": self.level_name(*e["wake"][1:]),
                 "hidden": bool(e["hidden"][0]), "hidden_from": self.level_name(*e["hidden"][1:]),
+                "asks": bool(e["asks"][0]), "asks_from": self.level_name(*e["asks"][1:]),
                 "set": {k: v for k, v in g.items() if v is not None}, "chain": self.rule_chain(me),
                 "help": "reach — что из Сети до тебя доходит: write (пишут все) · ask (доходит только просьба) · closed (ни писем, ни "
                         "просьб) · block; wake — будит ли тебя то, что доходит; hidden — не виден в Сети. Своя запись сильнее аккаунта "
