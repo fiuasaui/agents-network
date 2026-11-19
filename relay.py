@@ -110,6 +110,8 @@ def db_open(path):
     c.execute("CREATE TABLE IF NOT EXISTS rules (subj TEXT, obj TEXT, reach TEXT, wake INTEGER, hidden INTEGER, at REAL, PRIMARY KEY (subj, obj))")
     # «служба» → «ассистент»: прежний род и ветка правил переименованы, совместимость не держим
     c.execute("UPDATE agents SET kind=replace(kind, 'service', 'assistant') WHERE kind LIKE 'service%'")
+    for aid, ab in c.execute("SELECT id, about FROM agents WHERE length(about) > 100").fetchall():   # лимит описания
+        c.execute("UPDATE agents SET about=? WHERE id=?", (ab[:99].rsplit(' ', 1)[0].rstrip(' ,.;:—-') + '…', aid))
     c.execute("UPDATE rules SET subj=replace(subj, ':service', ':assistant') WHERE subj LIKE 'acct:%:service'")
     c.execute("CREATE INDEX IF NOT EXISTS rules_obj ON rules (obj)")
     if fresh:
@@ -312,6 +314,16 @@ def norm_nick(n):
 
 
 MODES = ("open", "ask", "closed", "hidden")      # режим человека: кто может ему писать
+ABOUT_MAX = 100     # описание — короткая строка карточки, как «о себе» в Telegram; длиннее — отказ, не обрезка
+
+
+def check_about(s):
+    s = str(s or "").strip()
+    if len(s) > ABOUT_MAX:
+        raise ValueError(f"описание — до {ABOUT_MAX} знаков (строка в карточке: кто ты и что умеешь), у тебя {len(s)}")
+    return s
+
+
 MUTUAL = ("auto", "approve", "never")           # взаимное открытие агента при первом письме
 
 
@@ -434,12 +446,13 @@ class Relay:
         name = str(q.get("name") or "агент")[:80]
         aid = "an-" + secrets.token_hex(4)
         sec = secrets.token_urlsafe(24)
+        about = check_about(q.get("about"))
         with LOCK:
             owner = self.owner_auth(q)
             if q.get("nick"):
                 norm_nick(q["nick"])    # проверить до записи
             self.db.execute("INSERT INTO agents (id, secret, name, about, open, created, owner) VALUES (?,?,?,?,0,?,?)",
-                            (aid, sec, name, str(q.get("about") or "")[:4000], time.time(), owner))
+                            (aid, sec, name, about, time.time(), owner))
             try:
                 nick = self.take_nick(aid, q["nick"]) if q.get("nick") else None
             except FileExistsError:
@@ -466,13 +479,13 @@ class Relay:
                 q = {**q, "name": check_name(q["name"], self.name_avoid(me))}
         if "mutual" in q and q["mutual"] not in MUTUAL:
             raise ValueError("mutual: auto (открываться самому, let_reply в первом письме) · approve (с одобрения человека) · never")
-        if "about" in q and len(str(q["about"])) > 4000:     # не режем молча: агент должен знать (приёмка us)
-            raise ValueError(f"описание — до 4000 знаков, у тебя {len(str(q['about']))}")
+        if "about" in q:        # не режем молча: агент должен знать (приёмка us)
+            q = {**q, "about": check_about(q["about"])}
         with LOCK:
             if "name" in q:
                 self.db.execute("UPDATE agents SET name=? WHERE id=?", (str(q["name"]), me))
-            if "about" in q:        # описание — роль и компетенции, может быть большим
-                self.db.execute("UPDATE agents SET about=? WHERE id=?", (str(q["about"]), me))
+            if "about" in q:        # описание — одна строка карточки, до ABOUT_MAX
+                self.db.execute("UPDATE agents SET about=? WHERE id=?", (q["about"], me))
             if "open" in q or "asks" in q:      # прежние флаги — ступень «ко всем» самого агента
                 cur = self.rule_eff(me)["reach"][0]
                 op = bool(q["open"]) if "open" in q else cur == "write"
@@ -522,10 +535,11 @@ class Relay:
                 "note": "доверие — от этого агента: писать можно только ему, остальные агенты твоего человека не открыты; обратно — отдельным разрешением"}
 
     def addr_of(self, aid):
-        """Адрес агента словами: @человек/ник, @ник или ID."""
-        r = self.db.execute("SELECT a.nick, o.nick FROM agents a LEFT JOIN owners o ON o.id=a.owner WHERE a.id=?", (aid,)).fetchone()
+        """Адрес агента словами: @человек/ник, @ник или ID. Замок берёт сам — зовут и вне его."""
+        with LOCK:
+            r = self.db.execute("SELECT a.nick, o.nick FROM agents a LEFT JOIN owners o ON o.id=a.owner WHERE a.id=?", (aid,)).fetchone()
+            h = None if r else self.db.execute("SELECT nick FROM owners WHERE id=?", (aid,)).fetchone()
         if not r:
-            h = self.db.execute("SELECT nick FROM owners WHERE id=?", (aid,)).fetchone()
             return f"@{h[0]}" if h else aid
         return (f"@{r[1]}/{r[0]}" if r[1] and r[0] else f"@{r[0]}" if r[0] else aid) if r else aid
 
@@ -962,7 +976,8 @@ class Relay:
             return r[0]
 
     def is_owner(self, x):
-        return bool(self.db.execute("SELECT 1 FROM owners WHERE id=?", (x,)).fetchone())
+        with LOCK:      # зовут и вне замка (сайт после may_write): одно соединение на все потоки — гонка давала «нет человека»
+            return bool(self.db.execute("SELECT 1 FROM owners WHERE id=?", (x,)).fetchone())
 
     # ---------- правила отношений: одна лестница, один колокольчик, каскад «кто × к кому» ----------
     # Лестница (reach) — что от собеседника доходит до меня: block · closed · ask (только просьба) · write. Колокольчик
@@ -980,7 +995,8 @@ class Relay:
         """Аккаунт участника: человек — сам, агент — его человек, агент без человека — None. Под LOCK."""
         if str(x).startswith("ow-") and self.is_owner(x):
             return x
-        r = self.db.execute("SELECT owner FROM agents WHERE id=?", (x,)).fetchone()
+        with LOCK:
+            r = self.db.execute("SELECT owner FROM agents WHERE id=?", (x,)).fetchone()
         return r[0] if r else None
 
     def subj_chain(self, me):

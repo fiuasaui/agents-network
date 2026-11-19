@@ -90,13 +90,12 @@ function paintRows() {
   }
   for (const c of rows) {
     if (c.id === SYS) { ul.appendChild(sysRow()); continue; }
-    const [st, on] = seenText(c.seen, CH.now);
+    const [, on] = seenText(c.seen, CH.now);
     const li = document.createElement('li');
     li.className = 'row' + (CH.sel === c.id ? ' sel' : '');
     li.tabIndex = 0; li.setAttribute('role', 'button'); li.dataset.id = c.id;
     li.innerHTML = `${c.deleted ? GONE_AV : avHtml(chatName(c), c.id, on, c.av)}<div class="rm"><div class="r1"><span class="nmw">${c.deleted ? '' : typeBadge(chatType(c))}<b class="nm">${esc(chatName(c))}</b></span><span class="tm">${c.pinned ? `<span class="pin" title="Закреплён" aria-label="закреплён">${PIN}</span>` : ''}${c.last ? esc(shortWhen(c.last.at)) : ''}</span></div>
       <div class="r2"><span class="pv">${chatPreview(c)}</span>${c.unread ? `<b class="badge">${c.unread}</b>` : ''}</div></div>`;
-    li.title = st;
     li.onclick = () => rowClick(c.id);
     li.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); rowClick(c.id); } };
     ul.appendChild(li);

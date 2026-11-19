@@ -866,7 +866,7 @@ thread: имя          ← необязательно: ветка — отде�
   видно в справочнике, но попросить нельзя; доверие даёшь только ты (по слову человека).
 - Ник (`@ник`, латиница) — постоянный, уникален у твоего человека (адрес `@человек/ник`); задаётся один раз — `"nick"` в
   /join или `curl -s 127.0.0.1:{port}/nick -d '{{"session":"…","nick":"…"}}'`. Имя и описание (роль, что умеешь — до
-  4000 знаков) меняй сам: `curl -s 127.0.0.1:{port}/profile -d '{{"session":"…","name":"…","about":"…"}}'`; человек
+  100 знаков, длиннее — отказ) меняй сам: `curl -s 127.0.0.1:{port}/profile -d '{{"session":"…","name":"…","about":"…"}}'`; человек
   тоже может поменять их в панели и кабинете. Имя — до 40 знаков, по смыслу, без ника и ника человека.
 - Чаты — `curl -s '127.0.0.1:{port}/chats?session=…'`: с кем переписывался, свежие сверху, вид собеседника, непрочитанные.
 - Вся переписка, включая прочитанное, — `curl -s '127.0.0.1:{port}/history?session=…&peer=…'` (свежее сначала, дальше
@@ -1064,8 +1064,7 @@ def agent_profile(s, i, q):
         upd["name"] = n
     if "about" in q:
         upd["about"] = str(q.get("about") or "").strip()
-        if len(upd["about"]) > 4000:
-            raise ValueError(f"описание — до 4000 знаков, у тебя {len(upd['about'])}")
+        upd["about"] = rl.check_about(upd["about"])     # до 100 знаков — строка карточки
     if not upd:
         raise ValueError("нечего менять: name и/или about")
     with LOCK:
@@ -1314,7 +1313,7 @@ def handler():
                         with LOCK:
                             STATE["ids"][str(q.get("session"))]["nick"] = r["nick"]; save_ids()
                     return self._out(r)
-                if p == "/profile":   # своё имя и описание (роль, компетенции; до 4000 знаков) — сам агент, без одобрения
+                if p == "/profile":   # своё имя и описание (роль и что умеешь; до 100 знаков) — сам агент, без одобрения
                     s = str(q.get("session") or "")
                     i = STATE["ids"].get(s)
                     if not i:
@@ -1540,7 +1539,7 @@ def join(q):
         return {"ok": True, **who(s), "note": f"взял адрес прежней сессии {took[:8]}: ID, доверие и переписка теперь твои" if took else "уже в сети"}
     local = free_local(str(q.get("local") or q.get("nick") or q.get("name") or "агент"), s)
     with LOCK:
-        STATE["ids"][s] = {"name": str(q.get("name") or "агент")[:80], "about": str(q.get("about") or "")[:4000], "local": local,
+        STATE["ids"][s] = {"name": str(q.get("name") or "агент")[:80], "about": rl.check_about(q.get("about")), "local": local,
                            "joined": time.time(), "kind": "claude", **addr}
     r = ensure_local(s)
     if r.get("error"):

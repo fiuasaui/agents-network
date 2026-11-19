@@ -639,7 +639,8 @@ body.as-on .bar { box-shadow: inset 0 -2px 0 #2b5278; }
 .byh { margin-right: 6px; color: #a9d3fb; font-weight: 600; }
 /* «Подключить машину»: шаги, выпущенный ключ, карточка ключа — шапка и настройки строками «подпись слева, управление справа» */
 .ksteps { margin: 10px 0 14px; padding-left: 22px; color: var(--ink); font-size: 14px; line-height: 1.5; } .ksteps li { margin: 4px 0; }
-.kout { margin-top: 12px; } .kout .note { margin: 0 0 8px; }
+.kc .kval { margin-top: 12px; } .kc pre.kmask { color: var(--muted); letter-spacing: 2px; user-select: none; } .kc .kn { margin: 8px 0 0; }
+.kc .kacts { margin: 10px 0 0; flex-wrap: wrap; justify-content: flex-start; } .kc .kacts .bad { color: #f87171; }
 .kval { display: flex; align-items: center; gap: 10px; } .kval pre.key { flex: 1; min-width: 0; margin: 0; } .kval .btn { flex: none; }
 .list.kl li.kc { display: block; padding: 14px 12px; }
 .list.kl li.kc:hover { background: transparent; }
@@ -742,13 +743,18 @@ body.cp-open .chead .cpbtn { color: #6ab3f3; }
 .cp-ib { flex: none; width: 36px; height: 36px; display: grid; place-items: center; border: 0; border-radius: 50%; background: none; color: var(--muted); cursor: pointer; transition: background .2s, color .2s; }
 .cp-ib:hover { background: rgba(255, 255, 255, .07); color: var(--ink); }
 .cp-ib svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.cp-body.cfresh { animation: cpFade .3s ease-out; } @keyframes cpFade { from { opacity: 0; } to { opacity: 1; } }
+.cp-body.cfresh, #card-body > form.cedit { animation: cpFade .3s ease-out; } @keyframes cpFade { from { opacity: 0; } to { opacity: 1; } }
 .cp-hero { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 0 20px 14px; }
 .cp-hero .av { width: 96px; height: 96px; font-size: 32px; }
 .cp-hero .av .on { width: 16px; height: 16px; right: 4px; bottom: 4px; }
 .cp-hero h2 { margin: 12px 0 2px; font-size: 19px; font-weight: 650; overflow-wrap: anywhere; }
 .cp-st { margin: 0; font-size: 14px; color: var(--muted); } .cp-st.on { color: #6ab3f3; }
 .cp-acts { display: flex; gap: 8px; padding: 0 16px 14px; }
+.cp-go { flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; height: 38px; border: 0; border-radius: 10px; background: #2b5278; color: #fff;
+  font: inherit; font-size: 14.5px; font-weight: 600; text-decoration: none; cursor: pointer; transition: background .2s; }
+.cp-go:hover { background: #33608c; text-decoration: none; }
+.cp-go svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+a.cp-ib { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
 .cp-a { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 10px 6px 9px; border: 0; border-radius: 12px; background: #202b36; color: var(--ink);
   font: inherit; font-size: 12.5px; text-decoration: none; cursor: pointer; transition: background .2s; }
 .cp-a:hover { background: #2a3846; text-decoration: none; }
@@ -759,7 +765,10 @@ body.cp-open .chead .cpbtn { color: #6ab3f3; }
 .cp-row { display: flex; align-items: center; gap: 8px; padding: 8px 12px 8px 20px; }
 .cp-row > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .cp-row b { font-weight: 500; font-size: 15px; overflow-wrap: anywhere; }
-.cp-row span { font-size: 13px; color: #6ab3f3; } .cp-row span code { font-size: 12px; color: var(--muted); background: none; padding: 0; }
+.cp-row span { font-size: 13px; color: var(--muted); }
+button.cp-row { width: 100%; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; transition: background .2s; }
+button.cp-row:hover, button.cp-row:focus-visible { background: rgba(255, 255, 255, .05); outline: none; }
+.cp-row b.lnk { color: #6ab3f3; } .cp-row b.mono { font: 500 14px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; } .cp-row span code { font-size: 12px; color: var(--muted); background: none; padding: 0; }
 .cp-about { margin: 0; font-size: 14.5px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
 .cp-nums { display: flex; justify-content: space-around; gap: 4px; border-top: 8px solid #0e1621; padding: 12px 10px; }
 .cp-n { display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; border-radius: 10px; color: var(--muted); cursor: default; transition: background .2s; }
@@ -826,3 +835,9 @@ body.cp-open .chead .cpbtn { color: #6ab3f3; }
   .acc-hd { flex-wrap: wrap; row-gap: 6px; } .acc-nm { flex-basis: calc(100% - 20px); } .acc-chips { max-width: 100%; justify-content: flex-start; }
   .acc-row.d2 > .acc-hd { padding-left: 36px; } .acc-ed { padding-left: 16px; }
 }
+
+/* «Доступ»: ряд ступеней без «как выше», крестик «сбросить» сбоку, откуда значение — строкой ниже */
+.acc-segw { display: flex; align-items: center; gap: 6px; } .acc-segw .cp-seg { flex: 1; min-width: 0; }
+.acc-x svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.acc-from { margin: 4px 0 0; font-size: 12.5px; color: var(--muted); }
+.acc-sws { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 6px; } .acc-ed .cp-sw { padding-left: 0; padding-right: 0; }

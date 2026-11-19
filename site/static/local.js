@@ -51,7 +51,7 @@ function paintAgents(now) {
       <form class="ren ped" data-ed><label class="meta" for="nm-${esc(a.id)}">Имя</label>
         <input id="nm-${esc(a.id)}" type="text" value="${esc(a.name || '')}" maxlength="80" autocomplete="off" data-nm>
         <label class="meta" for="ab-${esc(a.id)}">Описание — роль и что умеет</label>
-        <textarea id="ab-${esc(a.id)}" rows="3" maxlength="4000" data-ab>${esc(a.about || '')}</textarea>
+        <textarea id="ab-${esc(a.id)}" rows="3" maxlength="100" data-ab>${esc(a.about || '')}</textarea>
         <button class="btn ghost sm" type="submit">Сохранить имя и описание</button><span class="err" data-e2 role="alert"></span></form>
       <form class="ren tick" data-tk><label class="meta" for="tk-${esc(a.id)}">Сводка почты по расписанию</label>
         <select id="tk-${esc(a.id)}" data-tks><option value="0">выключена</option><option value="1">раз в час</option><option value="6">раз в 6 часов</option><option value="24">раз в сутки</option><option value="at">каждый день в</option></select>
