@@ -560,7 +560,10 @@ class Relay:
             if q.get("peer"):
                 if q.get("on", True) is not False:
                     self.need_waker(me, {"from": True})
-                self.wake_peer(me, self.target(q["peer"]), q.get("on", True) is not False)
+                pid = self.target(q["peer"])
+                self.wake_peer(me, pid, q.get("on", True) is not False)
+                if q.get("on", True) is not False:
+                    self.wake_granted(me, pid)
             return self.wake_view(me)
 
     def need_waker(self, aid, patch):
@@ -590,7 +593,48 @@ class Relay:
     def ask(self, q):
         """Попросить разрешения писать агенту: получатель получает одно письмо-просьбу (и может ответить),
         его человек — запрос в кабинете, если агент под одобрением. Разрешили — просившему письмо «пиши»."""
+        if q.get("wake"):       # просьба будить: после права писать
+            return self.wake_knock(self.auth(q), q.get("to"), q.get("note"))
         return self.knock(self.auth(q), q.get("to"), q.get("note"), mutual=bool(q.get("mutual")))
+
+    def wake_extra(self, src, dst, note):
+        """Что ещё сделать по просьбе будить (на сайте — просьба на одобрение агенту под человеком). Строка для письма."""
+        return ""
+
+    def wake_knock(self, src, to, note):
+        """Просьба «разреши будить тебя моими письмами»: просит агент или человек, которому писать уже можно.
+        Агенту — письмо-просьба (kind ask); агент без человека решает сам (/v1/wake с peer), с человеком — одобрение:
+        администратор ключом или человек в «Системе». Разрешили — просившему письмо «⏰ разрешил будить». Человека письмо
+        не будит, просить его нельзя."""
+        note = " ".join(str(note or "").split())[:300]
+        with LOCK:
+            if self.human_of(to) or str(to or "").startswith("ow-"):
+                raise ValueError("человека письмо не будит — будить можно только агента")
+            dst = self.resolve(to)
+            if dst == src or not self.db.execute("SELECT 1 FROM agents WHERE id=?", (dst,)).fetchone() or self.hidden_wall(src, dst):
+                raise LookupError("нет такого агента")
+            if not self.may_write(src, dst):
+                raise PermissionError("сначала нужно право писать ему — попроси /v1/ask без wake")
+            if self.wakes(dst, src) == "from":
+                return {"ok": True, "already": True, "message": "твои письма его уже будят"}
+            now = time.time()
+            if self.db.execute("SELECT 1 FROM msgs WHERE src=? AND dst=? AND kind='ask' AND text LIKE '⏰%' AND at>?", (src, dst, now - REPLY_TTL)).fetchone():
+                return {"ok": True, "pending": True, "message": "ты уже просил будить — ждём решения; ответ придёт письмом"}
+            extra = self.wake_extra(src, dst, note)
+            me = self.addr_of(src)
+            self.db.execute("INSERT INTO msgs (mid, src, dst, text, at, kind) VALUES (?,?,?,?,?,?)", ("m-" + secrets.token_hex(6), src, dst,
+                            f"⏰ {me} просит разрешения будить тебя своими письмами" + (f": «{note}»." if note else ".") + self.asker_line(src) +
+                            (f" {extra}" if extra else f" Разрешить — POST /v1/wake {{\"peer\": \"{src if self.is_owner(src) else me}\", \"on\": true}}; отказать — не отвечай."),
+                            now, "ask"))
+            self.acted(src)
+            WAKE.notify_all()
+        return {"ok": True, "asked": self.addr_of(dst), "wake": True, "message": "просьба будить отправлена: решит агент или его человек, ответ придёт письмом"}
+
+    def wake_granted(self, me, peer):
+        """Агент me разрешил peer будить себя: если peer просил — ему письмо «разрешил». Под LOCK."""
+        if self.db.execute("SELECT 1 FROM msgs WHERE src=? AND dst=? AND kind='ask' AND text LIKE '⏰%' AND at>?", (peer, me, time.time() - REPLY_TTL)).fetchone() \
+                and not self.db.execute("SELECT 1 FROM msgs WHERE src=? AND dst=? AND text LIKE '⏰ %разрешил будить%' AND at>?", (me, peer, time.time() - REPLY_TTL)).fetchone():
+            self.note_to(me, peer, f"⏰ {self.addr_of(me)} разрешил будить его твоими письмами.")
 
     def asker_line(self, src):
         """Кто просит — для письма-просьбы: со статистикой просьба не страшна. Под LOCK."""
@@ -1271,6 +1315,7 @@ class Relay:
             unread, = self.db.execute("SELECT COUNT(*) FROM msgs WHERE src=? AND dst=? AND acked IS NULL", (aid, owner)).fetchone()
             out.append({"id": aid, "peer": True, "type": "service" if self.is_service(aid) else "agent", "allowed": self.trusts(owner, aid), "nick": nick, "name": name, "about": about, "open": bool(op), "seen": seen,
                         "created": created, "av": av, "addr": self.addr_of(aid), "unread": unread,
+                        "can_write": bool(self.may_write(owner, aid)), "wakes": self.wakes(aid, owner) == "from",
                         "last": ({"dir": "me" if last[0] == owner else "to_me", "at": last[2],
                                   "text": (" ".join(TAGS.sub(" ", last[1]).split()) if last[3] == "html" else last[1])[:200]} if last else None)})
         return out

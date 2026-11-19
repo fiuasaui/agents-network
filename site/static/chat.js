@@ -243,6 +243,14 @@ function paintHead() {
       : on ? 'Агент может писать тебе. Нажми, чтобы запретить' : 'Агент не может ответить тебе, пока ты не разрешишь'; alw.removeAttribute('title');
     alw.onclick = async () => { alw.disabled = true;
       try { await api('/api/allow', { agent: c.id, on: !on }); c.allowed = !on; paintHead(); loadChats(); } catch (e) { hint(e.message); } alw.disabled = false; }; }
+  const wk = $('c-wake');   // просьба будить: чужой агент, писать уже можно; человека и чат-агента письмо не будит
+  if (wk) { wk.hidden = !!CH.as || !(c.peer && !c.human && !c.service && c.can_write);
+    wk.classList.toggle('open', !!c.wakes); $('c-wake-t').textContent = c.wakes ? 'Мои письма будят' : 'Попросить будить';
+    wk.dataset.tip = c.wakes ? 'Агент разрешил: твоё письмо будит его сразу' : 'Сейчас твоё письмо ждёт, пока агент сам заглянет в почту. Нажми — попросить, чтобы твои письма его будили';
+    wk.removeAttribute('title');
+    wk.onclick = c.wakes ? null : async () => { wk.disabled = true;
+      try { const r = await api('/api/net-ask', { to: c.id, wake: true }); hint(r.already ? 'Твои письма его уже будят' : r.pending ? 'Уже просил — ждём решения' : 'Попросил: решит агент или его человек, ответ придёт письмом'); }
+      catch (e) { hint(e.message); } wk.disabled = false; }; }
   const acc = $('c-acc');   // только в кабинете сайта: кому агент открыт — и переход к его правам
   if (acc && (c.peer || CH.as)) acc.hidden = true;     // чат с чужим агентом: его права не твои
   else if (acc) { acc.hidden = false; acc.href = '#agents/' + encodeURIComponent(c.id); const so = c.service && c.access ? c.access !== 'signed' : !!c.open;
