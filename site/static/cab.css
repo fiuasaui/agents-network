@@ -521,24 +521,24 @@ a.me-chip { text-decoration: none; cursor: pointer; transition: background 150ms
 .radm .btn { flex: none; }
 @media (max-width: 760px) { .radm { flex-direction: column; align-items: flex-start; } }
 .apvia { display: block; margin-top: 2px; white-space: normal; }
-/* «Службы» */
-.svcf { display: flex; flex-direction: column; gap: 12px; margin: 6px 0 18px; padding: 16px; border-radius: 14px; background: #1f2b38; }
-.svcf label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--muted); }
-.svcf input, .svcf textarea, .svcf select { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; min-width: 0; }
-.svcf .pk { display: flex; width: 100%; } .svcf .pk-b { min-height: 40px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); padding: 0 8px 0 11px; }
-.svcf .pk-b:hover, .svcf .pk.open .pk-b { background: var(--bg); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
-.svcf .svcg { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.svcf fieldset { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 0; display: flex; flex-direction: column; gap: 6px; }
-.svcf legend { color: var(--muted); font-size: 14px; padding: 0 4px; }
-.svcf label.ck { flex-direction: row; align-items: center; gap: 8px; color: var(--ink); }
-.svcf label.ck input { width: 18px; height: 18px; }
-.svcsig pre, .svcf pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; background: var(--bg); border-radius: 10px; padding: 10px; }
-.svcsig summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+/* «Ассистенты» */
+.asstf { display: flex; flex-direction: column; gap: 12px; margin: 6px 0 18px; padding: 16px; border-radius: 14px; background: #1f2b38; }
+.asstf label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--muted); }
+.asstf input, .asstf textarea, .asstf select { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; min-width: 0; }
+.asstf .pk { display: flex; width: 100%; } .asstf .pk-b { min-height: 40px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); padding: 0 8px 0 11px; }
+.asstf .pk-b:hover, .asstf .pk.open .pk-b { background: var(--bg); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.asstf .asstg { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.asstf fieldset { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.asstf legend { color: var(--muted); font-size: 14px; padding: 0 4px; }
+.asstf label.ck { flex-direction: row; align-items: center; gap: 8px; color: var(--ink); }
+.asstf label.ck input { width: 18px; height: 18px; }
+.asstsig pre, .asstf pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; background: var(--bg); border-radius: 10px; padding: 10px; }
+.asstsig summary { cursor: pointer; color: var(--muted); font-size: 14px; }
 .tkr { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .tkr > div { min-width: 0; } .tkt { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .tkt code { background: var(--code); border-radius: 6px; padding: 1px 6px; font-size: 13px; }
-.svph { justify-content: space-between; }
-@media (max-width: 760px) { .svcf .svcg { grid-template-columns: minmax(0, 1fr); } .tkr { flex-direction: column; } }
+.asvph { justify-content: space-between; }
+@media (max-width: 760px) { .asstf .asstg { grid-template-columns: minmax(0, 1fr); } .tkr { flex-direction: column; } }
 /* файлы в чате кабинета */
 .cfiles { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .cfile, .cchip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 10px; background: rgba(255,255,255,.07); color: #cfe3fa; text-decoration: none; font-size: 14px; max-width: 100%; overflow-wrap: anywhere; }
@@ -546,8 +546,8 @@ a.me-chip { text-decoration: none; cursor: pointer; transition: background 150ms
 .catt { display: flex; flex-wrap: wrap; gap: 6px; flex-basis: 100%; order: -1; }
 .cchip button { appearance: none; border: 0; background: none; color: var(--muted); font-size: 18px; cursor: pointer; min-width: 28px; min-height: 28px; }
 .composer { flex-wrap: wrap; } .ib.clip { cursor: pointer; }
-/* «Службы»: описания служб и наборов переносятся — общее «.list .meta { nowrap }» выталкивало их за карточку под кнопку (снимок 16.11) */
-[data-view="services"] .list .meta { white-space: normal; overflow-wrap: anywhere; }
+/* «Ассистенты»: описания ассистентов и наборов переносятся — общее «.list .meta { nowrap }» выталкивало их за карточку под кнопку (снимок 16.11) */
+[data-view="assistants"] .list .meta { white-space: normal; overflow-wrap: anywhere; }
 .tkg { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; } .tkg .pill .x { background: none; border: 0; color: inherit; cursor: pointer; padding: 0 0 0 4px; font: inherit; }
 .tkgf { display: flex; gap: 6px; flex: 1 1 260px; min-width: 0; } .tkgf input { flex: 1; min-width: 0; font: inherit; font-size: 14px; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 5px 9px; }
 
@@ -578,7 +578,7 @@ button.me-chip:hover, button.me-chip[aria-expanded="true"] { background: #2b3947
 .chead button.acc { border: 0; background: none; font: inherit; cursor: pointer; }
 .chead button.acc:disabled { opacity: .6; cursor: default; }
 
-.conv.asv .clip { display: none; }   /* письмо от имени агента — пока без файлов */
+.conv.asview .clip { display: none; }   /* письмо от имени агента — пока без файлов */
 
 /* цвет выделенной строки: отдельный, темнее любого фона аватарки */
 :root { --rowsel: #1f4469; }
@@ -675,7 +675,7 @@ body.as-on .bar { box-shadow: inset 0 -2px 0 #2b5278; }
 /* наборы тулз — карточками с границей, подсветка при наведении */
 #tk-list li.tkr, #tk-mine li.tkr, #tk-public li.tkr { margin: 0 0 10px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; transition: border-color .15s, background-color .15s; }
 #tk-list li.tkr:hover, #tk-mine li.tkr:hover, #tk-public li.tkr:hover { border-color: rgba(140, 175, 220, .35); }
-#svc-list li.empty, #tk-list li.empty, #tk-mine li.empty, #tk-public li.empty { display: block; margin: 0; background: none; padding: 12px 14px; border: 1px dashed var(--line); border-radius: 12px; font-size: 14px; }
+#asst-list li.empty, #tk-list li.empty, #tk-mine li.empty, #tk-public li.empty { display: block; margin: 0; background: none; padding: 12px 14px; border: 1px dashed var(--line); border-radius: 12px; font-size: 14px; }
 /* карточка агента блоками: «кто» — плашками у аватарки, дальше состояние, описание, цифры, действия */
 #dlg-card .ch1-t.tags { flex-direction: row; flex-wrap: wrap; gap: 6px; }
 #dlg-card .blk .cact, #dlg-card .blk .cks { margin-top: 0; }
@@ -796,6 +796,11 @@ body.cp-open .chead .cpbtn { color: #6ab3f3; }
 /* ступень в настройках карточки: что действует и откуда */
 .cp-now { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 0 0 10px; font-size: 14px; }
 .cp-now b { font-weight: 650; } .cp-now span { font-size: 12.5px; color: var(--muted); }
+.cp-now { cursor: help; border-radius: 8px; } .cp-now svg { width: 15px; height: 15px; align-self: center; fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linecap: round; }
+/* действующее значение унаследовано: пустая клетка — подсветка пунктиром, своё — сплошным */
+.cp-seg.inh button[aria-checked="true"] { background: none; color: var(--ink); border: 1.5px dashed rgba(122, 170, 220, .8); }
+.cp-reset { display: block; margin: 6px 0 0; padding: 2px 0; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; text-align: left; }
+.cp-reset:hover { color: var(--ink); text-decoration: underline; }
 /* «Настройки → Доступ»: дерево уровней и исключения */
 .acc-tree { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .acc-row { border-radius: 12px; transition: background .2s; }

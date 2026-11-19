@@ -217,7 +217,7 @@ a.nav-cab .nav-sub { font-weight: 400; opacity: .8; }
   /* плавно: только opacity и transform — их рисует видеокарта, без перерисовки текста; выход чуть медленнее входа */
   opacity: 0; transform: translate3d(0, 5px, 0) scale(.97); transform-origin: 50% 100%; will-change: opacity, transform; backface-visibility: hidden;
   transition: opacity 200ms cubic-bezier(.4, 0, .2, 1), transform 200ms cubic-bezier(.4, 0, .2, 1); }
-.tipx .tipt { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 6; overflow: hidden; }
+.tipx .tipt { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 12; overflow: hidden; white-space: pre-line; }
 .tipx[popover] { inset: auto; margin: 0; overflow: visible; }
 .tipx .tiph::first-letter { text-transform: uppercase; }
 .tipx .tiph { display: block; font-weight: 700; color: #fff; margin-bottom: 2px; }
@@ -248,7 +248,7 @@ a.tag, button.tag { cursor: pointer; } a.tag:active, button.tag:active { transfo
 .tbadge { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 16px; height: 16px; margin-right: 4px; vertical-align: -2px;
   border-radius: 5px; color: #8fa3b8; outline: none; cursor: default; }
 .tbadge svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.tbadge.t-human { color: #7bc8a0; } .tbadge.t-service { color: #e8b04e; } .tbadge.t-service svg { fill: currentColor; stroke-width: 1.2; }
+.tbadge.t-human { color: #7bc8a0; } .tbadge.t-assistant { color: #e8b04e; } .tbadge.t-assistant svg { fill: currentColor; stroke-width: 1.2; }
 .tbadge:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
 
 /* свой выпадающий список (core.js): кнопка как поле, список как меню профиля; системный select скрыт */

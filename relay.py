@@ -46,7 +46,7 @@ def db_open(path):
         c.execute("ALTER TABLE msgs ADD COLUMN fmt TEXT")
     if "files" not in mcols:        # приложенные файлы письма: JSON [{id, name, size, mime}]
         c.execute("ALTER TABLE msgs ADD COLUMN files TEXT")
-    if "thread" not in mcols:       # ветка переписки: NULL — общий чат; чат-агент в режиме «много чатов» ведёт каждую отдельно
+    if "thread" not in mcols:       # ветка переписки: NULL — общий чат; ассистент в режиме «много чатов» ведёт каждую отдельно
         c.execute("ALTER TABLE msgs ADD COLUMN thread TEXT")
     if "by" not in mcols:           # человек, написавший от имени агента: видно всем участникам переписки
         c.execute("ALTER TABLE msgs ADD COLUMN by TEXT")
@@ -78,7 +78,7 @@ def db_open(path):
     # чёрный список: owner (агент или человек) закрыл peer (агент или человек — тогда и всех его агентов) —
     # ни писем, ни просьб, ни будильника; снимает только сам owner (или его человек за своего агента)
     c.execute("CREATE TABLE IF NOT EXISTS blocks (owner TEXT, peer TEXT, at REAL, PRIMARY KEY (owner, peer))")
-    if "kind" not in [r[1] for r in c.execute("PRAGMA table_info(agents)")]:     # NULL — агент, 'service' — чат-агент (сайт)
+    if "kind" not in [r[1] for r in c.execute("PRAGMA table_info(agents)")]:     # NULL — агент, 'assistant' — ассистент (сайт)
         c.execute("ALTER TABLE agents ADD COLUMN kind TEXT")
     if "only" not in [r[1] for r in c.execute("PRAGMA table_info(trust)")]:
         # 1 — разрешение только этому участнику (взаимное открытие): доверие человеку его агентов не открывает
@@ -104,10 +104,13 @@ def db_open(path):
         # взаимная просьба: разрешат — и просившему, и адресату писать друг другу
         c.execute("ALTER TABLE knocks ADD COLUMN mutual INTEGER DEFAULT 0")
     # правила отношений: одна таблица вместо доверия, чёрного списка, будильника «from», «открыт/просьбы/скрыт»
-    # агента и режима человека. subj — кто: агент · человек `ow-…` · аккаунт `acct:ow-…` · ветка `acct:ow-…:agent|service`;
+    # агента и режима человека. subj — кто: агент · человек `ow-…` · аккаунт `acct:ow-…` · ветка `acct:ow-…:agent|assistant`;
     # obj — к кому: `*` (все) · `acct:ow-…` (весь чужой аккаунт) · `ow-…` (сам человек) · агент. NULL в поле — наследовать сверху
     fresh = not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='rules'").fetchone()
     c.execute("CREATE TABLE IF NOT EXISTS rules (subj TEXT, obj TEXT, reach TEXT, wake INTEGER, hidden INTEGER, at REAL, PRIMARY KEY (subj, obj))")
+    # «служба» → «ассистент»: прежний род и ветка правил переименованы, совместимость не держим
+    c.execute("UPDATE agents SET kind=replace(kind, 'service', 'assistant') WHERE kind LIKE 'service%'")
+    c.execute("UPDATE rules SET subj=replace(subj, ':service', ':assistant') WHERE subj LIKE 'acct:%:service'")
     c.execute("CREATE INDEX IF NOT EXISTS rules_obj ON rules (obj)")
     if fresh:
         rules_migrate(c)
@@ -127,7 +130,7 @@ REACH = ("block", "closed", "ask", "write")     # лестница: чёрный
 REACH_TEXT = {"block": "чёрный список", "closed": "закрыт: ни писем, ни просьб", "ask": "по просьбе: доходит только просьба",
               "write": "пишет"}
 # дефолты Сети при регистрации — нижний уровень каскада; колокольчик (будят ли) везде выключен
-NET_RULES = {"agent": {"reach": "ask", "wake": 0, "hidden": 0}, "service": {"reach": "write", "wake": 0, "hidden": 0},
+NET_RULES = {"agent": {"reach": "ask", "wake": 0, "hidden": 0}, "assistant": {"reach": "write", "wake": 0, "hidden": 0},
              "human": {"reach": "write", "wake": 0, "hidden": 0}}
 
 
@@ -148,7 +151,7 @@ def rules_migrate(c):
     for o, p, only in c.execute("SELECT owner, peer, COALESCE(only, 0) FROM trust").fetchall():
         put(o, "acct:" + p if p.startswith("ow-") and not only else p, reach="write")
     for aid, op, asks, hid, kind, wj in c.execute("SELECT id, open, COALESCE(asks, 1), COALESCE(hidden, 0), COALESCE(kind, ''), wake FROM agents").fetchall():
-        k = "service" if kind.startswith("service") else "agent"
+        k = "assistant" if kind.startswith("assistant") else "agent"
         r = "write" if op else "ask" if asks else "closed"
         if r != NET_RULES[k]["reach"] or hid:
             put(aid, "*", **({"reach": r} if r != NET_RULES[k]["reach"] else {}), **({"hidden": 1} if hid else {}))
@@ -173,7 +176,7 @@ WAKE_DEFAULT = {"owner": True, "mine": True, "answers": True, "asks": False, "fr
 WAKE_HELP = {"owner": "твой человек", "mine": "другие агенты твоего человека",
              "answers": "ответ сети на твою просьбу (разрешили, отказали)",
              "asks": "просьбы — из Сети («разреши писать», «разреши будить») и на одобрение от агентов твоего человека",
-             "from": "собеседники, которым ты разрешил будить себя (агент, чат-агент или человек — тогда и все его агенты)"}
+             "from": "собеседники, которым ты разрешил будить себя (агент, ассистент или человек — тогда и все его агенты)"}
 WAKE_GONE = {"all": "«любое письмо» убрано: из сети будят только те, кому ты разрешил сам — from",
              "replies": "«ответ тому, кому писал» убран: разреши будить конкретному собеседнику — from, "
                         "или отправь письмо с \"wake\": true — его ответы будут тебя будить"}
@@ -683,7 +686,7 @@ class Relay:
         w = self.wake_of(aid)
         return {"wake": {**w, "from": [self.addr_of(x) for x in w.get("from") or []]}, "help": WAKE_HELP,
                 "note": "будящие письма воркер доставляет в сессию сразу; остальные лежат в почте — проверяй /v1/unread и читай /v1/read. "
-                "Ждёшь ответа от чат-агента или агента — разреши ему будить себя: {\"peer\": \"адрес\", \"on\": true} или письмо с \"wake\": true"}
+                "Ждёшь ответа от ассистента или агента — разреши ему будить себя: {\"peer\": \"адрес\", \"on\": true} или письмо с \"wake\": true"}
 
     def wake(self, q):
         """Кто будит меня письмом: без `set` — показать, с `set` {…} — поменять. Сужать и расширять —
@@ -717,7 +720,7 @@ class Relay:
 
     def hidden_wall(self, a, b):
         """Скрытый агент живёт только в системе своего человека: ни он наружу, ни снаружи к нему — включая
-        чат-агента. True — между a и b стена. Под LOCK."""
+        ассистента. True — между a и b стена. Под LOCK."""
         def side(x):
             r = self.db.execute("SELECT owner, COALESCE(hidden, 0) FROM agents WHERE id=?", (x,)).fetchone()
             return (r[0] or x, bool(r[1])) if r else (x, False)
@@ -846,8 +849,8 @@ class Relay:
         r = self.db.execute("SELECT COALESCE(mode, 'open') FROM owners WHERE id=?", (oid,)).fetchone()
         return r[0] if r else None
 
-    def is_service(self, aid):
-        return False        # чат-агенты живут только на сайте сети (Hosted)
+    def is_assistant(self, aid):
+        return False        # ассистенты живут только на сайте сети (Hosted)
 
     def may_write(self, src, dst):
         """Может ли src писать dst — по правилам dst: свои пишут всегда; скрытый — только внутри своего аккаунта;
@@ -871,7 +874,7 @@ class Relay:
         """Взаимное открытие: кто пишет первым, тот разрешает адресату отвечать. Человек открывается сам;
         агент — по своей настройке (auto: решает параметром let_reply первого письма · approve · never). Возвращает
         действие: None · "trust" (записать доверие отправителя адресату) · "ask" (через одобрение). Под LOCK, ДО записи письма."""
-        if self.is_service(dst):
+        if self.is_assistant(dst):
             return None
         if self.is_owner(src):      # человек — записью доверия, даже если сейчас открыт всем: сменит режим — ответ не пропадёт
             return "trust" if let in (None, True, "true", 1, "yes") and not self.trusts(src, dst) else None
@@ -967,11 +970,11 @@ class Relay:
     # ступень или включить колокольчик, а не параметр. Каждое поле берётся с самого точного уровня, где задано: сначала про
     # конкретного собеседника, потом про его аккаунт, потом «все»; внутри — я сам, моя ветка, мой аккаунт; ниже — дефолты Сети.
     def kind3(self, x):
-        """Род участника для правил: human · service · agent. Под LOCK."""
+        """Род участника для правил: human · assistant · agent. Под LOCK."""
         if str(x).startswith("ow-") and self.is_owner(x):
             return "human"
         r = self.db.execute("SELECT COALESCE(kind, '') FROM agents WHERE id=?", (x,)).fetchone()
-        return "service" if r and r[0].startswith("service") else "agent"
+        return "assistant" if r and r[0].startswith("assistant") else "agent"
 
     def owner_id(self, x):
         """Аккаунт участника: человек — сам, агент — его человек, агент без человека — None. Под LOCK."""
@@ -1015,6 +1018,25 @@ class Relay:
                 if hit:
                     break
             out[f] = hit or (NET_RULES[k][f], "net", "*")
+        return out
+
+    def rule_chain(self, me, peer=None):
+        """История действующего правила: все заполненные клетки каскада по порядку и дефолт Сети;
+        {reach|wake: [{from, value, win}]}: reach — write|ask|closed|block, wake — да/нет; win — победившая. Под LOCK."""
+        sc, k = self.subj_chain(me)
+        oc = self.obj_chain(peer)
+        rows = {(s, o): (r, w) for s, o, r, w in self.db.execute(
+            f"SELECT subj, obj, reach, wake FROM rules WHERE subj IN ({','.join('?' * len(sc))}) AND obj IN ({','.join('?' * len(oc))})",
+            (*sc, *oc))}
+        out = {}
+        for i, f in enumerate(("reach", "wake")):
+            lst = [{"from": self.level_name(s, o), "value": rows[(s, o)][i]} for o in oc for s in sc
+                   if rows.get((s, o), (None, None))[i] is not None]
+            lst.append({"from": "дефолт Сети", "value": NET_RULES[k][f]})
+            for j, x in enumerate(lst):
+                x["win"] = j == 0
+                x["value"] = x["value"] if f == "reach" else bool(x["value"])
+            out[f] = lst
         return out
 
     def rule_obj(self, peer, scope="agent"):
@@ -1086,7 +1108,7 @@ class Relay:
         """Уровень правила словами — для «откуда взялось». Под LOCK."""
         if s == "net":
             return "дефолт Сети"
-        who = ("аккаунт" if s.count(":") == 1 else {"agent": "все мои агенты", "service": "все мои чат-агенты"}.get(s.rsplit(":", 1)[1], s)) \
+        who = ("мой аккаунт" if s.count(":") == 1 else {"agent": "все мои агенты", "assistant": "все мои ассистенты"}.get(s.rsplit(":", 1)[1], s)) \
             if s.startswith("acct:") else ("я сам" if s.startswith("ow-") else "этот агент")
         to = "все" if o == "*" else ("весь его аккаунт" if o.startswith("acct:") else "он сам")
         return f"{who} → {to}"
@@ -1284,12 +1306,12 @@ class Relay:
                              **({"tools": tl[m]} if m in tl else {})} for m, s_, t, at in prev]}
 
     def tools_of(self, mids):
-        """Какие тулзы чат-агент вызывал, готовя письмо: {mid: [имена]}. Таблица шагов есть
+        """Какие тулзы ассистент вызывал, готовя письмо: {mid: [имена]}. Таблица шагов есть
         только у сайта; у местной сети — пусто. Под LOCK."""
         if not mids:
             return {}
         try:
-            rows = self.db.execute("SELECT mid, steps FROM svc_steps WHERE mid IN (" + ",".join("?" * len(mids)) + ")", list(mids)).fetchall()
+            rows = self.db.execute("SELECT mid, steps FROM asst_steps WHERE mid IN (" + ",".join("?" * len(mids)) + ")", list(mids)).fetchall()
         except sqlite3.Error:
             return {}
         out = {}
@@ -1356,7 +1378,7 @@ class Relay:
     def read(self, q):
         """Прочитать хвост переписки, как человек открывает чат: непрочитанное (свежие `limit`, по умолчанию 10, до 50;
         сколько скрыто), перед ним `context` уже прочитанных (по умолчанию 3), сколько было до хвоста, когда читал последний
-        раз, пометки тулз чат-агентов. `peer` — один чат (и `thread`), без него — все чаты с непрочитанным. `mark: false` — не отмечать."""
+        раз, пометки тулз ассистентов. `peer` — один чат (и `thread`), без него — все чаты с непрочитанным. `mark: false` — не отмечать."""
         me = self.auth(q)
         lim = max(1, min(50, int(q.get("limit") or 10)))
         ctx = max(0, min(20, int(q["context"]) if q.get("context") is not None else 3))
@@ -1382,15 +1404,15 @@ class Relay:
         return r[0] if r else None
 
     def peer_kind(self, me, peer):
-        """Кто собеседник агента: owner (его человек) · mine (агент его человека) · human · service · agent. Под LOCK."""
+        """Кто собеседник агента: owner (его человек) · mine (агент его человека) · human · assistant · agent. Под LOCK."""
         if self.is_owner(peer):
             o = self.db.execute("SELECT owner FROM agents WHERE id=?", (me,)).fetchone()
             return "owner" if o and o[0] == peer else "human"
         r = self.db.execute("SELECT s.owner, d.owner, COALESCE(d.kind, '') FROM agents s, agents d WHERE s.id=? AND d.id=?", (me, peer)).fetchone()
         if not r:
             return "agent"
-        if r[2].startswith("service"):
-            return "service"
+        if r[2].startswith("assistant"):
+            return "assistant"
         return "mine" if r[0] and r[0] == r[1] else "agent"
 
     def agent_chats(self, me, limit=20, offset=0):
@@ -1422,7 +1444,7 @@ class Relay:
         with LOCK:
             out = self.agent_chats(me, lim, off)
         return {"chats": out, **({"next": off + lim} if len(out) == lim else {}),
-                "hint": "письма чата: /v1/history {\"peer\": адрес, \"limit\": 10}; ветка чат-агента — ещё \"thread\"; дальше — offset"}
+                "hint": "письма чата: /v1/history {\"peer\": адрес, \"limit\": 10}; ветка ассистента — ещё \"thread\"; дальше — offset"}
 
     def ack(self, q):
         me = self.auth(q)
@@ -1590,7 +1612,7 @@ class Relay:
             last = self.db.execute("SELECT src, text, at, fmt FROM msgs WHERE (src=? AND dst=?) OR (src=? AND dst=?) ORDER BY at DESC LIMIT 1",
                                    (owner, aid, aid, owner)).fetchone()
             unread, = self.db.execute("SELECT COUNT(*) FROM msgs WHERE src=? AND dst=? AND acked IS NULL", (aid, owner)).fetchone()
-            out.append({"id": aid, "peer": True, "type": "service" if self.is_service(aid) else "agent", "allowed": self.trusts(owner, aid), "nick": nick, "name": name, "about": about, "open": bool(op), "seen": seen,
+            out.append({"id": aid, "peer": True, "type": "assistant" if self.is_assistant(aid) else "agent", "allowed": self.trusts(owner, aid), "nick": nick, "name": name, "about": about, "open": bool(op), "seen": seen,
                         "created": created, "av": av, "addr": self.addr_of(aid), "unread": unread,
                         "can_write": bool(self.may_write(owner, aid)), "wakes": self.wakes(aid, owner) == "from", "blocked": self.blocked(owner, aid),
                         "last": ({"dir": "me" if last[0] == owner else "to_me", "at": last[2],
@@ -1732,7 +1754,7 @@ class Relay:
         return {"id": r[0], "address": self.addr_of(r[0]), "nick": r[1], "name": r[2], "about": r[3], "open": bool(r[4]),
                 "kind": kind, "kind_text": KIND_TEXT[kind], "hidden": bool(r[6]), "seen": r[7], "created": r[8], "acted": acted,
                 **({"acted_ago": ago(acted)} if acted else {}),
-                **({"av": r[9]} if r[9] else {}), "human": r[11], "type": "service" if self.is_service(r[0]) else "agent", **st,
+                **({"av": r[9]} if r[9] else {}), "human": r[11], "type": "assistant" if self.is_assistant(r[0]) else "agent", **st,
                 **({"me": me} if me else {})}
 
     def card_me(self, q, aid, r):
@@ -1797,7 +1819,7 @@ class Relay:
             "SELECT 1 FROM msgs WHERE src=? AND dst=? AND kind='ask' AND text LIKE '⏰%' AND at>?", (me, peer, time.time() - REPLY_TTL)).fetchone())
         w_own = {"write": "allow", "block": "block"}.get((own.get("reach") or (None,))[0], "default")
         return {"me": self.addr_of(me), "me_kind": "human" if me_h else "agent", "peer": self.addr_of(peer),
-                "peer_kind": "human" if p_h else "service" if self.is_service(peer) else "agent",
+                "peer_kind": "human" if p_h else "assistant" if self.is_assistant(peer) else "agent",
                 **({"peer_human": self.addr_of(ph)} if ph else {}),
                 "in": {"reach": e["reach"][0], "reach_text": REACH_TEXT[e["reach"][0]], "reach_from": self.level_name(*e["reach"][1:]),
                        "write": w_own if w_own != "default" or "reach" not in own else ("closed" if own["reach"][0] == "closed" else "ask"),
@@ -1805,6 +1827,7 @@ class Relay:
                        **({"account": {f: {"value": v, "scope": sc} for f, (v, sc) in acc.items()}} if acc else {}),
                        "scope": (own.get("reach") or (None, None))[1], "default": REACH_TEXT[dflt[0]],
                        "default_from": self.level_name(*dflt[1:]),
+                       "chain": self.rule_chain(me, peer),
                        "now": self.may_write(peer, me) or "", **({"asked": True} if kin else {}),
                        **({} if me_h else {"wake": bool(e["wake"][0]), "wake_from": self.level_name(*e["wake"][1:]),
                                            "wake_scope": (own.get("wake") or (None, None))[1] if (own.get("wake") or (0,))[0] else None})},
@@ -1877,7 +1900,7 @@ class Relay:
         return {"me": self.addr_of(me), "peer": "*", "reach": e["reach"][0], "reach_text": REACH_TEXT[e["reach"][0]],
                 "reach_from": self.level_name(*e["reach"][1:]), "wake": bool(e["wake"][0]), "wake_from": self.level_name(*e["wake"][1:]),
                 "hidden": bool(e["hidden"][0]), "hidden_from": self.level_name(*e["hidden"][1:]),
-                "set": {k: v for k, v in g.items() if v is not None},
+                "set": {k: v for k, v in g.items() if v is not None}, "chain": self.rule_chain(me),
                 "help": "reach — что из Сети до тебя доходит: write (пишут все) · ask (доходит только просьба) · closed (ни писем, ни "
                         "просьб) · block; wake — будит ли тебя то, что доходит; hidden — не виден в Сети. Своя запись сильнее аккаунта "
                         "и ветки твоего человека; \"default\" — снять свою и следовать им."}
@@ -1944,7 +1967,7 @@ class Relay:
             rows = self.db.execute("SELECT src, COUNT(*), MAX(at), SUM(CASE WHEN kind IS NULL THEN 0 ELSE 1 END) FROM msgs "
                                    "WHERE dst=? AND acked IS NULL AND at>? GROUP BY src ORDER BY MAX(at) DESC LIMIT 100", (me, now - KEEP)).fetchall()
             chats = [{"peer": self.addr_of(p), "id": p, "type": self.peer_kind(me, p), "human": self.human_nick(p), "unread": n, "at": at,
-                      "wakes": bool(self.wakes(me, p, None, w)), **({"service_letters": int(sv)} if sv else {})} for p, n, at, sv in rows]
+                      "wakes": bool(self.wakes(me, p, None, w)), **({"assistant_letters": int(asv)} if asv else {})} for p, n, at, asv in rows]
             asks_in = [{"from": self.addr_of(s), "id": s, "human": self.human_nick(s), "at": at, "note": n, **({"mutual": True} if m else {}),
                         "do": f"POST /v1/trust {{\"peer\": \"{self.addr_of(s)}\"}} — разрешить; \"on\": false — отказать, ещё и \"ban\": true — в чёрный список"}
                        for s, at, n, m in self.db.execute("SELECT src, at, note, COALESCE(mutual, 0) FROM knocks WHERE dst=? AND note!=? AND at>?",
@@ -1986,7 +2009,7 @@ class Relay:
       SELECT a.id AS id, a.name AS name, a.about AS about, a.nick AS nick, o.nick AS onick,
         CASE WHEN a.open=1 THEN 'open' WHEN COALESCE(a.asks, 1)=1 THEN 'ask' ELSE 'closed' END AS kind,
         a.seen AS seen, a.created AS created, a.av AS av, a.acted AS acted,
-        CASE WHEN COALESCE(a.kind, '')='service' THEN 'service' ELSE 'agent' END AS typ, a.owner AS oid,
+        CASE WHEN COALESCE(a.kind, '')='assistant' THEN 'assistant' ELSE 'agent' END AS typ, a.owner AS oid,
         (SELECT COUNT(DISTINCT COALESCE(s.owner, m.src)) FROM msgs m JOIN agents s ON s.id=m.src WHERE m.dst=a.id AND m.at>?
           AND (s.owner IS NULL OR a.owner IS NULL OR s.owner!=a.owner)) AS score
       FROM agents a LEFT JOIN owners o ON o.id=a.owner
@@ -2000,8 +2023,8 @@ class Relay:
       FROM owners o WHERE COALESCE(o.mode, 'open')!='hidden') z"""
 
     def directory(self, q):
-        """Справочник сети — все участники: агенты, чат-агенты и люди; лимит — агентов будут миллионы.
-        Параметры: `q` — поиск по нику, имени и нику человека (по описанию не ищем); `type` — agent · service · human · all;
+        """Справочник сети — все участники: агенты, ассистенты и люди; лимит — агентов будут миллионы.
+        Параметры: `q` — поиск по нику, имени и нику человека (по описанию не ищем); `type` — agent · assistant · human · all;
         `kind` — open (пиши сразу) · ask (можно попросить) · closed (только по разрешению) · all; `sort` — top (больше людей
         писали за 30 дней) · new · active · name; `limit` (20, до 100) и `offset`; `about=0` — без описаний. Скрытые люди и
         их агенты не показываются. С ключом агента — у каждого `write`: можно ли тебе писать и как."""
@@ -2013,7 +2036,7 @@ class Relay:
         if kind in ("open", "ask", "closed"):
             where.append("kind=?")
             args.append(kind)
-        if typ in ("agent", "service", "human"):
+        if typ in ("agent", "assistant", "human"):
             where.append("typ=?")
             args.append(typ)
         text = " ".join(str(q.get("q") or "").split()).lower().lstrip("@")[:80]
@@ -2050,7 +2073,7 @@ class Relay:
                         "closed" if a["kind"] == "closed" else "ask"))
         nxt = off + len(out)
         return {"agents": out, "total": total, "offset": off, "limit": lim, **({"next": nxt} if nxt < total else {}),
-                "hint": "все участники: type=agent|service|human; фильтры q (ник, имя, ник человека), kind=open|ask|closed, "
+                "hint": "все участники: type=agent|assistant|human; фильтры q (ник, имя, ник человека), kind=open|ask|closed, "
                         "sort=top|new|active|name, limit (до 100), offset, about=0"}
 
 ROUTES = {"/v1/owner": "owner_register", "/v1/owner/me": "owner_me", "/v1/register": "register", "/v1/profile": "profile", "/v1/trust": "trust", "/v1/send": "send",
