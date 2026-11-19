@@ -117,6 +117,29 @@ function navMe(nick) {
 // tipAttr(текст, заголовок) — атрибуты подсказки для любого элемента в шаблоне: наведение (0,5 с), фокус, касание.
 // tag(текст, подсказка, {cls, head, href, icon, copy}) — плашка-тег: у каждого атрибута своё место и своё объяснение;
 // несколько однородных атрибутов сущности — ряд плашек (.tags). blk(заголовок, содержимое) — смысловой блок карточки.
+// цифры и атрибуты со значком — одни на карточку и страницы: карточка рисует четыре главные, страница — те же
+// четыре и рядом прочие тем же видом. Новая цифра — значок сюда, а не своя плитка по месту.
+const NUM_IC = {
+  trust: '<circle cx="9" cy="8.5" r="3.2"/><path d="M3.5 19c.7-3.1 2.8-4.8 5.5-4.8s4.8 1.7 5.5 4.8"/><path d="m15 12 2 2 4-4.5"/>',
+  talk: '<path d="M3.5 6h11v8h-6l-3.5 3v-3H3.5z"/><path d="M17.5 9.5h3v8h-1.5v2.5l-3-2.5h-4.5v-2"/>',
+  usdt: '<circle cx="12" cy="12" r="8.5"/><path d="M8 8.5h8M12 8.5v8M8.5 12c1 .7 2.2 1 3.5 1s2.5-.3 3.5-1"/>',
+  star: '<path d="m12 4 2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 16.4l-4.8 2.5.9-5.4-3.9-3.8 5.4-.8z"/>',
+  gave: '<circle cx="9" cy="8.5" r="3.2"/><path d="M3.5 19c.7-3.1 2.8-4.8 5.5-4.8s4.8 1.7 5.5 4.8"/><path d="M15 11.5h6M18.5 9l2.5 2.5-2.5 2.5"/>',
+  mail: '<rect x="3.5" y="5.5" width="17" height="13" rx="2.5"/><path d="m4.5 7 7.5 6 7.5-6"/>',
+  paid: '<circle cx="10" cy="12" r="6.5"/><path d="M7.5 10h5M10 10v5"/><path d="M17 8.5h4M19.5 6.5l1.5 2-1.5 2"/>',
+  since: '<rect x="4" y="5.5" width="16" height="14.5" rx="2.5"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/>',
+  clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+  lock: '<rect x="5" y="10.5" width="14" height="9.5" rx="2.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/>',
+  shield: '<path d="M12 3.5 19 6v5.5c0 4.3-3 7.6-7 9-4-1.4-7-4.7-7-9V6z"/><path d="m9 12 2 2 4-4"/>',
+  agents: '<rect x="5" y="8" width="14" height="10.5" rx="3"/><path d="M12 4.5V8M9.5 13h.01M14.5 13h.01"/>',
+  wallet: '<path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H18v3"/><rect x="4" y="7.5" width="16.5" height="11.5" rx="2.5"/><path d="M16.5 13.2h.01"/>',
+  eye: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/><path d="M4 4l16 16"/>',
+};
+const numIco = (k) => `<svg viewBox="0 0 24 24" aria-hidden="true">${NUM_IC[k] || ''}</svg>`;
+// v — число крупно; label — подпись рядом (на странице), в карточке без неё
+// атрибут со значком: значок + фраза (в фразе <b> — для числа), та же плашка, что у цифр
+function attrChip(k, html, tip, head) { return `<span class="cp-n cp-at" tabindex="0"${tipAttr(tip, head)}>${numIco(k)}<span>${html}</span></span>`; }
+function numChip(k, v, tip, head, label) { return `<span class="cp-n" tabindex="0"${tipAttr(tip, head)}>${numIco(k)}<b>${v}</b>${label ? `<i>${esc(label)}</i>` : ''}</span>`; }
 function tipAttr(text, head) { return text ? ` data-tip="${esc(text)}"${head ? ` data-tip-h="${esc(head)}"` : ''}` : ''; }
 function tag(text, tip, o) {
   o = o || {};

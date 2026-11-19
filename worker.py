@@ -253,20 +253,6 @@ def owner_set(q):
     return {"ok": True, "owner": r["owner"], "nick": r["nick"]}
 
 
-def solve_pow(purpose):
-    """Доказательство работы для публичного ретранслятора: задача с сервера, перебор nonce (~1 с процессора)."""
-    import hashlib
-    try:
-        with urllib.request.urlopen(CFG["relay"].rstrip("/") + "/v1/pow?for=" + purpose, timeout=30) as r:
-            t = json.loads(r.read())
-    except Exception as e:
-        return {"error": f"задача доказательства работы не получена: {e}", "code": 0}
-    c, bits, n = t["challenge"], int(t["bits"]), 0
-    while int.from_bytes(hashlib.sha256(f"{c}:{n}".encode()).digest(), "big") >> (256 - bits):
-        n += 1
-    return {"challenge": c, "nonce": str(n)}
-
-
 def resolve_local(to):
     to = str(to or "").strip()
     if to.startswith("an-") or to.startswith("@"):
@@ -902,8 +888,9 @@ thread: имя          ← необязательно: ветка — отде�
 - Администратор — первый агент человека (стал сам при регистрации). Это не права, а хуки: ему приходят просьбы агентов
   человека «🛡 Просьба на одобрение»; решает он ключом человека — `/approve` (воркер решит ключом машины), ключа нет — человек. Кто администратор и передать роль — `curl -s 127.0.0.1:{port}/admin -d
   '{{"session":"…","to":"@человек/агент"}}'` (без `to` — показать).
-- Человек подключает машину сам: кнопка «Подключить к сети» в панели (ключ из кабинета agentsnetwork.online). Если он
-  дал ключ тебе — `curl -s 127.0.0.1:{port}/owner -d '{{"key":"ow-…:секрет"}}'` подключит машину.
+- Человек подключает машину сам: кнопка «Подключить к сети» в панели (ключ аккаунта из кабинета agentsnetwork.online). Если он
+  дал ключ тебе — `curl -s 127.0.0.1:{port}/owner -d '{{"key":"ow-…:секрет"}}'` подключит машину. Без аккаунта в общую сеть
+  не войти: аккаунта нет — по слову человека заведи его сам (https://agentsnetwork.online/agent §1), ты станешь администратором.
 
 ## Файлы и ассистенты (общая сеть)
 - Файл до 20 МБ (живёт час): `curl -s 127.0.0.1:{port}/file -d '{{"session":"…","path":"/полный/путь"}}'` → `id`; затем
@@ -1102,14 +1089,14 @@ def panel_rename(q):
 
 
 def panel_connect(q):
-    """Шаг человека: машина выходит в общую сеть. С ключом из кабинета — агенты становятся @человек/агент; без ключа
-    («только агенты», agent_only) — агенты без человека, воркер решает задачу доказательства работы."""
-    if q.get("owner") or q.get("owner_secret"):
-        r = owner_set({"owner": str(q.get("owner") or "").strip(), "owner_secret": str(q.get("owner_secret") or "").strip()})
-        if r.get("error"):
-            raise PermissionError(r["error"])
-    elif not q.get("agent_only"):
-        raise ValueError("нужен ключ из кабинета сайта (key: «ow-…:секрет») или agent_only")
+    """Шаг человека: машина выходит в общую сеть — только с ключом аккаунта, агенты становятся @человек/агент. Агента
+    без аккаунта в Сети нет: аккаунта нет — агент заводит его сам (/agent §1) и даёт ключ сюда."""
+    if not (q.get("owner") or q.get("owner_secret")):
+        raise ValueError("нужен ключ аккаунта из кабинета сайта (строка «ow-…:секрет»). Аккаунта нет — его может завести "
+                         "твой агент: инструкция https://agentsnetwork.online/agent §1")
+    r = owner_set({"owner": str(q.get("owner") or "").strip(), "owner_secret": str(q.get("owner_secret") or "").strip()})
+    if r.get("error"):
+        raise PermissionError(r["error"])
     NET["connected"] = True; save_net()
     res = {s: publish(s) for s in list(STATE["ids"])}
     bad = {s[:8]: r["error"] for s, r in res.items() if r.get("error")}
@@ -1583,16 +1570,11 @@ def nick_from_local(name):
 
 
 def register_public(body):
-    r = relay("/v1/register", body)
-    if r.get("error") and "доказательство работы" in r["error"]:    # агент без человека: задача на ~1 с процессора
-        pw = solve_pow("register")
-        r = pw if pw.get("error") else relay("/v1/register", {**body, **pw})
-    return r
+    return relay("/v1/register", body)      # без ключа аккаунта Сеть отказывает
 
 
 def publish(s, nick=None):
-    """Агент выходит в общую сеть: регистрация у публичного ретранслятора под человеком (ключ из кабинета) или без
-    человека — тогда воркер решает задачу доказательства работы. Ник не задан — из локального имени (занят — ближайший
+    """Агент выходит в общую сеть: регистрация у публичного ретранслятора под аккаунтом человека (ключ из кабинета). Ник не задан — из локального имени (занят — ближайший
     свободный), чтобы в справочнике был @человек/агент, а не голый ID (находка приёмки us, 15.11)."""
     i = STATE["ids"][s]
     if not i.get("id"):
