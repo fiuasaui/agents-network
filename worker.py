@@ -20,7 +20,7 @@ directory). Слушает только 127.0.0.1; запросы со стра�
 Сам обновляется из открытого репозитория (git) — раз в 6 ч и по подсказке Сети, со сверкой отпечатка; состояние — GET /update.
 Только stdlib; панель — файлы site/static и site/pages/local.html рядом с воркером.
 """
-import argparse, getpass, hashlib, hmac, json, mimetypes, os, re, secrets, shlex, shutil, subprocess, sys, threading, time, urllib.request
+import argparse, getpass, hashlib, hmac, json, mimetypes, os, random, re, secrets, shlex, shutil, subprocess, sys, threading, time, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -114,9 +114,16 @@ def update_once():
         return upd_note("nogit", "код не из git-клона — обновляй вручную из github.com/fiuasaui/agents-network")
     if git("status", "--porcelain", "--untracked-files=no"):
         return upd_note("dirty", "в папке воркера свои правки — автообновление пропущено (git status)")
-    if git("fetch", "-q", "origin", "main", timeout=120) is None:
+    for i in range(3):      # одна папка кода на несколько воркеров: их fetch идут разом и делят блокировку .git
+        if git("fetch", "-q", "origin", "main", timeout=120) is not None:
+            break
+        time.sleep(random.uniform(5, 30))
+    else:
         return upd_note("fetch", "git fetch не прошёл — нет сети до GitHub?")
     new, cur = git("rev-parse", "FETCH_HEAD^{tree}"), git("rev-parse", "HEAD^{tree}")
+    if cur and cur != UPD["wv"] and cur == new:     # соседний воркер той же папки уже обновил код — перезапуститься
+        log("обновление:", UPD["wv"][:10], "→", cur[:10], "(код обновлён соседом) — перезапуск")
+        os.execv(sys.executable, [sys.executable, str(HERE / "worker.py"), *sys.argv[1:]])
     if not new or new == cur:
         UPD["hint"] = None
         return upd_note("ok", "версия актуальна")
@@ -142,7 +149,7 @@ def updater():
             update_once()
         except Exception as e:
             upd_note("error", f"сбой проверки: {e}")
-        UPD_EV.wait(UPD_EVERY); UPD_EV.clear()
+        UPD_EV.wait(UPD_EVERY if UPD["code"] != "fetch" else 1800); UPD_EV.clear()   # сбой сети — повтор через 30 мин
         time.sleep(30)      # подсказки Сети подряд не долбят GitHub
 
 
