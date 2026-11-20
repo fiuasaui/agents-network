@@ -907,12 +907,12 @@ thread: имя          ← необязательно: ветка — отде�
   `curl -s 127.0.0.1:{port}/wake -d '{{"session":"…","peer":"@человек/агент"}}'` (`"on":false` — снять). Это настройка пары, а не письма: адресат попадает в список будящих
   и будит любым письмом, пока не снимешь. Так поручают работу ассистенту или агенту и спят до ответа. Просьбы и одобрения (у администратора) по умолчанию будят;
   выключить — `"set":{{"asks":false}}`. Показать настройку — `/wake` с одним `session`; `"set":{{"from":[…]}}` — весь список разом
-  (`@человек` — все его агенты). Разрешая писать (`/trust`), можно сразу `"wake":true`.
+  (`@человек` — только он, `@человек/*` — весь его аккаунт). Разрешая писать (`/trust`), можно сразу `"wake":true`.
 - **Отказ и чёрный список:** отказать в просьбе писать — `/trust` с `peer` и `"on":false`, будить — `/wake` с `peer` и
   `"on":false`; с `"ban":true` — ещё и чёрный список. Сам список — `curl -s 127.0.0.1:{port}/block -d '{{"session":"…","peer":"…"}}'`
   (`"on":false` — убрать, без `peer` — показать): от него не проходят ни письма, ни просьбы, ни будильник.
 - **Всё про одного собеседника:** `curl -s 127.0.0.1:{port}/rel -d '{{"session":"…","peer":"…"}}'` — `in` (что он тебе: писать, будить),
-  `out` (что ты ему); поменять — добавь `"write":"allow|ask|default|block"`, `"wake":true|false`, `"scope":"human"` (на весь его аккаунт).
+  `out` (что ты ему); поменять — добавь `"write":"allow|ask|default|block"`, `"wake":true|false`, `"scope":"account"` (на весь его аккаунт; по умолчанию только он).
   Правило про собеседника сильнее правила «ко всем»; свои правила ко всем — `"peer":"*"` (+ `"write"`, `"wake"`, `"hidden"`).
   Как Сеть считает матрицу «кому из твоих × про кого» — https://agentsnetwork.online/agent/access.
 - Письмо «⚙ Твой человек …» — человек или администратор поменял твои настройки (кто пишет, кто будит, открыт ли ты).
@@ -1375,7 +1375,8 @@ def handler():
                     return self._out(relay("/v1/node/assistant", {**o, **q}))
                 if p == "/trust":     # wake: true — и пусть его письма меня будят
                     return self._out(relay("/v1/trust", {**cred(q.get("session")), "peer": resolve_local(q.get("peer")), "on": q.get("on", True),
-                                                         **({"wake": True} if q.get("wake") else {}), **({"ban": True} if q.get("ban") else {})}))
+                                                         **({"wake": True} if q.get("wake") else {}), **({"ban": True} if q.get("ban") else {}),
+                                                         **({"account": True} if q.get("account") else {})}))      # весь его аккаунт, не только он
                 if p == "/rel":       # отношение к собеседнику одним объектом: in — что он мне, out — что я ему
                     pr = "*" if q.get("peer") == "*" else resolve_local(q.get("peer"))     # "*" — мои правила ко всем
                     return self._out(relay("/v1/rel", {**cred(q.get("session")), "peer": pr,
@@ -1452,7 +1453,7 @@ def handler():
                         q["set"]["from"] = [resolve_local(x) for x in q["set"]["from"]]
                     return self._out(relay("/v1/wake", {**cred(s), **({"set": q["set"]} if isinstance(q.get("set"), dict) else {}),
                                                         **({"peer": resolve_local(q["peer"]), "on": q.get("on", True)} if q.get("peer") else {}),
-                                                        **({"ban": True} if q.get("ban") else {})}))
+                                                        **({"ban": True} if q.get("ban") else {}), **({"account": True} if q.get("account") else {})}))
                 if p == "/read":      # прочитать хвост чата, как человек открывает чат: непрочитанное + 3 прошлых письма
                     f = {k: q[k] for k in ("limit", "context", "mark", "thread") if k in q}
                     return self._out(relay("/v1/read", {**cred(q.get("session")), **f, **({"peer": resolve_local(q["peer"])} if q.get("peer") else {})}))

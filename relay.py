@@ -106,43 +106,34 @@ def db_open(path):
         # взаимная просьба: разрешат — и просившему, и адресату писать друг другу
         c.execute("ALTER TABLE knocks ADD COLUMN mutual INTEGER DEFAULT 0")
     # правила отношений: одна таблица вместо доверия, чёрного списка, будильника «from», «открыт/просьбы/скрыт»
-    # агента и режима человека. subj — кто: агент · человек `ow-…` · аккаунт `acct:ow-…` · ветка `acct:ow-…:agent|assistant`;
+    # агента и режима человека. subj — кто: агент · человек `ow-…` · аккаунт `acct:ow-…`;
     # obj — к кому: `*` (все) · `acct:ow-…` (весь чужой аккаунт) · `ow-…` (сам человек) · агент. NULL в поле — наследовать сверху
     fresh = not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='rules'").fetchone()
     c.execute("CREATE TABLE IF NOT EXISTS rules (subj TEXT, obj TEXT, reach TEXT, wake INTEGER, hidden INTEGER, at REAL, PRIMARY KEY (subj, obj))")
-    # «служба» → «ассистент»: прежний род и ветка правил переименованы, совместимость не держим
+    # «служба» → «ассистент»: прежний род переименован, совместимость не держим
     c.execute("UPDATE agents SET kind=replace(kind, 'service', 'assistant') WHERE kind LIKE 'service%'")
     for aid, ab in c.execute("SELECT id, about FROM agents WHERE length(about) > 100").fetchall():   # лимит описания
         c.execute("UPDATE agents SET about=? WHERE id=?", (ab[:99].rsplit(' ', 1)[0].rstrip(' ,.;:—-') + '…', aid))
-    c.execute("UPDATE rules SET subj=replace(subj, ':service', ':assistant') WHERE subj LIKE 'acct:%:service'")
     c.execute("CREATE INDEX IF NOT EXISTS rules_obj ON rules (obj)")
     if "asks" not in [r[1] for r in c.execute("PRAGMA table_info(rules)")]:
         # будят ли просьбы — поле правил, каскадом, как «будят ли письма»; оба — только у агентов: человека и
-        # ассистента будить нечем (ассистента будит всё дошедшее), поэтому с аккаунта колокольчик уходит в ветку «мои агенты»
+        # ассистента будить нечем (ассистента будит всё дошедшее)
         c.execute("ALTER TABLE rules ADD COLUMN asks INTEGER")
-        for s, o, w in c.execute("SELECT subj, obj, wake FROM rules WHERE wake IS NOT NULL AND subj LIKE 'acct:%' AND subj NOT LIKE 'acct:%:%'").fetchall():
-            if not c.execute("SELECT 1 FROM rules WHERE subj=? AND obj=? AND wake IS NOT NULL", (s + ":agent", o)).fetchone():
-                if c.execute("SELECT 1 FROM rules WHERE subj=? AND obj=?", (s + ":agent", o)).fetchone():
-                    c.execute("UPDATE rules SET wake=? WHERE subj=? AND obj=?", (w, s + ":agent", o))
+        c.execute("UPDATE rules SET wake=NULL WHERE subj LIKE 'ow-%'")
+    # групп «мои агенты / мои ассистенты» нет ни в интерфейсе, ни в данных: кто — экземпляр или аккаунт
+    c.execute("DELETE FROM rules WHERE subj LIKE 'acct:%:%'")
+    # одно умолчание Сети: человеку и прежним ассистентам — их собственное «ко всем: Все», если ни у них, ни у
+    # аккаунта ступень не задана, — у живых ничего не закрылось; новые ассистенты — «По просьбе», как агенты
+    if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='net_one'").fetchone():
+        c.execute("CREATE TABLE net_one (at REAL)")
+        c.execute("INSERT INTO net_one VALUES (?)", (time.time(),))
+        for x, o in [(i, i) for i, in c.execute("SELECT id FROM owners")] + \
+                list(c.execute("SELECT id, owner FROM agents WHERE kind LIKE 'assistant%'")):
+            if not c.execute("SELECT 1 FROM rules WHERE subj IN (?, ?) AND obj='*' AND reach IS NOT NULL", (x, "acct:" + str(o))).fetchone():
+                if c.execute("SELECT 1 FROM rules WHERE subj=? AND obj='*'", (x,)).fetchone():
+                    c.execute("UPDATE rules SET reach='write' WHERE subj=? AND obj='*'", (x,))
                 else:
-                    c.execute("INSERT INTO rules (subj, obj, wake, at) VALUES (?,?,?,?)", (s + ":agent", o, w, time.time()))
-        c.execute("UPDATE rules SET wake=NULL WHERE subj LIKE 'ow-%' OR subj LIKE 'acct:%:assistant' OR (subj LIKE 'acct:%' AND subj NOT LIKE 'acct:%:%')")
-        c.execute("DELETE FROM rules WHERE reach IS NULL AND wake IS NULL AND hidden IS NULL")
-    # групп «мои агенты / мои ассистенты» больше нет: «кому из моих» — аккаунт или экземпляр. Правило ветки переносится в
-    # каждый экземпляр её рода, где своё поле не задано, — действующее у существующих не меняется; ветка удаляется
-    fs = ("reach", "wake", "hidden", "asks")
-    for s_, o_, *vals in c.execute("SELECT subj, obj, reach, wake, hidden, asks FROM rules WHERE subj LIKE 'acct:%:%'").fetchall():
-        own, kind = s_[5:].split(":", 1)
-        ags = [a for a, k in c.execute("SELECT id, COALESCE(kind, '') FROM agents WHERE owner=?", (own,)) if k.startswith("assistant") == (kind == "assistant")]
-        for a in ags:
-            cur = c.execute("SELECT reach, wake, hidden, asks FROM rules WHERE subj=? AND obj=?", (a, o_)).fetchone()
-            new = [v if cur is None or cur[i] is None else cur[i] for i, v in enumerate(vals)]
-            if kind == "assistant":        # ассистента будит всё дошедшее — звонка и просьб у него нет
-                new[1] = new[3] = None
-            if all(v is None for v in new):
-                continue
-            c.execute("INSERT OR REPLACE INTO rules (subj, obj, reach, wake, hidden, asks, at) VALUES (?,?,?,?,?,?,?)", (a, o_, *new, time.time()))
-        c.execute("DELETE FROM rules WHERE subj=? AND obj=?", (s_, o_))
+                    c.execute("INSERT INTO rules (subj, obj, reach, at) VALUES (?, '*', 'write', ?)", (x, time.time()))
     if fresh:
         rules_migrate(c)
         # прежние таблицы — архив; на их месте представления из правил: чтения (счётчики, списки) работают как раньше,
@@ -162,8 +153,8 @@ REACH_TEXT = {"block": "чёрный список", "closed": "закрыт: н�
               "write": "пишет"}
 # дефолты Сети при регистрации — нижний уровень каскада; колокольчик (будят ли) везде выключен
 # asks — будят ли просьбы: по умолчанию да; у человека и ассистента не действует
-NET_RULES = {"agent": {"reach": "ask", "wake": 0, "hidden": 0, "asks": 1}, "assistant": {"reach": "write", "wake": 0, "hidden": 0, "asks": 1},
-             "human": {"reach": "write", "wake": 0, "hidden": 0, "asks": 1}}
+NET_RULE = {"reach": "ask", "wake": 0, "hidden": 0, "asks": 1}     # одно умолчание Сети на всех, без видов
+HUMAN_OWN = "write"     # человеку при регистрации — своя настройка «ко всем: Все» (как будто поставил сам; можно сбросить)
 WAKE_LEVELS = "будят ли письма и просьбы — настройка агентов: человека будить нечем, ассистента будит всё дошедшее; на аккаунте она действует только на агентов"
 
 
@@ -184,10 +175,9 @@ def rules_migrate(c):
     for o, p, only in c.execute("SELECT owner, peer, COALESCE(only, 0) FROM trust").fetchall():
         put(o, "acct:" + p if p.startswith("ow-") and not only else p, reach="write")
     for aid, op, asks, hid, kind, wj in c.execute("SELECT id, open, COALESCE(asks, 1), COALESCE(hidden, 0), COALESCE(kind, ''), wake FROM agents").fetchall():
-        k = "assistant" if kind.startswith("assistant") else "agent"
         r = "write" if op else "ask" if asks else "closed"
-        if r != NET_RULES[k]["reach"] or hid:
-            put(aid, "*", **({"reach": r} if r != NET_RULES[k]["reach"] else {}), **({"hidden": 1} if hid else {}))
+        if r != NET_RULE["reach"] or hid:
+            put(aid, "*", **({"reach": r} if r != NET_RULE["reach"] else {}), **({"hidden": 1} if hid else {}))
         try:
             w = json.loads(wj) if wj else {}
         except ValueError:
@@ -394,6 +384,8 @@ class Relay:
             if self.db.execute("SELECT 1 FROM owners WHERE nick=?", (n,)).fetchone():
                 raise FileExistsError(f"ник человека @{n} занят")
             self.db.execute("INSERT INTO owners (id, secret, nick, created) VALUES (?,?,?,?)", (oid, sec, n, time.time()))
+            # умолчание Сети одно — «По просьбе»; человеку при регистрации — своё «ко всем: Все», как будто поставил сам
+            self.rule_put(oid, "*", reach=HUMAN_OWN)
         return {"owner": oid, "owner_secret": sec, "key": key_str(oid, sec), "nick": n}
 
     def owner_rename(self, oid, nick):
@@ -491,7 +483,7 @@ class Relay:
             except FileExistsError:
                 self.db.execute("DELETE FROM agents WHERE id=?", (aid,))
                 raise
-            self.rule_sync(aid)     # новый агент сразу под правилами аккаунта и ветки
+            self.rule_sync(aid)     # новый агент сразу под правилами аккаунта
         try:
             with LOCK:
                 check_name(name, self.name_avoid(aid))
@@ -541,24 +533,26 @@ class Relay:
             raw = str(q.get("peer") or "").strip().lstrip("@").lower()
             ow = self.db.execute("SELECT id FROM owners WHERE id=? OR nick=?", (raw, raw)).fetchone() if "/" not in raw and not raw.startswith("an-") else None
             if ow and not self.db.execute("SELECT 1 FROM agents WHERE nick=?", (raw,)).fetchone():
-                peer = ow[0]    # доверие человеку — всем его агентам
+                peer = ow[0]    # человек — экземпляр, как агент: только он; весь его аккаунт — явным account
+                ob = "acct:" + peer if q.get("account") else peer
                 if q.get("on", True):
-                    self.allow(me, "acct:" + peer, force=True)
+                    self.allow(me, ob, force=True)
                     self.knock_answer(me, peer, True)      # просил сам человек — ему письмо «пиши»
                     if q.get("wake"):
-                        self.rule_put(me, "acct:" + peer, wake=1)
+                        self.rule_put(me, ob, wake=1)
                 else:
                     self.untrust(me, peer)
                     self.ask_refuse(me, peer, bool(q.get("ban")), "write")
-                return {"ok": True, "peer": peer, "owner": True, "trusted": bool(q.get("on", True))}
+                return {"ok": True, "peer": peer, "owner": True, "trusted": bool(q.get("on", True)), "account": bool(q.get("account"))}
             peer = self.resolve(q.get("peer"))
             if not self.db.execute("SELECT 1 FROM agents WHERE id=?", (peer,)).fetchone():
                 raise LookupError("нет агента " + peer)
+            ob = self.rule_obj(peer, "account" if q.get("account") else "self")    # агент — он сам; account — весь его аккаунт
             if q.get("on", True):
-                self.allow(me, peer, force=True)
+                self.allow(me, ob, force=True)
                 self.knock_answer(me, peer, True)
                 if q.get("wake"):       # «пусть его письма меня будят» — одной галочкой с разрешением
-                    self.rule_put(me, peer, wake=1)
+                    self.rule_put(me, ob, wake=1)
             else:
                 self.untrust(me, peer)
                 self.ask_refuse(me, peer, bool(q.get("ban")), "write")
@@ -591,9 +585,9 @@ class Relay:
             raise PermissionError(f"{self.addr_of(me)} закрыл тебе письма и просьбы (чёрный список) — писать, просить и будить его нельзя")
 
     def block(self, me, peer, on=True):
-        """Чёрный список: peer — агент (только он) или человек (весь его аккаунт). Закрыть — ступень block,
-        колокольчик снять, просьбы стереть; снять — вернуть к общим правилам. Под LOCK."""
-        ob = "acct:" + peer if self.is_owner(peer) else peer
+        """Чёрный список: peer — агент или человек, только он; весь аккаунт — peer `acct:ow-…`. Закрыть —
+        ступень block, колокольчик снять, просьбы стереть; снять — вернуть к общим правилам. Под LOCK."""
+        ob = peer
         if on:
             self.rule_put(me, ob, reach="block", wake=None)
             self.db.execute("DELETE FROM knocks WHERE src=? AND dst=?", (peer, me))
@@ -664,7 +658,7 @@ class Relay:
         администратору (asks) — в настройках агента; кого из Сети будят письма (from) — колокольчики его правил.
         Под LOCK."""
         w = {"owner": True, "mine": True, "answers": True, "asks": bool(self.rule_eff(aid)["asks"][0])}
-        w["from"] = [o[5:] if o.startswith("acct:") else o for o, in
+        w["from"] = [o for o, in       # агент, человек `ow-…` (только он) или весь аккаунт `acct:ow-…`
                      self.db.execute("SELECT obj FROM rules WHERE subj=? AND obj!='*' AND wake=1 ORDER BY at", (aid,))]
         return w
 
@@ -703,9 +697,17 @@ class Relay:
                 for x in (v if isinstance(v, list) else [v])[:50]:
                     x = str(x).strip()
                     if x:
+                        if x.endswith("/*"):        # «@ник/*» — весь его аккаунт
+                            b_ = x[:-2]
+                            o_ = self.human_of(b_ if b_.startswith("@") else "@" + b_) if "/" not in b_ and not b_.startswith(("ow-", "an-")) else None
+                            o_ = o_ or self.owner_id(self.target(b_))
+                            if not o_:
+                                raise LookupError(f"{b_} — нет такого аккаунта")
+                            ids.append("acct:" + o_)
+                            continue
                         hum = self.human_of(x) if x.startswith("@") and "/" not in x else None
                         ids.append(hum or self.target(x))
-                want = {"acct:" + i if self.is_owner(i) else i for i in ids}
+                want = set(ids)        # человек — только он
                 for ob, in self.db.execute("SELECT obj FROM rules WHERE subj=? AND obj!='*' AND wake=1", (aid,)).fetchall():
                     if ob not in want:
                         self.rule_put(aid, ob, wake=None)
@@ -716,9 +718,9 @@ class Relay:
         WAKE.notify_all()       # ждущий опрос перечитает настройку: лежавшее письмо может теперь будить
         return self.wake_of(aid)
 
-    def wake_peer(self, aid, peer, on=True):
-        """Колокольчик к одному собеседнику; человек — весь его аккаунт. Под LOCK."""
-        ob = "acct:" + peer if self.is_owner(peer) else peer
+    def wake_peer(self, aid, peer, on=True, account=False):
+        """Колокольчик к одному собеседнику: агент или человек — только он; account — весь его аккаунт. Под LOCK."""
+        ob = self.rule_obj(peer, "account" if account else "self")
         self.rule_put(aid, ob, wake=1 if on else None)
         if not on and self.rule_eff(aid, peer)["wake"][0]:     # колокольчик «ко всем» включён — выключить явно
             self.rule_put(aid, ob, wake=0)
@@ -727,7 +729,7 @@ class Relay:
     def wake_view(self, aid):
         """Настройки пробуждения словами — для агента и кабинета. Под LOCK."""
         w = self.wake_of(aid)
-        return {"wake": {**w, "from": [self.addr_of(x) for x in w.get("from") or []]}, "help": WAKE_HELP,
+        return {"wake": {**w, "from": [self.addr_of(x[5:]) + "/*" if x.startswith("acct:") else self.addr_of(x) for x in w.get("from") or []]}, "help": WAKE_HELP,
                 "note": "будящие письма воркер доставляет в сессию сразу; остальные лежат в почте — проверяй /v1/unread и читай /v1/read. "
                 "Ждёшь ответа от ассистента или агента — разреши ему будить себя: {\"peer\": \"адрес\", \"on\": true} или письмо с \"wake\": true"}
 
@@ -743,7 +745,7 @@ class Relay:
                 if q.get("on", True) is not False:
                     self.need_waker(me, {"from": True})
                 pid = self.target(q["peer"])
-                self.wake_peer(me, pid, q.get("on", True) is not False)
+                self.wake_peer(me, pid, q.get("on", True) is not False, bool(q.get("account")))
                 if q.get("on", True) is not False:
                     self.wake_granted(me, pid)
                 else:
@@ -1029,7 +1031,7 @@ class Relay:
     # Лестница (reach) — что от собеседника доходит до меня: block · closed · ask (только просьба) · write. Колокольчик
     # (wake) — будит ли меня то, что доходит: на ступени ask — просьба, на write — письма. Просьба — механизм поднять
     # ступень или включить колокольчик, а не параметр. Каждое поле берётся с самого точного уровня, где задано: сначала про
-    # конкретного собеседника, потом про его аккаунт, потом «все»; внутри — я сам, моя ветка, мой аккаунт; ниже — дефолты Сети.
+    # конкретного собеседника, потом про его аккаунт, потом «все»; внутри — я сам, мой аккаунт; ниже — умолчание Сети.
     def kind3(self, x):
         """Род участника для правил: human · assistant · agent. Под LOCK."""
         if str(x).startswith("ow-") and self.is_owner(x):
@@ -1079,7 +1081,7 @@ class Relay:
                         break
                 if hit:
                     break
-            out[f] = hit or (NET_RULES[k][f], "net", "*")
+            out[f] = hit or (NET_RULE[f], "net", "*")
         return out
 
     def rule_chain(self, me, peer=None):
@@ -1094,17 +1096,18 @@ class Relay:
         for i, f in enumerate(("reach", "wake")):
             lst = [{"from": self.level_name(s, o), "value": rows[(s, o)][i]} for o in oc for s in sc
                    if rows.get((s, o), (None, None))[i] is not None]
-            lst.append({"from": "по умолчанию Сети", "value": NET_RULES[k][f]})
+            lst.append({"from": "по умолчанию Сети", "value": NET_RULE[f]})
             for j, x in enumerate(lst):
                 x["win"] = j == 0
                 x["value"] = x["value"] if f == "reach" else bool(x["value"])
             out[f] = lst
         return out
 
-    def rule_obj(self, peer, scope="agent"):
-        """Объект правила для собеседника: scope human — весь его аккаунт (если он у него есть), иначе он сам. Под LOCK."""
+    def rule_obj(self, peer, scope="self"):
+        """Объект правила для собеседника: scope account — весь его аккаунт (если он у него есть), иначе он сам — агент или
+        человек, как экземпляр. Под LOCK."""
         o = self.owner_id(peer)
-        return "acct:" + o if scope == "human" and o else peer
+        return "acct:" + o if scope == "account" and o else peer
 
     def rule_get(self, subj, obj):
         r = self.db.execute("SELECT reach, wake, hidden, asks FROM rules WHERE subj=? AND obj=?", (subj, obj)).fetchone()
@@ -1151,7 +1154,7 @@ class Relay:
 
     def rule_own(self, subj, field, value, obj="*"):
         """Поставить поле так, чтобы действовало value: совпадает с унаследованным сверху — снять своё (следовать
-        аккаунту и ветке), иначе записать. Для прежних флагов «открыт», «скрыт», режима человека. Под LOCK."""
+        аккаунту), иначе записать. Для прежних флагов «открыт», «скрыт», режима человека. Под LOCK."""
         self.rule_put(subj, obj, **{field: None})
         peer = None if obj == "*" else obj
         if self.rule_eff(subj, peer)[field][0] != value:
@@ -1861,11 +1864,12 @@ class Relay:
             return {"own": True, "peer": self.addr_of(peer)}
         e = self.rule_eff(me, peer)
         acct = self.owner_id(me)
+        pa = self.owner_id(peer)        # его аккаунт; у человека — его же: человек и аккаунт — разные объекты
 
         def mine(subj):
             """Своя запись subj про peer: (ступень, на кого) и (колокольчик, на кого) — на него самого или весь аккаунт."""
             r = {}
-            for ob, sc in ((peer, "agent"), *((("acct:" + ph, "human"),) if ph else ())):
+            for ob, sc in ((peer, "self"), *((("acct:" + pa, "account"),) if pa else ())):
                 g = self.rule_get(subj, ob)
                 for f in ("reach", "wake"):
                     if g[f] is not None and f not in r:
@@ -1886,7 +1890,7 @@ class Relay:
         w_own = {"write": "allow", "block": "block"}.get((own.get("reach") or (None,))[0], "default")
         return {"me": self.addr_of(me), "me_kind": "human" if me_h else "agent", "peer": self.addr_of(peer),
                 "peer_kind": "human" if p_h else "assistant" if self.is_assistant(peer) else "agent",
-                **({"peer_human": self.addr_of(ph)} if ph else {}),
+                **({"peer_human": self.addr_of(ph)} if ph else {}), **({"peer_account": self.addr_of(pa)} if pa else {}),
                 "in": {"reach": e["reach"][0], "reach_text": REACH_TEXT[e["reach"][0]], "reach_from": self.level_name(*e["reach"][1:]),
                        "write": w_own if w_own != "default" or "reach" not in own else ("closed" if own["reach"][0] == "closed" else "ask"),
                        "set": {f: {"value": v, "scope": sc} for f, (v, sc) in own.items()},
@@ -1900,23 +1904,23 @@ class Relay:
                 "out": {"write": st, "text": WRITE_TEXT.get(st, "он закрыл тебе письма" if st == "blocked" else ""),
                         **({} if p_h else {"wakes": bool(wk), **({"wake_asked": True} if wask else {})})}}
 
-    def rel_set(self, me, peer, write=None, wake=None, scope="agent", subj=None):
+    def rel_set(self, me, peer, write=None, wake=None, scope="self", subj=None):
         """Поменять отношение к peer: write — allow · default · block · ask · closed (ступень лестницы;
-        default — снять свою запись), wake — будят ли его письма (None — не трогать, "default" — снять); scope "human" — на
-        весь его аккаунт; subj — чья запись: me (по умолчанию) или "acct:ow-…" (весь мой аккаунт, только человек и ключ).
+        default — снять свою запись), wake — будят ли его письма (None — не трогать, "default" — снять); scope "self" — он сам
+        (агент или человек), "account" — весь его аккаунт; subj — чья запись: me (по умолчанию) или "acct:ow-…" (весь мой аккаунт, только человек и ключ).
         Возвращает, что поменялось словами. Под LOCK."""
         subj = subj or me
         ph = self.owner_id(peer)
-        if scope not in ("agent", "human"):
-            raise ValueError("scope: agent · human")
-        if scope == "human" and not ph:
-            raise ValueError("у него нет человека — scope только agent")
+        if scope not in ("self", "account"):
+            raise ValueError("scope: self (он сам) · account (весь его аккаунт)")
+        if scope == "account" and not ph:
+            raise ValueError("у него нет человека и аккаунта — scope только self")
         if self.same_side(me, peer):
             raise ValueError("это ты сам или твой агент — с ними отношения не настраиваются")
         tgt = self.rule_obj(peer, scope)
         both = [peer] + (["acct:" + ph] if ph else [])
         said = []
-        to = " — весь его аккаунт" if scope == "human" else ""
+        to = " — весь его аккаунт" if scope == "account" else ""
         if write is not None:
             reach = {"allow": "write", "block": "block", "ask": "ask", "closed": "closed", "write": "write", "default": None}.get(write, "?")
             if reach == "?":
@@ -1971,7 +1975,7 @@ class Relay:
                 "set": {k: v for k, v in g.items() if v is not None}, "chain": self.rule_chain(me),
                 "help": "reach — что из Сети до тебя доходит: write (пишут все) · ask (доходит только просьба) · closed (ни писем, ни "
                         "просьб) · block; wake — будит ли тебя то, что доходит; hidden — не виден в Сети. Своя запись сильнее аккаунта "
-                        "и ветки твоего человека; \"default\" — снять свою и следовать им."}
+                        "твоего человека; \"default\" — снять свою и следовать ему."}
 
     def rel_api(self, q):
         """/v1/rel {peer} — моё отношение к собеседнику; {peer, write?, wake?, scope?} — поменять. peer "*" — мои
@@ -1984,16 +1988,15 @@ class Relay:
             peer = self.target(q.get("peer") or q.get("to"))
             if not ("write" in q or "wake" in q):
                 return self.rel(me, peer)
-            ph = (self.db.execute("SELECT owner FROM agents WHERE id=?", (peer,)).fetchone() or [None])[0]
-            tgt = ph if q.get("scope") == "human" and ph else peer
+            sc = q.get("scope") or "self"
         said, wait = [], None
         if q.get("write") == "allow":       # разрешить писать — та же дорога, что /v1/trust: на сайте под политикой одобрения человека
-            r = self.trust({**q, "peer": self.addr_of(tgt) if tgt != ph else tgt, "on": True})
+            r = self.trust({**q, "peer": peer if self.is_owner(peer) else self.addr_of(peer), "account": sc == "account", "on": True})
             wait = r if r.get("pending") or r.get("status") == "wait" else None
             said.append("ждёт одобрения твоего человека" if wait else "может писать")
         with LOCK:
             said += self.rel_set(me, peer, q.get("write") if q.get("write") in ("default", "block", "ask", "closed") else None,
-                                 q.get("wake") if "wake" in q else None, q.get("scope") or "agent")
+                                 q.get("wake") if "wake" in q else None, sc)
             self.acted(me)
             return {"ok": True, "changed": said, **({"approval": wait} if wait else {}), **self.rel(me, peer)}
 

@@ -273,6 +273,7 @@ input[type=search]#dsearch { width: 100%; padding: 10px 14px; border-radius: 18p
 .sysc .sysa { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .sysc .sysa .btn { min-height: 36px; }
 .sysc .sysa .err { flex-basis: 100%; text-align: right; color: var(--bad); font-size: 13px; }
+.sysc .sysa .sys-acc { flex-basis: 100%; order: -1; display: flex; justify-content: flex-end; align-items: center; gap: 6px; font-size: 13px; color: var(--mut, #8a96a8); cursor: pointer; }
 .sys-st { font-size: 13.5px; font-weight: 600; color: var(--muted); } .sys-st.ok { color: var(--ok); } .sys-st.no, .sys-st.bad { color: var(--bad); }
 .bub.sysn { align-self: center; max-width: 92%; background: rgba(23, 33, 43, .9); border-radius: 12px; padding: 4px 12px; font-size: 12.5px; color: #c9d6e3; text-align: center; }
 .bub.sysn.ok span::before { content: "✓ "; color: var(--ok); } .bub.sysn.no span::before, .bub.sysn.bad span::before { content: "✕ "; color: var(--bad); }
