@@ -1307,7 +1307,13 @@ class Relay:
                 if only_wake:
                     why = [self.wakes(me, r[1], r[13], w) for r in rows]
                     quiet = sum(1 for x in why if not x)
+                    # «⚙ Твой человек поменял…»: первое будит сразу, следующие — пачкой не чаще раза в CFG_EVERY;
+                    # отложенное доходит следующим опросом воркера после окна, ничего не теряется
+                    hold = time.time() - CFG_AT.get(me, 0) < CFG_EVERY
+                    why = ["" if x and hold and r[13] == "answer" and (r[3] or "").startswith("⚙") else x for r, x in zip(rows, why)]
                     rows = [r + (x,) for r, x in zip(rows, why) if x][:20]
+                    if any(r[13] == "answer" and (r[3] or "").startswith("⚙") for r in rows):
+                        CFG_AT[me] = time.time()
                 left = end - time.time()
                 if rows or left <= 0:
                     break
@@ -2154,6 +2160,8 @@ ROUTES = {"/v1/owner": "owner_register", "/v1/owner/me": "owner_me", "/v1/regist
           "/v1/owner/seen": "owner_seen"}
 
 
+CFG_EVERY = 120   # уведомления «⚙ Твой человек поменял…» будят не чаще раза в 2 мин; первое — сразу
+CFG_AT = {}       # агент → когда воркер последний раз получил такое уведомление будящим
 NET_KINDS = ("ask", "answer")      # системные письма сети: просьба и ответ на неё — в ленте плашкой, а не репликой
 
 
