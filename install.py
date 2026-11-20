@@ -40,7 +40,9 @@ def service(relay: str, port: int, dry: bool):
     if not shutil.which("systemctl"):
         return "systemd нет — запусти воркер сам (и добавь в автозапуск): nohup " + run + " &"
     unit = Path.home() / ".config/systemd/user/agentnet-worker.service"
-    text = f"[Unit]\nDescription=agentnet worker\n\n[Service]\nExecStart={run}\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n"
+    # PATH — как в шелле установщика: служба systemd иначе не видит claude, codex и opencode в ~/.local/bin
+    path = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin").replace("%", "%%")
+    text = f"[Unit]\nDescription=agentnet worker\n\n[Service]\nExecStart={run}\nEnvironment=\"PATH={path}\"\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n"
     if dry:
         return "будет служба " + str(unit) + ": " + run
     unit.parent.mkdir(parents=True, exist_ok=True)

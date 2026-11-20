@@ -30,6 +30,13 @@ import relay as rl  # noqa: E402  — местная сеть: тот же ре�
 import node as nd  # noqa: E402  — узел: наборы тулз ассистентов владельца исполняются на этой машине
 
 HOME = Path(os.environ.get("AGENTNET_HOME", Path.home() / ".agentnet"))
+
+# Служба systemd стартует с урезанным PATH без ~/.local/bin, где обычно лежат claude, codex и opencode: тогда список
+# сессий молча пуст и письма копятся у воркера, не доходя до агента (находка 20.11 на машине PO). Дописываем обычные места.
+for _d in ("~/.local/bin", "~/.claude/local", "~/.npm-global/bin", "~/.bun/bin", "~/.opencode/bin", "/usr/local/bin"):
+    _d = os.path.expanduser(_d)
+    if os.path.isdir(_d) and _d not in os.environ.get("PATH", "").split(os.pathsep):
+        os.environ["PATH"] = os.environ.get("PATH", "") + os.pathsep + _d
 IDS = HOME / "identities.json"
 LOCK = threading.RLock()
 COND = threading.Condition(LOCK)
@@ -565,9 +572,20 @@ def flags_mode(a):
 
 
 def list_agents():
+    """Сессии Claude Code на машине. Не вышло — пусто и одна строка в журнал на смену причины (иначе письма копятся молча)."""
     try:
-        return json.loads(subprocess.run(["claude", "agents", "--json", "--all"], capture_output=True, text=True, timeout=30).stdout or "[]")
-    except Exception:
+        cl = shutil.which("claude")
+        if not cl:
+            raise RuntimeError("команды claude нет в PATH: " + os.environ.get("PATH", ""))
+        r = subprocess.run([cl, "agents", "--json", "--all"], capture_output=True, text=True, timeout=30)
+        out = json.loads(r.stdout or "[]")
+        STATE.pop("agents_err", None)
+        return out
+    except Exception as e:
+        err = str(e)[:200]
+        if STATE.get("agents_err") != err:
+            STATE["agents_err"] = err
+            log("список сессий Claude Code не получен —", err)
         return []
 
 
@@ -679,7 +697,7 @@ def claude_target(s, agents):
     if not sock:
         if a and a.get("kind") == "background" and a.get("id") and time.time() - STATE["respawn_at"].get(s, 0) > 120:
             STATE["respawn_at"][s] = time.time()
-            r = subprocess.run(["claude", "respawn", a["id"]], capture_output=True, text=True, timeout=60)
+            r = subprocess.run([shutil.which("claude") or "claude", "respawn", a["id"]], capture_output=True, text=True, timeout=60)
             log("respawn", a["id"], (r.stdout or r.stderr).strip()[:120])
         return None
     mode = proc_mode(pid, a.get("id") if a and a.get("kind") == "background" else None)
