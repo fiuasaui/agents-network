@@ -128,6 +128,21 @@ def db_open(path):
                     c.execute("INSERT INTO rules (subj, obj, wake, at) VALUES (?,?,?,?)", (s + ":agent", o, w, time.time()))
         c.execute("UPDATE rules SET wake=NULL WHERE subj LIKE 'ow-%' OR subj LIKE 'acct:%:assistant' OR (subj LIKE 'acct:%' AND subj NOT LIKE 'acct:%:%')")
         c.execute("DELETE FROM rules WHERE reach IS NULL AND wake IS NULL AND hidden IS NULL")
+    # групп «мои агенты / мои ассистенты» больше нет: «кому из моих» — аккаунт или экземпляр. Правило ветки переносится в
+    # каждый экземпляр её рода, где своё поле не задано, — действующее у существующих не меняется; ветка удаляется
+    fs = ("reach", "wake", "hidden", "asks")
+    for s_, o_, *vals in c.execute("SELECT subj, obj, reach, wake, hidden, asks FROM rules WHERE subj LIKE 'acct:%:%'").fetchall():
+        own, kind = s_[5:].split(":", 1)
+        ags = [a for a, k in c.execute("SELECT id, COALESCE(kind, '') FROM agents WHERE owner=?", (own,)) if k.startswith("assistant") == (kind == "assistant")]
+        for a in ags:
+            cur = c.execute("SELECT reach, wake, hidden, asks FROM rules WHERE subj=? AND obj=?", (a, o_)).fetchone()
+            new = [v if cur is None or cur[i] is None else cur[i] for i, v in enumerate(vals)]
+            if kind == "assistant":        # ассистента будит всё дошедшее — звонка и просьб у него нет
+                new[1] = new[3] = None
+            if all(v is None for v in new):
+                continue
+            c.execute("INSERT OR REPLACE INTO rules (subj, obj, reach, wake, hidden, asks, at) VALUES (?,?,?,?,?,?,?)", (a, o_, *new, time.time()))
+        c.execute("DELETE FROM rules WHERE subj=? AND obj=?", (s_, o_))
     if fresh:
         rules_migrate(c)
         # прежние таблицы — архив; на их месте представления из правил: чтения (счётчики, списки) работают как раньше,
@@ -149,7 +164,7 @@ REACH_TEXT = {"block": "чёрный список", "closed": "закрыт: н�
 # asks — будят ли просьбы: по умолчанию да; у человека и ассистента не действует
 NET_RULES = {"agent": {"reach": "ask", "wake": 0, "hidden": 0, "asks": 1}, "assistant": {"reach": "write", "wake": 0, "hidden": 0, "asks": 1},
              "human": {"reach": "write", "wake": 0, "hidden": 0, "asks": 1}}
-WAKE_LEVELS = "будят ли письма и просьбы — настройка агентов: человека будить нечем, ассистента будит всё дошедшее"
+WAKE_LEVELS = "будят ли письма и просьбы — настройка агентов: человека будить нечем, ассистента будит всё дошедшее; на аккаунте она действует только на агентов"
 
 
 def rules_migrate(c):
@@ -747,13 +762,30 @@ class Relay:
                              "Поставить воркер — https://agentsnetwork.online/agent, раздел 0 «Две ступени»")
 
     def hidden_wall(self, a, b):
-        """Скрытый агент живёт только в системе своего человека: ни он наружу, ни снаружи к нему — включая
-        ассистента. True — между a и b стена. Под LOCK."""
-        def side(x):
-            r = self.db.execute("SELECT owner, COALESCE(hidden, 0) FROM agents WHERE id=?", (x,)).fetchone()
-            return (r[0] or x, bool(r[1])) if r else (x, False)
-        (oa, ha), (ob, hb) = side(a), side(b)
-        return (ha or hb) and oa != ob
+        """Скрытость — против тех, кто тебя ещё не знает: скрытого не видно и до него не достучаться тем, про
+        кого у него нет своего правила; с теми, про кого правило есть (он сам или весь его аккаунт названы), и со своими общение
+        идёт как обычно, в обе стороны; начать разговор с незнакомым скрытый не может — раскроется. Одинаково у агента и
+        человека. True — между a и b стена. Под LOCK."""
+        oa, ob = self.owner_id(a) or a, self.owner_id(b) or b
+        if oa == ob:
+            return False
+        return (self.is_hidden(a) and not self.knows(a, b)) or (self.is_hidden(b) and not self.knows(b, a))
+
+    def is_hidden(self, x):
+        """Скрыт ли участник: агент — витрина agents.hidden, человек — его правило «ко всем» (каскадом с аккаунта). Под LOCK."""
+        if str(x).startswith("ow-") and self.is_owner(x):
+            return bool(self.rule_eff(x)["hidden"][0])
+        r = self.db.execute("SELECT COALESCE(hidden, 0) FROM agents WHERE id=?", (x,)).fetchone()
+        return bool(r and r[0])
+
+    def knows(self, me, peer):
+        """«Знакомый» скрытого: у me (или у его аккаунта) есть своё правило, где назван peer или весь
+        его аккаунт; чёрный список знакомством не считается — заблокированный скрытого не видит. Под LOCK."""
+        sc, _k = self.subj_chain(me)
+        oc = [o for o in self.obj_chain(peer) if o != "*"]
+        return bool(self.db.execute(f"SELECT 1 FROM rules WHERE subj IN ({','.join('?' * len(sc))}) AND obj IN ({','.join('?' * len(oc))})"
+                                    " AND COALESCE(reach, '')!='block' LIMIT 1",
+                                    (*sc, *oc)).fetchone())
 
     def ask_extra(self, src, dst, note):
         """Что ещё сделать по просьбе (на сайте — запрос человеку получателя). Возвращает строку для письма получателю."""
@@ -1018,7 +1050,7 @@ class Relay:
         if k == "human":
             return [me, "acct:" + me], k
         o = self.owner_id(me)
-        return [me] + ([f"acct:{o}:{k}", "acct:" + o] if o else []), k
+        return [me] + (["acct:" + o] if o else []), k        # без групп: экземпляр → аккаунт
 
     def obj_chain(self, peer):
         if peer in (None, "*"):
@@ -1062,7 +1094,7 @@ class Relay:
         for i, f in enumerate(("reach", "wake")):
             lst = [{"from": self.level_name(s, o), "value": rows[(s, o)][i]} for o in oc for s in sc
                    if rows.get((s, o), (None, None))[i] is not None]
-            lst.append({"from": "дефолт Сети", "value": NET_RULES[k][f]})
+            lst.append({"from": "по умолчанию Сети", "value": NET_RULES[k][f]})
             for j, x in enumerate(lst):
                 x["win"] = j == 0
                 x["value"] = x["value"] if f == "reach" else bool(x["value"])
@@ -1085,9 +1117,10 @@ class Relay:
         for k, v in f.items():
             if k not in cur:
                 raise ValueError(f"правило: поле {k} неизвестно — reach, wake, hidden, asks")
-            if k in ("wake", "asks") and v is not None and (subj.startswith("ow-") or subj.endswith(":assistant") or
-                                                            (subj.startswith("acct:") and subj.count(":") == 1) or self.kind3(subj) == "assistant"):
-                raise ValueError(WAKE_LEVELS + " — задай у «мои агенты» или у агента")
+            if subj.startswith("acct:") and subj.count(":") > 1:
+                raise ValueError("групп «мои агенты» и «мои ассистенты» нет: правило — на аккаунт или на конкретного агента")
+            if k in ("wake", "asks") and v is not None and (subj.startswith("ow-") or self.kind3(subj) == "assistant"):
+                raise ValueError(WAKE_LEVELS + " — задай на аккаунте (действует на всех агентов) или у агента")
             if k == "reach" and v is not None and v not in REACH:
                 raise ValueError("reach: " + " · ".join(REACH))
             cur[k] = v if k == "reach" or v is None else int(bool(v))
@@ -1141,8 +1174,7 @@ class Relay:
         """Уровень правила словами — для «откуда взялось». Под LOCK."""
         if s == "net":
             return "по умолчанию Сети"
-        who = ("мой аккаунт" if s.count(":") == 1 else {"agent": "все мои агенты", "assistant": "все мои ассистенты"}.get(s.rsplit(":", 1)[1], s)) \
-            if s.startswith("acct:") else ("я сам" if s.startswith("ow-") else "этот агент")
+        who = "мой аккаунт" if s.startswith("acct:") else ("я сам" if s.startswith("ow-") else "этот агент")
         to = "все" if o == "*" else ("весь его аккаунт" if o.startswith("acct:") else "он сам")
         return f"{who} → {to}"
 
@@ -1778,8 +1810,9 @@ class Relay:
             aid = self.resolve(q.get("agent") or q.get("to"))
             r = self.db.execute("SELECT a.id, a.nick, a.name, a.about, a.open, COALESCE(a.asks, 1), COALESCE(a.hidden, 0), a.seen, a.created, a.av, a.owner, o.nick "
                                 "FROM agents a LEFT JOIN owners o ON o.id=a.owner WHERE a.id=?", (aid,)).fetchone()
-            if not r or (r[6] and not q.get("_owner_view")):     # скрыт он сам, его ветка или аккаунт
-                raise LookupError("нет такого агента")
+            viewer = q.get("_viewer") or (self.db.execute("SELECT id FROM agents WHERE id=? AND secret=?", (q.get("id"), q.get("secret"))).fetchone() or [None])[0]
+            if not r or (r[6] and not q.get("_owner_view") and not (viewer and not self.hidden_wall(viewer, r[0]))):
+                raise LookupError("нет такого агента")      # скрытый виден только своим и знакомым
             st = self.agent_stats(aid)
             acted = (self.db.execute("SELECT acted FROM agents WHERE id=?", (aid,)).fetchone() or [None])[0]
             me = self.card_me(q, aid, r) if q.get("id") and q.get("secret") else None
@@ -1910,7 +1943,7 @@ class Relay:
         if wake is not None:
             if self.is_owner(me) and subj == me:
                 raise ValueError("человека письма не будят — wake только у агента")
-            ws = subj + ":agent" if str(subj).startswith("acct:") and subj.count(":") == 1 else subj    # с аккаунта — в «мои агенты»
+            ws = subj       # с аккаунта звонок действует на всех агентов
             if wake is True or wake == 1 or wake == "on":
                 if not str(ws).startswith("acct:"):
                     self.need_waker(me, {"from": True})
@@ -1919,7 +1952,7 @@ class Relay:
                     self.rule_put(ws, ob, wake=None)
             on = wake is True or wake in (1, "on")
             self.rule_put(ws, tgt, wake=None if wake == "default" else 1 if on else None)
-            if wake != "default" and not on and self.rule_eff(me, peer)["wake"][0]:
+            if wake != "default" and not on and (ws != me or self.rule_eff(me, peer)["wake"][0]):
                 self.rule_put(ws, tgt, wake=0)
             if on:
                 self.wake_granted(me, peer)
