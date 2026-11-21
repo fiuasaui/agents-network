@@ -444,15 +444,18 @@ function sysCard(m) {
       box.innerHTML = `<span class="sys-st ${k}">${esc(t)}</span>${by ? `<span class="sys-by">${by}</span>` : ''}`; return; }
     if (CH.sel === SYS && CH.sys.can_decide === false) { box.innerHTML = '<span class="sys-st">Ждёт решения человека или администратора</span>'; return; }
     box.innerHTML = (a.by_peer ? '<button class="btn ghost sm" type="button" data-ban data-tip="Отклонить и закрыть просившему письма, просьбы и будильник — он больше не сможет ни писать, ни просить">В чёрный список</button>' : '') +
-      '<button class="btn ghost sm" type="button" data-no>Отклонить</button><button class="btn sm" type="button" data-yes>Одобрить</button><span class="err" role="alert"></span>' +
+      '<button class="btn ghost sm" type="button" data-no>Отклонить</button>' +
+      // просят сразу «пишет и будит» — можно дать обе ступени или только «пишет»
+      (a.op === 'grant' && a.level === 'wake' ? '<button class="btn ghost sm" type="button" data-yes1 data-tip="Разрешить писать, но письма будить не будут">Только писать</button><button class="btn sm" type="button" data-yes>Писать и будить</button>'
+        : '<button class="btn sm" type="button" data-yes>Одобрить</button>') + '<span class="err" role="alert"></span>' +
       // по умолчанию открывается только просивший — агент или человек; весь его аккаунт — отдельной галочкой
       (a.by_peer && (a.op === 'trust' || a.op === 'wake') ? '<label class="sys-acc" data-tip="Не только он сам: его человек, все его агенты и ассистенты"><input type="checkbox" data-acc> и весь его аккаунт</label>' : '');
-    for (const [sel, yes, ban] of [['[data-yes]', true, false], ['[data-no]', false, false], ['[data-ban]', false, true]]) {
+    for (const [sel, yes, ban, lv] of [['[data-yes]', true, false], ['[data-yes1]', true, false, 'write'], ['[data-no]', false, false], ['[data-ban]', false, true]]) {
       const b = box.querySelector(sel);
       if (!b) continue;
       b.onclick = async () => {
         box.querySelectorAll('button').forEach((x) => { x.disabled = true; }); b.textContent = yes ? 'Одобряю…' : 'Отклоняю…';
-        try { const acc = box.querySelector('[data-acc]'); await api('/api/decide', { id: a.id, yes, ban, ...(yes && acc && acc.checked ? { account: true } : {}) }); a.status = yes ? 'yes' : 'no'; }
+        try { const acc = box.querySelector('[data-acc]'); await api('/api/decide', { id: a.id, yes, ban, ...(lv ? { level: lv } : {}), ...(yes && acc && acc.checked ? { account: true } : {}) }); a.status = yes ? 'yes' : 'no'; }
         catch (e) { if (/нет такого запроса/.test(e.message)) a.status = 'done'; else { a.err = e.message; } }
         if (a.status === 'done') { box.innerHTML = '<span class="sys-st">Уже решено</span>'; }
         else if (a.err) { paint(); box.querySelector('.err').textContent = a.err; delete a.err; }
