@@ -685,15 +685,19 @@ class Relay:
         o = self.owner_id(me)
         if o and src == o:      # свои и ответ на мою просьбу будят всегда
             return "owner"
-        if self.same_side(me, src):     # просьбы на одобрение администратору — полем asks его правил
+        if self.same_side(me, src):     # одобрения администратору — полем asks его правил: у агента под человеком
+                                        # это и есть смысл asks — «будят ли одобрения»
             return ("asks" if self.rule_eff(me, src)["asks"][0] else "") if kind == "ask" else "mine"
         if kind == "answer":
             return "answers"
         e = self.rule_eff(me, src)
         if e["reach"][0] in ("block", "closed"):
             return ""
-        if kind == "ask":               # просьба — свой объект: доходит со ступени «по просьбе», будит полем asks
-            return "asks" if e["asks"][0] else ""
+        if kind == "ask":               # просьба — свой объект: доходит со ступени «по просьбе»
+            # агента под человеком просьба не будит: решает человек или администратор, им — одобрение; агент без
+            # человека (свой ретранслятор) решает сам — его будит полем asks
+            # администратор решает и просьбы к себе (хука про себя ему нет) — его будит тем же полем «будят ли одобрения»
+            return "" if o and not self.is_admin(me) else ("asks" if e["asks"][0] else "")
         return "from" if e["wake"][0] else ""
 
     def set_wake(self, aid, patch):
@@ -1118,6 +1122,51 @@ class Relay:
                 x["value"] = x["value"] if f == "reach" else bool(x["value"])
             out[f] = lst
         return out
+
+    def ladder(self, subj, obj):
+        """Лесенка правил subj про obj для карточки: три ступени по «про кого» — про него самого (self), про его
+        аккаунт (account), ко всем (all) — и под ними умолчание Сети. На каждой ступени — reach и wake, если заданы, и кем:
+        экземпляром subj (self) или его аккаунтом (account). Итог — первая заданная сверху вниз (как rule_eff). Под LOCK."""
+        sc, _ = self.subj_chain(subj)
+        oc = self.obj_chain(obj)
+        rows = {(s, o): (r, w) for s, o, r, w in self.db.execute(
+            f"SELECT subj, obj, reach, wake FROM rules WHERE subj IN ({','.join('?' * len(sc))}) AND obj IN ({','.join('?' * len(oc))})",
+            (*sc, *oc))}
+        out = []
+        for o in oc:
+            step = {"about": "all" if o == "*" else "account" if o.startswith("acct:") else "self"}
+            for i, f in enumerate(("reach", "wake")):
+                for s_ in sc:
+                    v = rows.get((s_, o), (None, None))[i]
+                    if v is not None:
+                        step[f] = {"value": v if f == "reach" else bool(v), "by": "account" if s_.startswith("acct:") else "self"}
+                        break
+            out.append(step)
+        e = self.rule_eff(subj, obj)
+        return {"steps": out, "net": {"reach": NET_RULE["reach"], "wake": bool(NET_RULE["wake"])},
+                "final": {"reach": e["reach"][0], "wake": bool(e["wake"][0])}}
+
+    def is_admin(self, aid):
+        """Администратор ли агент своего человека. Столбец admin есть только на сайте Сети; в местной сети — нет. Под LOCK."""
+        try:
+            r = self.db.execute("SELECT COALESCE(admin, 0) FROM agents WHERE id=?", (aid,)).fetchone()
+        except sqlite3.OperationalError:
+            return False
+        return bool(r and r[0])
+
+    def asks_by(self, aid):
+        """Кто решает просьбы к агенту и как быстро — публично: {"who": "admin"|"human"|"self", "admin": адрес,
+        "wakes": будят ли одобрения администратора}. Под LOCK."""
+        o = self.owner_id(aid)
+        if not o or o == aid:
+            return {"who": "self"}
+        try:        # администратор есть только на сайте Сети; в местной сети воркера столбца нет — решает человек
+            r = self.db.execute("SELECT id FROM agents WHERE owner=? AND COALESCE(admin, 0)=1", (o,)).fetchone()
+        except sqlite3.OperationalError:
+            r = None
+        if not r:
+            return {"who": "human"}
+        return {"who": "admin", "admin": self.addr_of(r[0]), "wakes": bool(self.rule_eff(r[0], aid)["asks"][0])}
 
     def rule_obj(self, peer, scope="self"):
         """Объект правила для собеседника: scope account — весь его аккаунт (если он у него есть), иначе он сам — агент или
@@ -1922,11 +1971,12 @@ class Relay:
                        **({"account": {f: {"value": v, "scope": sc} for f, (v, sc) in acc.items()}} if acc else {}),
                        "scope": (own.get("reach") or (None, None))[1], "default": REACH_TEXT[dflt[0]],
                        "default_from": self.level_name(*dflt[1:]),
-                       "chain": self.rule_chain(me, peer),
+                       "chain": self.rule_chain(me, peer), "ladder": self.ladder(me, peer),
                        "now": self.may_write(peer, me) or "", **({"asked": True} if kin else {}),
                        **({} if me_h else {"wake": bool(e["wake"][0]), "wake_from": self.level_name(*e["wake"][1:]),
                                            "wake_scope": (own.get("wake") or (None, None))[1] if (own.get("wake") or (0,))[0] else None})},
                 "out": {"write": st, "text": WRITE_TEXT.get(st, "он закрыл тебе письма" if st == "blocked" else ""),
+                        "ladder": self.ladder(peer, me), **({} if p_h else {"asks_by": self.asks_by(peer)}),
                         **({} if p_h else {"wakes": bool(wk), **({"wake_asked": True} if wask else {})})}}
 
     def rel_set(self, me, peer, write=None, wake=None, scope="self", subj=None):

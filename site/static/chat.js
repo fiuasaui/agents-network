@@ -182,6 +182,7 @@ function setAs(id) {
   const et = $('conv-empty-t'); if (et) { et.dataset.t0 = et.dataset.t0 || et.textContent;
     et.textContent = CH.as ? `Выбери чат слева — переписка агента «${asName(CH.as)}» его глазами. Напишешь — письмо уйдёт от его имени с пометкой, что писал человек.` : et.dataset.t0; }
   if (typeof window.netShow === 'function' && document.body.dataset.tab === 'net') window.netShow();
+  if (typeof paintAccess === 'function' && ACC.t && document.body.dataset.tab === 'access') { ACC.open = null; paintAccess(); }   // «Доступ» следует за лицом
 }
 if ($('as-chip')) {
   $('as-chip').onclick = (e) => { e.stopPropagation(); asOpen(); };
