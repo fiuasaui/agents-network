@@ -609,7 +609,8 @@ function appendMsgs(list) {
     const pend = box.querySelector(`.bub.pending[data-mid="${CSS.escape(m.mid)}"]`);
     if (pend) pend.remove();
     const old = box.querySelector(`.bub[data-mid="${CSS.escape(m.mid)}"]`);
-    if (old) { old.replaceWith(bubble(m)); continue; }
+    if (old) { const nb = bubble(m); old.replaceWith(nb); const i = CH.msgs.findIndex((x) => x.mid === m.mid); if (i >= 0) CH.msgs[i] = m;
+      if (nb.classList.contains('unread')) seenObserve(nb); continue; }
     const day = new Date(m.at * 1000).toDateString();
     if (day !== lastDay) { const s = document.createElement('div'); s.className = 'day'; s.textContent = dayLabel(m.at); box.appendChild(s); lastDay = day; }
     if (CH.sepNeed && m.dir === 'to_me' && !m.delivered) { const s = document.createElement('div'); s.className = 'unread-sep'; s.textContent = 'Непрочитанные сообщения'; box.appendChild(s); CH.sepNeed = false; }
@@ -628,30 +629,66 @@ function appendMsgs(list) {
   if (nearBottom || list.some((m) => m.dir === 'me')) box.scrollTop = box.scrollHeight;
 }
 
+// кэш переписки в браузере: открытый чат рисуется из памяти сразу, с сервера докачивается только новое после
+// последнего письма; что могло поменяться задним числом (просьба ждёт решения, письмо мне не прочитано) — перечитываем
+// отдельно, не дальше 50 последних. Последние TC.MAX писем, до TC.CHATS чатов; ключ — человек · лицо · собеседник
+const TC = { MAX: 200, CHATS: 40, t: {} };
+function tcKey(id) { return 'an_th:' + ((typeof ME !== 'undefined' && ME && ME.owner) || '') + ':' + (CH.as || 'me') + ':' + id; }
+function tcGet(id) { try { const v = JSON.parse(localStorage.getItem(tcKey(id)) || 'null'); return v && v.v === 1 && Array.isArray(v.msgs) && v.msgs.length ? v : null; } catch (e) { return null; } }
+function tcPut(id) {
+  if (!id || id === SYS || CH.sel !== id) return;
+  const k = tcKey(id), rec = JSON.stringify({ v: 1, last: CH.last, msgs: CH.msgs.slice(-TC.MAX) });      // снимок сейчас, запись — чуть позже
+  clearTimeout(TC.t[k]); TC.t[k] = setTimeout(() => {
+    try {
+      const idx = JSON.parse(localStorage.getItem('an_th_idx') || '[]').filter((x) => x !== k); idx.push(k);
+      while (idx.length > TC.CHATS) localStorage.removeItem(idx.shift());
+      localStorage.setItem(k, rec); localStorage.setItem('an_th_idx', JSON.stringify(idx));
+    } catch (e) { tcClear(); }      // место кончилось — кэш сбрасываем целиком, чат просто загрузится с сервера
+  }, 300);
+}
+function tcDrop(id) { try { localStorage.removeItem(tcKey(id)); } catch (e) {} }
+function tcClear() { try { for (const k of Object.keys(localStorage)) if (k.startsWith('an_th')) localStorage.removeItem(k); } catch (e) {} }
+window.tcClear = tcClear;
+function tcShow(id) {      // из памяти — сразу, до сети; к первому непрочитанному, как при загрузке
+  const c = tcGet(id); if (!c) return false;
+  CH.sepNeed = true; appendMsgs(c.msgs); CH.sepNeed = false; CH.last = c.last || c.msgs[c.msgs.length - 1].at;
+  const box = $('msgs'), sep = box.querySelector('.unread-sep'); box.scrollTop = sep ? Math.max(0, sep.offsetTop - 12) : box.scrollHeight;
+  return true;
+}
+function tcStale() {       // самое старое из того, что могло поменяться задним числом, среди 50 последних
+  const m = CH.msgs.slice(-50).find((x) => (x.approval && !['yes', 'no', 'failed'].includes(x.approval.status)) || (x.dir === 'to_me' && !x.delivered));
+  return m ? m.at - 0.001 : 0;
+}
+
 async function pullThread(first, wait) {
   const id = CH.sel; if (!id) return;
   if (id === SYS) return loadSys();
   if (window.SVF && window.SVF.active()) return;      // чат с ассистентом опрашивает asvfeed.js сам, длинным опросом
   let r;
-  if (CH.as) {      // глазами агента: последние 100 писем его переписки; прочитанным ничего не отмечаем — почта его
-    try { r = await api('/api/as-thread', { as: CH.as, peer: id }); } catch (e) { if (e.status === 403) return load(); return; }
+  const cached = first && tcShow(id);
+  if (CH.as) {      // глазами агента: последние 100 писем его переписки (после кэша — только новые); прочитанным ничего не отмечаем — почта его
+    try { r = await api('/api/as-thread', { as: CH.as, peer: id, ...(CH.last ? { after: CH.last } : {}) }); } catch (e) { if (e.status === 403) return load(); return; }
     if (CH.sel !== id) return;
-    r.msgs = r.msgs.map((m) => ({ ...m, delivered: m.dir === 'to_me' ? true : !!m.read })).filter((m) => first || m.at > CH.last);
+    r.msgs = r.msgs.map((m) => ({ ...m, delivered: m.dir === 'to_me' ? true : !!m.read })).filter((m) => m.at > CH.last);
     if (r.msgs.length) CH.last = r.msgs[r.msgs.length - 1].at;
-    appendMsgs(r.msgs); if (first) $('msgs').scrollTop = $('msgs').scrollHeight; else if (r.msgs.some((m) => m.dir === 'to_me')) loadChats();
+    appendMsgs(r.msgs); if (first && !cached) $('msgs').scrollTop = $('msgs').scrollHeight; else if (!first && r.msgs.some((m) => m.dir === 'to_me')) loadChats();
+    tcPut(id);
     return;
   }
   // wait — длинный опрос: сервер держит запрос до нового письма (до 25 с), письмо приходит сразу, а не по тику
   const ab = wait ? (CH.lpAbort = new AbortController()) : null;
-  try { r = await api('/api/thread', first ? { agent: id } : { agent: id, after: CH.last || 0.001, ...(wait ? { wait: 25 } : {}) }, ab && ab.signal); }
+  const stale = cached ? tcStale() : 0;     // из кэша: докачиваем новое, а с самого старого «могло поменяться» — заодно и его
+  try { r = await api('/api/thread', first && !cached ? { agent: id } : { agent: id, after: (stale && stale < CH.last ? stale : CH.last) || 0.001, ...(wait ? { wait: 25 } : {}) }, ab && ab.signal); }
   catch (e) { if (e.status === 403) return load(); return e.name === 'AbortError'; }
   if (CH.sel !== id) return true;
   // галочки «получил» у своих: перечитать последние несвежие — дёшево, раз в опрос
-  if (r.msgs.length) CH.last = r.msgs[r.msgs.length - 1].at;
-  if (first) CH.sepNeed = true;
+  if (r.msgs.length) CH.last = Math.max(CH.last || 0, r.msgs[r.msgs.length - 1].at);
+  if (first && !$('msgs').querySelector('.unread-sep')) CH.sepNeed = true;
   appendMsgs(r.msgs);
   CH.sepNeed = false;
-  if (first) {   // к первому непрочитанному, как в Telegram; нет непрочитанных — вниз
+  tcPut(id);
+  if (first && cached) { if (r.msgs.some((m) => m.dir === 'to_me' && !m.delivered)) loadChats(); }
+  else if (first) {   // к первому непрочитанному, как в Telegram; нет непрочитанных — вниз
     const box = $('msgs'), sep = box.querySelector('.unread-sep');
     box.scrollTop = sep ? Math.max(0, sep.offsetTop - 12) : box.scrollHeight;
   } else if (r.msgs.some((m) => m.dir === 'to_me')) loadChats();
@@ -676,7 +713,7 @@ function seenFire(b) {
   const mid = b.dataset.mid; delete SEEN.t[mid];
   if (document.hidden || !document.hasFocus() || !b.isConnected || !b.classList.contains('unread')) return;
   b.classList.remove('unread'); SEEN.io.unobserve(b);
-  const m = CH.msgs.find((x) => x.mid === mid); if (m) m.delivered = true;
+  const m = CH.msgs.find((x) => x.mid === mid); if (m) { m.delivered = true; tcPut(CH.sel); }
   const c = cur(); if (c && c.unread && !b.classList.contains('sysc')) { c.unread--; paintRows(); }   // запрос считается, пока ждёт ответа, а не пока не прочитан
   SEEN.q.add(mid); clearTimeout(SEEN.timer); SEEN.timer = setTimeout(seenFlush, 400);
 }
@@ -698,6 +735,7 @@ async function refreshTicks(id) {
     const r = await api('/api/thread', { agent: id, after: open[0].at - 0.001 });
     const got = Object.fromEntries(r.msgs.map((m) => [m.mid, m]));
     for (const m of open) if (got[m.mid] && got[m.mid].delivered) { m.delivered = true; const el = $('msgs').querySelector(`.bub[data-mid="${CSS.escape(m.mid)}"]`); if (el) el.replaceWith(bubble(m)); }
+    tcPut(id);
   } catch (e) {}
 }
 
@@ -875,7 +913,7 @@ async function deleteChat(c) {
     : c.assistant ? 'Переписка с «' + nm + '» сотрётся, он начнёт с тобой с нуля.'
     : 'Переписка исчезнет только у тебя, у «' + nm + '» она останется. Напишет снова — чат появится с новыми письмами.';
   if (!await askBox({ title: 'Удалить чат?', ok: 'Удалить', danger: true, text })) return;
-  try { await api('/api/delete-chat', { agent: c.id }); CH.list = CH.list.filter((x) => x.id !== c.id); if (CH.sel === c.id) closeChat(); paintRows(); }
+  try { await api('/api/delete-chat', { agent: c.id }); tcDrop(c.id); CH.list = CH.list.filter((x) => x.id !== c.id); if (CH.sel === c.id) closeChat(); paintRows(); }
   catch (e) { hint(e.message); }
 }
 function chatMenu(c, x, y) {

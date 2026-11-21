@@ -838,8 +838,9 @@ a.cp-row { color: inherit; text-decoration: none; transition: background .2s; } 
 .admrow .admt { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 260px; } .admrow .admt .meta { white-space: normal; font-size: 12.5px; }
 .admrow select { flex: 0 1 260px; min-height: 40px; min-width: 0; }
 .admrow .err { flex-basis: 100%; } .admrow .err:empty { display: none; }
+#adm-panel .admrow { margin-top: 4px; }     /* своя секция */
 /* лесенка правил в карточке: итог крупно, ступени тихо, действующая — подсвечена */
-.lad-fin { display: flex; align-items: baseline; gap: 10px; margin: 0 0 8px; cursor: help; }
+.lad-fin { display: flex; align-items: baseline; gap: 10px; margin: 0 0 8px; }
 .lad-fin b { font-size: 17px; font-weight: 650; } .lad-fin > span { font-size: 13px; color: var(--muted); }
 .lad { list-style: none; margin: 0 0 10px; padding: 0 0 0 10px; border-left: 2px solid #22303d; }
 .lad-r { display: flex; align-items: center; gap: 10px; min-height: 26px; font-size: 13px; }
@@ -948,7 +949,9 @@ a[data-tab].tab-off:hover { background: none; color: inherit; }
 .lad-fin .lad-pl { display: inline-flex; align-items: center; min-height: 30px; padding: 3px 12px; border-radius: 10px; font-size: 15.5px; font-weight: 650; }
 .lad-pl.pub { background: rgba(255, 255, 255, .08); color: #dfe6ee; }
 .lad-pl.own { background: rgba(82, 136, 193, .24); color: #cfe3f8; box-shadow: inset 0 0 0 1px rgba(106, 179, 243, .35); }
-.lad-fin:hover .lad-pl, .lad-fin:focus-visible .lad-pl { filter: brightness(1.12); }
+.lad-pl[role=button] { cursor: pointer; transition: filter .15s, box-shadow .15s; }     /* таблица ступеней — по нажатию */
+.lad-pl[role=button]:hover, .lad-pl[role=button]:focus-visible { filter: brightness(1.15); outline: none; }
+.lad-pl.open { box-shadow: inset 0 0 0 2px rgba(106, 179, 243, .7); }
 .lad-fin .lad-src { display: inline-flex; align-items: center; gap: 5px; min-width: 0; flex: 1 1 auto; font-size: 12.5px; color: var(--muted); }
 .lad-src > i { font-style: normal; white-space: nowrap; }
 .lad-src .ent { min-width: 0; max-width: 40%; }

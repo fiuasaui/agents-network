@@ -161,7 +161,10 @@ def db_open(path):
     if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='id_two'").fetchone():
         id_migrate(c)
     # имя есть у каждого участника, кроме аккаунта: человеку — его ник, агенту и ассистенту — его локальный ник
-    c.execute("UPDATE owners SET name=nick WHERE name IS NULL OR trim(name)=''")
+    # человеку — имя по правилам имени: пустое, равное нику или с цифрами и подчёркиваниями — из букв ника
+    for oid, nk, nm in c.execute("SELECT id, nick, name FROM owners").fetchall():
+        if not nm or nm == nk or not HUMAN_NAME_RE.fullmatch(" ".join(str(nm).split())):
+            c.execute("UPDATE owners SET name=? WHERE id=?", (name_from_nick(nk), oid))
     c.execute("UPDATE agents SET name=nick WHERE nick IS NOT NULL AND (name IS NULL OR trim(name)='' OR name='агент')")
     for t, reach in (("trust", "write"), ("blocks", "block")):
         c.execute(f"""CREATE VIEW IF NOT EXISTS {t} AS SELECT CASE WHEN subj LIKE 'ac-%' THEN 'hu-' || substr(subj, 4) ELSE subj END AS owner,
@@ -184,7 +187,7 @@ AGENT_F = ("wake", "asks", "tick")   # только у агентов (на ак
 # ступень строки правила: reach и wake — один параметр. wake живёт только в строке с reach write: «Пишет и будит»;
 # у человека и ассистента ступени «wake» нет (будить нечем)
 LEVELS = ("block", "closed", "ask", "write", "wake")
-LEVEL_TEXT = {"block": "чёрный список", "closed": "Никто", "ask": "По просьбе", "write": "Пишет", "wake": "Пишет и будит"}
+LEVEL_TEXT = {"block": "чёрный список", "closed": "Не пишет", "ask": "По просьбе", "write": "Пишет", "wake": "Пишет и будит"}
 TICKS = (0, 30, 60, 720, 1440)      # интервал сводки, минуты: выкл · 30 мин · 1 ч · 12 ч · сутки
 HUMAN_OWN = "write"     # человеку при регистрации — своя настройка «ко всем: Все» (как будто поставил сам; можно сбросить)
 WAKE_LEVELS = "будят ли письма, просьбы, уведомления и сводка — настройка агентов: человека будить нечем, ассистента будит всё дошедшее; на аккаунте она действует только на агентов"
@@ -486,6 +489,27 @@ def check_about(s):
 
 
 
+HUMAN_NAME_RE = re.compile(r"[A-Za-zА-Яа-яЁё]+(?:[ '\-][A-Za-zА-Яа-яЁё]+)*")
+
+
+def check_human_name(name, nick=None):
+    """Имя человека: имя, а не адрес — только буквы латиницы или кириллицы, пробел, дефис и апостроф между ними
+    (двойное имя, двойная фамилия, O'Brien); без цифр, подчёркиваний и прочих знаков; пустым не бывает."""
+    n = " ".join(str(name or "").split())
+    if not n:
+        raise ValueError("имя пустое — у человека имя обязательно")
+    if not HUMAN_NAME_RE.fullmatch(n):
+        raise ValueError("имя человека — только буквы латиницы или кириллицы, пробел и дефис (двойное имя, двойная фамилия); без цифр, "
+                         "подчёркиваний и других знаков: «Алексей», «Анна-Мария», «John Smith». Имя — не адрес: адрес у человека свой, @ник/human")
+    return check_name(n, [nick] if nick else ())
+
+
+def name_from_nick(nick):
+    """Имя человека, когда его не дали: буквы ника словами с заглавной — «alexey_test» → «Alexey Test»."""
+    n = " ".join(w.capitalize() for w in re.findall(r"[A-Za-zА-Яа-яЁё]+", str(nick or "")))[:40].strip()
+    return n or "Участник"
+
+
 def check_name(name, avoid=()):
     """Имя участника: коротко и по смыслу; ник и человек видны рядом сами — в имени их не повторяем
     (не «VikaCalc конвертер Denis», а «Конвертер»)."""
@@ -519,7 +543,7 @@ class Relay:
         with LOCK:
             if self.db.execute("SELECT 1 FROM owners WHERE nick=?", (n,)).fetchone():
                 raise FileExistsError(f"ник человека @{n} занят")
-            nm = " ".join(str(q.get("name") or "").split())[:40] or n      # имя обязательно: не дали — ник
+            nm = check_human_name(q["name"], n) if str(q.get("name") or "").strip() else name_from_nick(n)    # имя обязательно: не дали — из букв ника
             self.db.execute("INSERT INTO owners (id, secret, nick, created, name) VALUES (?,?,?,?,?)", (oid, sec, n, time.time(), nm))
             # умолчание Сети одно — «По просьбе»; человеку при регистрации — своё «ко всем: Все», как будто поставил сам
             self.rule_put(oid, "*", reach=HUMAN_OWN)
@@ -1108,7 +1132,7 @@ class Relay:
         if r == "block":
             return [{"code": "block", "peer": peer, "text": f"{a} у тебя в чёрном списке: ответить и попросить он не сможет."}]
         if r == "closed":
-            return [{"code": "closed", "peer": peer, "text": f"Ответить тебе {a} не сможет и даже не попросит разрешения: у тебя для него «Никто». "
+            return [{"code": "closed", "peer": peer, "text": f"Ответить тебе {a} не сможет и даже не попросит разрешения: у тебя для него «Не пишет». "
                      f"Ждёшь ответа — открой ему писать: {how}. Не ждёшь — так и оставь."}]
         if r == "ask":
             return [{"code": "ask", "peer": peer, "text": f"Ответить сразу {a} не сможет: у тебя для него «По просьбе» — его ответ станет просьбой, "
