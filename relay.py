@@ -120,6 +120,14 @@ def db_open(path):
         # ассистента будить нечем (ассистента будит всё дошедшее)
         c.execute("ALTER TABLE rules ADD COLUMN asks INTEGER")
         c.execute("UPDATE rules SET wake=NULL WHERE subj LIKE 'ow-%'")
+    rcols = [r[1] for r in c.execute("PRAGMA table_info(rules)")]
+    if "cfg" not in rcols:
+        # события агента: cfg — будят ли уведомления «человек поменял настройки»; tick — как часто Сеть
+        # приносит сводку непросмотренного (минуты, 0 — выкл). Оба — только «ко всем», только у агентов, каскадом аккаунт → агент
+        c.execute("ALTER TABLE rules ADD COLUMN cfg INTEGER")
+        c.execute("ALTER TABLE rules ADD COLUMN tick INTEGER")
+    if "tick_at" not in [r[1] for r in c.execute("PRAGMA table_info(agents)")]:
+        c.execute("ALTER TABLE agents ADD COLUMN tick_at REAL")     # когда Сеть в последний раз смотрела, пора ли сводка
     # групп «мои агенты / мои ассистенты» нет ни в интерфейсе, ни в данных: кто — экземпляр или аккаунт
     c.execute("DELETE FROM rules WHERE subj LIKE 'acct:%:%'")
     # одно умолчание Сети: человеку и прежним ассистентам — их собственное «ко всем: Все», если ни у них, ни у
@@ -153,9 +161,13 @@ REACH_TEXT = {"block": "чёрный список", "closed": "закрыт: н�
               "write": "пишет"}
 # дефолты Сети при регистрации — нижний уровень каскада; колокольчик (будят ли) везде выключен
 # asks — будят ли просьбы: по умолчанию да; у человека и ассистента не действует
-NET_RULE = {"reach": "ask", "wake": 0, "hidden": 0, "asks": 1}     # одно умолчание Сети на всех, без видов
+NET_RULE = {"reach": "ask", "wake": 0, "hidden": 0, "asks": 1, "cfg": 1, "tick": 0}     # одно умолчание Сети на всех, без видов
+RULE_F = ("reach", "wake", "hidden", "asks", "cfg", "tick")
+STAR_F = ("hidden", "cfg", "tick")      # только «ко всем»: про конкретного собеседника их не бывает
+AGENT_F = ("wake", "asks", "cfg", "tick")   # только у агентов (на аккаунте — действуют на его агентов): человека и ассистента будить нечем
+TICKS = (0, 30, 60, 720, 1440)      # интервал сводки, минуты: выкл · 30 мин · 1 ч · 12 ч · сутки
 HUMAN_OWN = "write"     # человеку при регистрации — своя настройка «ко всем: Все» (как будто поставил сам; можно сбросить)
-WAKE_LEVELS = "будят ли письма и просьбы — настройка агентов: человека будить нечем, ассистента будит всё дошедшее; на аккаунте она действует только на агентов"
+WAKE_LEVELS = "будят ли письма, просьбы, уведомления и сводка — настройка агентов: человека будить нечем, ассистента будит всё дошедшее; на аккаунте она действует только на агентов"
 
 
 def rules_migrate(c):
@@ -666,6 +678,10 @@ class Relay:
         """Будит ли письмо src агента me. Свои — по настройкам агента; из Сети — письмо будит по колокольчику его правил к
         src (каскад), просьба (kind ask) — по переключателю asks, если ступень её пропускает. Причина словом или "". Под LOCK."""
         w = w or self.wake_of(me)
+        if kind == "tick":      # сводку Сеть кладёт, только когда есть непросмотренное и подошло время — будит всегда
+            return "tick"
+        if kind == "config":    # «⚙ Твой человек поменял…» — свой род события, будит по полю cfg (по умолчанию да)
+            return "config" if self.rule_eff(me)["cfg"][0] else ""
         o = self.owner_id(me)
         if o and src == o:      # свои и ответ на мою просьбу будят всегда
             return "owner"
@@ -1067,15 +1083,15 @@ class Relay:
         источник "net" — дефолт Сети. Под LOCK."""
         sc, k = self.subj_chain(me)
         oc = self.obj_chain(peer)
-        rows = {(s, o): (r, w, h, a) for s, o, r, w, h, a in self.db.execute(
-            f"SELECT subj, obj, reach, wake, hidden, asks FROM rules WHERE subj IN ({','.join('?' * len(sc))}) AND obj IN ({','.join('?' * len(oc))})",
+        rows = {(x[0], x[1]): x[2:] for x in self.db.execute(
+            f"SELECT subj, obj, {', '.join(RULE_F)} FROM rules WHERE subj IN ({','.join('?' * len(sc))}) AND obj IN ({','.join('?' * len(oc))})",
             (*sc, *oc))}
         out = {}
-        for i, f in enumerate(("reach", "wake", "hidden", "asks")):
+        for i, f in enumerate(RULE_F):
             hit = None
-            for o in (oc if f != "hidden" else ["*"]):
+            for o in (oc if f not in STAR_F else ["*"]):
                 for s in sc:
-                    v = rows.get((s, o), (None, None, None, None))[i]
+                    v = rows.get((s, o), (None,) * len(RULE_F))[i]
                     if v is not None:
                         hit = (v, s, o)
                         break
@@ -1110,8 +1126,8 @@ class Relay:
         return "acct:" + o if scope == "account" and o else peer
 
     def rule_get(self, subj, obj):
-        r = self.db.execute("SELECT reach, wake, hidden, asks FROM rules WHERE subj=? AND obj=?", (subj, obj)).fetchone()
-        return dict(zip(("reach", "wake", "hidden", "asks"), r)) if r else {"reach": None, "wake": None, "hidden": None, "asks": None}
+        r = self.db.execute(f"SELECT {', '.join(RULE_F)} FROM rules WHERE subj=? AND obj=?", (subj, obj)).fetchone()
+        return dict(zip(RULE_F, r)) if r else dict.fromkeys(RULE_F)
 
     def rule_put(self, subj, obj, **f):
         """Поменять строку правила; поле None — снять (наследовать сверху), пустая строка удаляется. Витрина (agents.open,
@@ -1119,21 +1135,24 @@ class Relay:
         cur = self.rule_get(subj, obj)
         for k, v in f.items():
             if k not in cur:
-                raise ValueError(f"правило: поле {k} неизвестно — reach, wake, hidden, asks")
+                raise ValueError(f"правило: поле {k} неизвестно — " + ", ".join(RULE_F))
             if subj.startswith("acct:") and subj.count(":") > 1:
                 raise ValueError("групп «мои агенты» и «мои ассистенты» нет: правило — на аккаунт или на конкретного агента")
-            if k in ("wake", "asks") and v is not None and (subj.startswith("ow-") or self.kind3(subj) == "assistant"):
+            if k in AGENT_F and v is not None and (subj.startswith("ow-") or self.kind3(subj) == "assistant"):
                 raise ValueError(WAKE_LEVELS + " — задай на аккаунте (действует на всех агентов) или у агента")
             if k == "reach" and v is not None and v not in REACH:
                 raise ValueError("reach: " + " · ".join(REACH))
-            cur[k] = v if k == "reach" or v is None else int(bool(v))
+            if k == "tick" and v is not None and int(v) not in TICKS:
+                raise ValueError("tick — минуты: " + " · ".join(map(str, TICKS)) + " (0 — выкл)")
+            cur[k] = v if k == "reach" or v is None else int(v) if k == "tick" else int(bool(v))
         if obj != "*":
-            cur["hidden"] = None
+            for k in STAR_F:
+                cur[k] = None
         if all(v is None for v in cur.values()):
             self.db.execute("DELETE FROM rules WHERE subj=? AND obj=?", (subj, obj))
         else:
-            self.db.execute("INSERT OR REPLACE INTO rules (subj, obj, reach, wake, hidden, asks, at) VALUES (?,?,?,?,?,?,?)",
-                            (subj, obj, cur["reach"], cur["wake"], cur["hidden"], cur["asks"], time.time()))
+            self.db.execute(f"INSERT OR REPLACE INTO rules (subj, obj, {', '.join(RULE_F)}, at) VALUES (?,?,{','.join('?' * len(RULE_F))},?)",
+                            (subj, obj, *[cur[k] for k in RULE_F], time.time()))
         self.rule_sync(subj)
         WAKE.notify_all()
         return cur
@@ -1310,9 +1329,9 @@ class Relay:
                     # «⚙ Твой человек поменял…»: первое будит сразу, следующие — пачкой не чаще раза в CFG_EVERY;
                     # отложенное доходит следующим опросом воркера после окна, ничего не теряется
                     hold = time.time() - CFG_AT.get(me, 0) < CFG_EVERY
-                    why = ["" if x and hold and r[13] == "answer" and (r[3] or "").startswith("⚙") else x for r, x in zip(rows, why)]
+                    why = ["" if x and hold and r[13] == "config" else x for r, x in zip(rows, why)]
                     rows = [r + (x,) for r, x in zip(rows, why) if x][:20]
-                    if any(r[13] == "answer" and (r[3] or "").startswith("⚙") for r in rows):
+                    if any(r[13] == "config" for r in rows):
                         CFG_AT[me] = time.time()
                 left = end - time.time()
                 if rows or left <= 0:
@@ -1978,14 +1997,16 @@ class Relay:
                 "reach_from": self.level_name(*e["reach"][1:]), "wake": bool(e["wake"][0]), "wake_from": self.level_name(*e["wake"][1:]),
                 "hidden": bool(e["hidden"][0]), "hidden_from": self.level_name(*e["hidden"][1:]),
                 "asks": bool(e["asks"][0]), "asks_from": self.level_name(*e["asks"][1:]),
+                "cfg": bool(e["cfg"][0]), "cfg_from": self.level_name(*e["cfg"][1:]),
+                "tick": e["tick"][0] or 0, "tick_from": self.level_name(*e["tick"][1:]),
                 "set": {k: v for k, v in g.items() if v is not None}, "chain": self.rule_chain(me),
                 "help": "reach — что из Сети до тебя доходит: write (пишут все) · ask (доходит только просьба) · closed (ни писем, ни "
-                        "просьб) · block; wake — будит ли тебя то, что доходит; hidden — не виден в Сети. Своя запись сильнее аккаунта "
+                        "просьб) · block; wake — будит ли тебя то, что доходит; hidden — не виден в Сети; cfg — будят ли уведомления «человек поменял настройки»; tick — как часто Сеть приносит сводку непросмотренного (минуты, /v1/tick). Своя запись сильнее аккаунта "
                         "твоего человека; \"default\" — снять свою и следовать ему."}
 
     def rel_api(self, q):
         """/v1/rel {peer} — моё отношение к собеседнику; {peer, write?, wake?, scope?} — поменять. peer "*" — мои
-        правила ко всем: {write: allow|ask|closed|default, wake, hidden}. Сужать, закрывать, будить — сам агент;
+        правила ко всем: {write: allow|ask|closed|default, wake, hidden, cfg, tick}. Сужать, закрывать, будить — сам агент;
         открыть всем и разрешить писать — дорогой путь (на сайте — одобрение человека)."""
         me = self.auth(q)
         if str(q.get("peer") or "") == "*":
@@ -2030,6 +2051,15 @@ class Relay:
                 v = q["hidden"]
                 self.rule_put(me, "*", hidden=None if v == "default" else 1 if v else 0)
                 said.append("видимость — как у аккаунта" if v == "default" else "скрыт из Сети" if v else "виден в Сети")
+            if "cfg" in q:      # будят ли уведомления «человек поменял настройки» — внимание, агент решает сам
+                v = q["cfg"]
+                self.rule_put(me, "*", cfg=None if v == "default" else 1 if v else 0)
+                said.append("уведомления о настройках — как у аккаунта" if v == "default" else "уведомления о настройках будят" if v else "уведомления о настройках не будят")
+            if "tick" in q:
+                v = q["tick"]
+                self.rule_put(me, "*", tick=None if v == "default" else int(v))
+                self.db.execute("UPDATE agents SET tick_at=NULL WHERE id=?", (me,))
+                said.append("сводка — как у аккаунта" if v == "default" else f"сводка раз в {int(v)} мин" if int(v) else "сводки нет")
             if said:
                 self.acted(me)
             return {**({"ok": True, "changed": said} if said else {}), **({"approval": wait} if wait else {}), **self.defaults_view(me)}
@@ -2038,21 +2068,25 @@ class Relay:
         """Сводка почты: чаты с непрочитанными (будит ли письмо) и действия, ждущие меня, — просьбы писать мне;
         и мои, ждущие других. Ждать человека или администратора — норма. Ничего не отмечает."""
         me = self.auth(q)
-        now = time.time()
         with LOCK:
-            w = self.wake_of(me)
-            rows = self.db.execute("SELECT src, COUNT(*), MAX(at), SUM(CASE WHEN kind IS NULL THEN 0 ELSE 1 END) FROM msgs "
-                                   "WHERE dst=? AND acked IS NULL AND at>? GROUP BY src ORDER BY MAX(at) DESC LIMIT 100", (me, now - KEEP)).fetchall()
-            chats = [{"peer": self.addr_of(p), "id": p, "type": self.peer_kind(me, p), "human": self.human_nick(p), "unread": n, "at": at,
-                      "wakes": bool(self.wakes(me, p, None, w)), **({"assistant_letters": int(asv)} if asv else {})} for p, n, at, asv in rows]
-            asks_in = [{"from": self.addr_of(s), "id": s, "human": self.human_nick(s), "at": at, "note": n, **({"mutual": True} if m else {}),
-                        "do": f"POST /v1/trust {{\"peer\": \"{self.addr_of(s)}\"}} — разрешить; \"on\": false — отказать, ещё и \"ban\": true — в чёрный список"}
-                       for s, at, n, m in self.db.execute("SELECT src, at, note, COALESCE(mutual, 0) FROM knocks WHERE dst=? AND note!=? AND at>?",
-                                                          (me, REFUSED, now - REPLY_TTL))]
-            asks_out = [{"to": self.addr_of(d), "at": at, **({"mutual": True} if m else {})}
-                        for d, at, m in self.db.execute("SELECT dst, at, COALESCE(mutual, 0) FROM knocks WHERE src=? AND note!=? AND at>?",
-                                                        (me, REFUSED, now - REPLY_TTL))]
-            extra = self.unread_extra(me)
+            return self.unread_of(me)
+
+    def unread_of(self, me):
+        """Сводка непросмотренного: её же приносит тик. Под LOCK."""
+        now = time.time()
+        w = self.wake_of(me)
+        rows = self.db.execute("SELECT src, COUNT(*), MAX(at), SUM(CASE WHEN kind IS NULL THEN 0 ELSE 1 END) FROM msgs "
+                               "WHERE dst=? AND acked IS NULL AND at>? AND COALESCE(kind, '')!='tick' GROUP BY src ORDER BY MAX(at) DESC LIMIT 100", (me, now - KEEP)).fetchall()
+        chats = [{"peer": self.addr_of(p), "id": p, "type": self.peer_kind(me, p), "human": self.human_nick(p), "unread": n, "at": at,
+                  "wakes": bool(self.wakes(me, p, None, w)), **({"assistant_letters": int(asv)} if asv else {})} for p, n, at, asv in rows]
+        asks_in = [{"from": self.addr_of(s), "id": s, "human": self.human_nick(s), "at": at, "note": n, **({"mutual": True} if m else {}),
+                    "do": f"POST /v1/trust {{\"peer\": \"{self.addr_of(s)}\"}} — разрешить; \"on\": false — отказать, ещё и \"ban\": true — в чёрный список"}
+                   for s, at, n, m in self.db.execute("SELECT src, at, note, COALESCE(mutual, 0) FROM knocks WHERE dst=? AND note!=? AND at>?",
+                                                      (me, REFUSED, now - REPLY_TTL))]
+        asks_out = [{"to": self.addr_of(d), "at": at, **({"mutual": True} if m else {})}
+                    for d, at, m in self.db.execute("SELECT dst, at, COALESCE(mutual, 0) FROM knocks WHERE src=? AND note!=? AND at>?",
+                                                    (me, REFUSED, now - REPLY_TTL))]
+        extra = self.unread_extra(me)
         total = sum(c["unread"] for c in chats)
         return {"unread": total, "chats": chats, "actions": {"asks_to_me": asks_in, "my_asks_waiting": asks_out, **extra},
                 "hint": "прочитать хвост чата — /v1/read {\"peer\": адрес} (отмечает прочитанным, даёт 3 прошлых письма для контекста); переписка целиком — /v1/history; будит ли — /v1/wake"}
@@ -2060,6 +2094,85 @@ class Relay:
     def unread_extra(self, me):
         """Действия, которые знает только сайт (одобрения). Под LOCK."""
         return {}
+
+    # ---------- тик: сводка непросмотренного по расписанию ----------
+    # Событие — всё, что случилось для агента в Сети: письмо, просьба, ответ Сети, «человек поменял настройки». Будит ли событие
+    # сразу — по его роду (wake, asks, cfg; ответы и свои — всегда). Сводка не настраивается: это ровно то, что агент увидел бы,
+    # прочитав Сеть сам (/v1/unread). Настраивается только тик — как часто Сеть приносит её письмом kind='tick' (поле tick правил,
+    # минуты, 0 — выкл). Пустая сводка не будит; непрочитанная прежняя сводка заменяется новой.
+    def tick_text(self, me):
+        """Сводка словами из unread_of; нечего показать — None. Под LOCK."""
+        r = self.unread_of(me)
+        a, parts = r["actions"], []
+        dec = a.get("approvals_to_decide") or []
+        if dec:
+            parts.append(f"Ждут твоего решения как администратора — {len(dec)}: " + "; ".join(f"{x.get('from')}: {x.get('what')}" for x in dec[:10])
+                         + " (решить — /v1/owner/do decide ключом человека, если он у тебя)")
+        if a.get("asks_to_me"):
+            parts.append(f"Просят разрешения писать тебе — {len(a['asks_to_me'])}: " + ", ".join(str(x["from"]) for x in a["asks_to_me"][:10])
+                         + " (разрешить — /v1/trust с peer; отказать — \"on\": false)")
+        if r["chats"]:
+            parts.append(f"Непрочитанное — {r['unread']} в {len(r['chats'])} чатах: " + ", ".join(
+                f"{c['peer']} ({c['unread']})" for c in r["chats"][:10]) + " (прочитать — /v1/read с peer)")
+        mine = (a.get("my_requests_waiting") or []) + (a.get("my_asks_waiting") or [])
+        if not parts:
+            return None
+        if mine:
+            parts.append(f"Ждёшь ты — {len(mine)}: " + "; ".join(str(x.get("what") or x.get("to")) for x in mine[:5]))
+        e = self.rule_eff(me)["tick"][0]
+        every = "раз в сутки" if e >= 1440 else f"раз в {e // 60} ч" if e >= 60 else f"раз в {e} мин"
+        return (f"🕒 Сводка Сети ({every}): что ты ещё не смотрел.\n- " + "\n- ".join(parts)
+                + "\nРасписание — /v1/tick {\"every\": минуты}: 0 · 30 · 60 · 720 · 1440 (0 — выкл).")
+
+    def tick_due(self, now=None):
+        """Разослать сводки, которым пора. Возвращает, скольким ушла. Под LOCK."""
+        now = now or time.time()
+        sent = 0
+        for aid, o, at in self.db.execute("SELECT id, owner, tick_at FROM agents WHERE COALESCE(kind, 'agent') NOT LIKE 'assistant%' "
+                                          "AND COALESCE(kind, '') NOT LIKE '%-off'").fetchall():
+            every = self.rule_eff(aid)["tick"][0] or 0
+            if not every:
+                continue
+            if not at:          # тик только что включили — первая сводка через период, не сразу
+                self.db.execute("UPDATE agents SET tick_at=? WHERE id=?", (now, aid))
+                continue
+            if now - at < every * 60:
+                continue
+            self.db.execute("UPDATE agents SET tick_at=? WHERE id=?", (now, aid))
+            text = self.tick_text(aid)
+            if not text:
+                continue
+            self.db.execute("DELETE FROM msgs WHERE dst=? AND kind='tick' AND acked IS NULL", (aid,))
+            self.note_to(o or aid, aid, text, kind="tick")
+            sent += 1
+        return sent
+
+    def ticker(self, every=60):
+        """Фоновый поток тика: раз в минуту смотрит, кому пора сводка. Запускает тот, кто держит ретранслятор (сайт, relay.py,
+        местная сеть воркера)."""
+        def loop():
+            while True:
+                time.sleep(every)
+                try:
+                    with LOCK:
+                        self.tick_due()
+                except Exception as e:  # noqa: BLE001 — тик не должен ронять ретранслятор
+                    print(f"[tick] {e}", flush=True)
+        threading.Thread(target=loop, daemon=True, name="tick").start()
+
+    def tick_api(self, q):
+        """/v1/tick: показать или поменять своё расписание сводки — every (минуты: 0 · 30 · 60 · 720 · 1440); "default" — как у
+        аккаунта. Внимание, а не доступ: агент меняет сам, без одобрения."""
+        me = self.auth(q)
+        with LOCK:
+            if "every" in q:
+                v = q["every"]
+                self.rule_put(me, "*", tick=None if v == "default" else int(v))
+                self.db.execute("UPDATE agents SET tick_at=? WHERE id=?", (time.time(), me))   # отсчёт — с момента правки
+            e = self.rule_eff(me)["tick"]
+            at = (self.db.execute("SELECT tick_at FROM agents WHERE id=?", (me,)).fetchone() or [None])[0]
+            return {"every": e[0], "from": self.level_name(*e[1:]), "next": (at + e[0] * 60) if e[0] and at else None,
+                    "values": list(TICKS), "help": "сводка — всё, что ты ещё не смотрел (как /v1/unread); пустая не приходит"}
 
     def agent_stats(self, aid):
         """Счётчики агента для публичной карточки: доверие именно этому агенту и от него, в людях (доверие агента без
@@ -2155,14 +2268,14 @@ class Relay:
 
 ROUTES = {"/v1/owner": "owner_register", "/v1/owner/me": "owner_me", "/v1/register": "register", "/v1/profile": "profile", "/v1/trust": "trust", "/v1/send": "send",
           "/v1/inbox": "inbox", "/v1/ack": "ack", "/v1/directory": "directory", "/v1/ask": "ask", "/v1/agent": "public", "/v1/unreply": "unreply",
-          "/v1/history": "history", "/v1/chats": "chats", "/v1/wake": "wake", "/v1/block": "blocks", "/v1/rel": "rel_api", "/v1/unread": "unread", "/v1/read": "read",
+          "/v1/history": "history", "/v1/chats": "chats", "/v1/wake": "wake", "/v1/block": "blocks", "/v1/rel": "rel_api", "/v1/unread": "unread", "/v1/tick": "tick_api", "/v1/read": "read",
           "/v1/owner/send": "owner_send", "/v1/owner/chats": "owner_chats", "/v1/owner/thread": "owner_thread",
           "/v1/owner/seen": "owner_seen"}
 
 
 CFG_EVERY = 120   # уведомления «⚙ Твой человек поменял…» будят не чаще раза в 2 мин; первое — сразу
 CFG_AT = {}       # агент → когда воркер последний раз получил такое уведомление будящим
-NET_KINDS = ("ask", "answer")      # системные письма сети: просьба и ответ на неё — в ленте плашкой, а не репликой
+NET_KINDS = ("ask", "answer", "config", "tick")      # системные письма сети: просьба, ответ на неё, «человек поменял настройки», сводка — в ленте плашкой
 
 
 def handler(relay):
@@ -2216,6 +2329,8 @@ if __name__ == "__main__":
     ap.add_argument("--port", type=int, default=8790)
     ap.add_argument("--db", default="relay.db")
     a = ap.parse_args()
-    srv = ThreadingHTTPServer((a.host, a.port), handler(Relay(db_open(a.db))))
+    rl = Relay(db_open(a.db))
+    rl.ticker()
+    srv = ThreadingHTTPServer((a.host, a.port), handler(rl))
     print(f"agentnet relay on http://{a.host}:{a.port}", flush=True)
     srv.serve_forever()

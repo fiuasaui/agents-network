@@ -15,7 +15,6 @@ body.cab-page.in-app { height: 100dvh; overflow: hidden; background: #0e1621; fo
 .tb-badge { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: #5288c1; color: #fff; font-size: 11px; line-height: 18px;
             text-align: center; font-variant-numeric: tabular-nums; }
 .tabbar a.on .tb-badge { background: #fff; color: #2b5278; }
-.tb-badge.warn { background: #e3b341; color: #1b1b1b; }
 .bar-r { display: flex; align-items: center; gap: 8px; }
 .me-chip { padding: 6px 12px; border-radius: 999px; background: #202b36; color: #dbe6f2; font-size: 13.5px; font-weight: 600; white-space: nowrap;
            max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
@@ -138,25 +137,17 @@ body.cab-page.in-app { height: 100dvh; overflow: hidden; background: #0e1621; fo
 .agm b { font-size: 15.5px; } .agm h2 { margin: 0; font-size: 18px; }
 .agm .meta { color: var(--muted); font-size: 13.5px; overflow-wrap: anywhere; }
 .agm .about { color: #b5c2d0; font-size: 14px; }
-.idc { display: inline-flex; align-items: center; gap: 8px; margin-top: 4px; }
-.idc code { font-size: 12.5px; }
 .cp { appearance: none; border: 0; background: transparent; color: #6fb3ff; font: inherit; font-size: 12.5px; padding: 2px 6px; border-radius: 6px; cursor: pointer; }
 .cp:hover { background: #202b36; }
 .agr > .btn { align-self: center; }
 .pill { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: color-mix(in srgb, #4cc38a 16%, transparent); color: #7bd8a8; font-weight: 600; }
 input[type=search]#dsearch { width: 100%; padding: 10px 14px; border-radius: 18px; border: 0; background: #242f3d; color: var(--ink); font: inherit; font-size: 15px; min-height: 42px; margin-bottom: 8px; }
-.rights .ph { flex-wrap: wrap; }
-.rights .ph > .agm { min-width: 160px; }
-#aps li { flex-wrap: wrap; } #aps li > div:first-child { flex: 1 1 260px; min-width: 0; }
 .sw { display: flex; align-items: center; gap: 10px; margin: 0; cursor: pointer; color: var(--ink); font-size: 14px; }
 .sw input { appearance: none; width: 42px; height: 24px; border-radius: 12px; background: #2a3746; position: relative; cursor: pointer; flex: none; transition: background 150ms var(--ease); margin: 0; }
 .sw input::after { content: ""; position: absolute; left: 3px; top: 3px; width: 18px; height: 18px; border-radius: 50%; background: #c6d2df; transition: transform 200ms var(--ease), background 150ms; }
 .sw input:checked { background: #5288c1; } .sw input:checked::after { transform: translateX(18px); background: #fff; }
 .sw input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .sw-t { display: flex; flex-direction: column; } .sw-t .meta { color: var(--muted); font-size: 12.5px; }
-.addtr { display: flex; gap: 8px; margin-top: 12px; }
-.addtr input { flex: 1; min-width: 0; }
-.addtr .btn { min-height: 44px; }
 
 @media (max-width: 1000px) { .chats { grid-template-columns: 290px 1fr; } .brand-t { display: none; } }
 /* телефон: разделы — снизу, чаты — сначала список, потом переписка во весь экран */
@@ -183,7 +174,6 @@ input[type=search]#dsearch { width: 100%; padding: 10px 14px; border-radius: 18p
   .view.page .panel { padding: 16px; }
   .me-chip { max-width: 110px; } .bal-chip { padding: 6px 10px; }
   .agr { flex-wrap: wrap; } .agr > .btn { margin-left: 52px; }
-  #aps .actions.tight { width: 100%; } #aps .actions.tight .btn { flex: 1; }
 }
 @media (prefers-reduced-motion: reduce) { .bub { animation: none; } }
 
@@ -285,7 +275,6 @@ input[type=search]#dsearch { width: 100%; padding: 10px 14px; border-radius: 18p
 .chead .acc svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
 .chead .acc[hidden] { display: none; }
 @media (max-width: 760px) { .chead .acc span { display: none; } .chead .acc { padding: 0; width: 40px; height: 40px; justify-content: center; } }
-.panel.rights.flash { animation: flashIn 1.6s var(--ease); }
 @keyframes flashIn { 0%, 40% { box-shadow: 0 0 0 2px var(--accent); } 100% { box-shadow: 0 0 0 0 transparent; } }
 .list li.fix:hover { background: none; } .okc { color: var(--ok); }
 .agm .accl { color: inherit; text-decoration: underline dotted; text-underline-offset: 3px; } .agm .accl:hover { color: var(--ink); }
@@ -367,9 +356,9 @@ input[type=search]#dsearch { width: 100%; padding: 10px 14px; border-radius: 18p
 .cardl li { padding: 8px 0; }
 .cardl li > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .cardst .pill { background: rgba(255,255,255,.06); color: var(--muted); } .cardst .pill.ok { background: color-mix(in srgb, #4cc38a 16%, transparent); color: #7bd8a8; }
-.netq input[type=search], .netq select, .nf-from select, .netf textarea { background: #242f3d; border: 0; color: var(--ink); font: inherit; font-size: 15px; border-radius: 18px; }
+.netq input[type=search], .netq select, .nf-from select, .admrow select, .netf textarea { background: #242f3d; border: 0; color: var(--ink); font: inherit; font-size: 15px; border-radius: 18px; }
 .netq input[type=search] { padding: 10px 14px; min-height: 42px; }
-.netq select, .nf-from select { padding: 0 34px 0 14px; min-height: 42px; appearance: none; cursor: pointer;
+.netq select, .nf-from select, .admrow select { padding: 0 34px 0 14px; min-height: 42px; appearance: none; cursor: pointer;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='16' height='16'%3E%3Cpath d='M6 9l6 6 6-6' fill='none' stroke='%238ea1b5' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: right 12px center; }
 .nf-from select { min-height: 36px; font-size: 14px; }
@@ -385,7 +374,7 @@ input[type=search]#dsearch { width: 100%; padding: 10px 14px; border-radius: 18p
 /* аватарка агента от человека и правка в карточке */
 .av.img { background: none; overflow: hidden; }
 .av.img img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; display: block; }
-.cedit { display: flex; flex-direction: column; gap: 8px; }
+.cedit { display: flex; flex-direction: column; gap: 8px; padding: 4px 20px 18px; }      /* отступы окна карточки */
 .cmut { border: 0; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .cmut legend { font-size: 13px; color: var(--muted); margin-bottom: 4px; }
 .cmut label { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; color: var(--ink) !important; margin: 0 !important; cursor: pointer; line-height: 1.35; }
@@ -457,17 +446,7 @@ body:has(#dlg-card[open]) { overflow: hidden; }
 a.me-chip { text-decoration: none; cursor: pointer; transition: background 150ms; } a.me-chip:hover { background: #2b3947; }
 @media (prefers-reduced-motion: reduce) { #dlg-card[open], #dlg-card.closing, #dlg-card[open]::backdrop { animation: none; } .ck, #dlg-card .cpl li { transition: none; } }
 /* «Права»: постоянные разрешения и временные окна ответа — раздельно */
-/* три переключателя — одним рядом под шапкой, на телефоне столбцом */
-.rights .rsw { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 18px; margin: 14px 0 6px; }
-.rights .rsw .sw { align-items: flex-start; }
-.rights .wake .rsw { grid-template-columns: repeat(2, minmax(0, 1fr)); }      /* 4 переключателя будильника — 2×2, без сироты */
-@media (max-width: 760px) { .rights .rsw, .rights .wake .rsw { grid-template-columns: 1fr; } }
 .mdl-resp { color: #f0b4b4; font-size: 13px; }       /* строка ответственности опасной настройки */
-.rights .rsub { margin: 14px 0 4px; font-size: 13.5px; font-weight: 700; color: #c9d6e3; }
-.rights .rnote { margin: 0 0 6px; }
-.rights .rbtn { display: flex; gap: 8px; flex: none; flex-wrap: wrap; justify-content: flex-end; }
-@media (max-width: 760px) { .rights [data-rp] li { flex-wrap: wrap; gap: 8px; } .rights .rbtn { width: 100%; justify-content: flex-start; } }
-.rights li.fix span, .rights li.fix .meta { white-space: normal; overflow-wrap: anywhere; min-width: 0; }
 /* строка «Сети» схемой: имя и адрес в одну строку, ниже описание, ниже значки с числами; пояснение — подсказкой */
 .netr .nh { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .netr .nh .meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; font-size: 13px; }
@@ -483,21 +462,8 @@ a.me-chip { text-decoration: none; cursor: pointer; transition: background 150ms
 .nc:hover::after, .nc:focus-visible::after, .nc:focus::after { opacity: 1; transform: translate(-50%, 0); }
 .nst .nc:first-child::after { left: 0; transform: translate(0, 4px); } .nst .nc:first-child:hover::after, .nst .nc:first-child:focus::after { transform: none; }
 @media (max-width: 760px) { .nc::after { white-space: normal; width: max-content; max-width: 220px; } }
-/* права агента — раскрываются под его строкой во вкладке «Агенты» */
-.agl li.agx { display: block; padding: 2px 0 16px 52px; border-top: 0; }
-.agl li.agx[hidden] { display: none; }
-.agl li.agx.in { animation: agxIn 220ms var(--ease); }
-@keyframes agxIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
-.agl li.agx.flash > .rights { animation: flashIn 1.6s var(--ease); border-radius: 12px; }
-.agx .rights { background: #1a2532; border-radius: 12px; padding: 4px 16px 14px; }
-.agx .rights .rsw { margin-top: 12px; }
-.rtg { display: inline-flex; align-items: center; gap: 4px; }
-.rtg svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform 200ms var(--ease); }
-.rtg[aria-expanded="true"] svg { transform: rotate(180deg); }
-@media (max-width: 760px) { .agl li.agx { padding-left: 0; } .agx .rights { padding: 4px 12px 12px; } }
 /* в списке «Мои агенты» пояснения переносятся: общее «.list .meta { nowrap }» рвало ряд переключателей и заводило подпись под кнопки */
-#agents .agr .agm .meta, .agx .meta { white-space: normal; }
-.agx .sw, .agx .sw-t { min-width: 0; }
+#agents .agr .agm .meta { white-space: normal; }
 @media (max-width: 760px) {
   #agents .agr > .agb { flex-wrap: wrap; flex: 1 1 calc(100% - 52px); min-width: 0; }
   .netr .nh { flex-direction: column; align-items: flex-start; gap: 0; } .netr .nh .aplink, .netr .nh .nhn { max-width: 100%; } .netr .nh .meta { max-width: 100%; }
@@ -516,12 +482,6 @@ a.me-chip { text-decoration: none; cursor: pointer; transition: background 150ms
 #keys .agm { flex: 1; }
 /* администратор человека */
 .pill.adm { margin-left: 8px; padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 700; vertical-align: 2px; background: #2b3f57; color: #9cc4ef; }
-.radm { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: #202c3a; }
-.radm.on { box-shadow: inset 0 0 0 1px #3b6a9c; }
-.radm > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; } .radm .meta { white-space: normal; font-size: 12.5px; }
-.radm .btn { flex: none; }
-@media (max-width: 760px) { .radm { flex-direction: column; align-items: flex-start; } }
-.apvia { display: block; margin-top: 2px; white-space: normal; }
 /* «Ассистенты» */
 .asstf { display: flex; flex-direction: column; gap: 12px; margin: 6px 0 18px; padding: 16px; border-radius: 14px; background: #1f2b38; }
 .asstf label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--muted); }
@@ -665,15 +625,6 @@ body.as-on .bar { box-shadow: inset 0 -2px 0 #2b5278; }
 .nethd .nfil { margin: 14px 0 0; }
 
 /* права агента секциями: секция видна всегда, ноль — с объяснением; разрешённые — по людям */
-.rights .rsec { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin: 10px 0; transition: border-color .15s, background-color .15s; }
-.rights .rsec:hover { border-color: rgba(140, 175, 220, .35); background: rgba(255, 255, 255, .015); }
-.rights .rsh { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.rights .rsn { font-size: 12px; font-weight: 700; padding: 0 8px; border-radius: 999px; background: var(--code); color: #c9d6e3; }
-.rights .rs0, .rights .rs1 { margin: 8px 0 0; font-size: 14px; line-height: 1.45; } .rights .rs0 { color: var(--muted); }
-.rights .rgrp { margin-top: 10px; } .rights .rgrp + .rgrp { margin-top: 14px; }
-.rights .rgh { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.rights .rgl { margin: 6px 0 0 4px; padding-left: 12px; border-left: 2px solid var(--line); }
-.rights .rgl li { margin: 0; padding: 7px 8px; } .rights .rsec .addtr { margin-top: 12px; }
 /* наборы тулз — карточками с границей, подсветка при наведении */
 #tk-list li.tkr, #tk-mine li.tkr, #tk-public li.tkr { margin: 0 0 10px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; transition: border-color .15s, background-color .15s; }
 #tk-list li.tkr:hover, #tk-mine li.tkr:hover, #tk-public li.tkr:hover { border-color: rgba(140, 175, 220, .35); }
@@ -869,3 +820,21 @@ a.cp-row { color: inherit; text-decoration: none; transition: background .2s; } 
 .cp-askf textarea:focus { outline: 2px solid color-mix(in srgb, #5288c1 60%, transparent); }
 .cp-askf .cp-note { margin: 0; }
 .kset .kopt { flex-wrap: wrap; row-gap: 10px; } .kset .kot { flex: 1 1 220px; } .kset .kin { margin-left: auto; }
+
+/* писать нельзя — просьба разрешения на месте поля ввода */
+.askbar { align-items: center; gap: 10px; }
+.askbar input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--ink); font: inherit; font-size: 15px; padding: 10px 4px; outline: none; }
+.askbar input::placeholder { color: #6c7883; }
+.askbar .btn { flex: none; }
+.askbar .askbar-t { flex: 1; margin: 0; padding: 12px 4px; color: #8b98a5; font-size: 14.5px; text-align: center; display: flex; align-items: center; justify-content: center; gap: 8px; }
+.askbar .err { flex-basis: 100%; color: #e5737a; font-size: 13px; }
+.askbar { flex-wrap: wrap; }
+.askbar .dotw { width: 8px; height: 8px; border-radius: 50%; background: #e0b354; animation: askpulse 1.6s ease-in-out infinite; flex: none; }
+@keyframes askpulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+@media (max-width: 760px) { .askbar input::placeholder { font-size: 14px; } }
+
+/* администратор одной строкой под «Мои агенты»: подпись слева, выбор справа; на телефоне — столбиком */
+.admrow { display: flex; align-items: center; justify-content: space-between; gap: 12px 16px; flex-wrap: wrap; margin-top: 12px; padding: 12px 14px; border-radius: 12px; background: #1a2532; }
+.admrow .admt { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 260px; } .admrow .admt .meta { white-space: normal; font-size: 12.5px; }
+.admrow select { flex: 0 1 260px; min-height: 40px; min-width: 0; }
+.admrow .err { flex-basis: 100%; } .admrow .err:empty { display: none; }

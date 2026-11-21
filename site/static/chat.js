@@ -207,8 +207,36 @@ async function loadChats() {
   if (CH.extra && CH.sel === CH.extra.id && !CH.list.some((c) => c.id === CH.extra.id)) CH.list.push(CH.extra);
   CH.mine = CH.list.filter((c) => !c.peer);
   paintRows(); asPaint();
-  if (CH.sel) paintHead();
+  if (CH.sel) { paintHead(); if (CH.gate && CH.gate.st && Date.now() - CH.gate.at > 15000) gatePaint(); }
 }
+
+// Писать нельзя — на месте поля ввода просьба разрешения: кнопка, после неё «ждём разрешения»; разрешили —
+// обычное поле ввода. Состояние — out.write из /api/rel (глазами того, кто выбран в шапке). Свои и ассистенты — без проверки.
+const GATE = { ask: 'Он ещё не разрешил тебе писать.', asked: 'Просьба отправлена — ждём разрешения.',
+  refused: 'Тебе отказали. Попросить снова можно через сутки.', closed: 'Он никому не разрешает писать и не принимает просьб.',
+  blocked: 'Ты в его чёрном списке — писать и просить нельзя.' };
+async function gatePaint(fresh) {
+  const bar = $('askbar'), c = cur(), id = CH.sel;
+  const show = (st) => { if (CH.sel !== id) return; const lock = st in GATE;
+    CH.gate = { id, st: lock ? st : null, at: Date.now() };
+    if (!bar) return; $('composer').hidden = lock; bar.hidden = !lock; if (!lock) { bar.innerHTML = ''; return; }
+    bar.classList.toggle('wait', st === 'asked');
+    const em = $('msgs').querySelector('.thread-empty');      // «напишешь первым» тут неправда — писать пока нельзя
+    if (em) em.textContent = st === 'ask' ? 'Здесь пока пусто. Писать ему пока нельзя — попроси разрешения внизу. Разрешит — здесь появится обычное поле ввода.' : 'Здесь пока пусто. ' + GATE[st];
+    bar.innerHTML = st === 'ask'
+      ? `<input id="ask-note" maxlength="300" placeholder="${esc(GATE.ask)} Зачем тебе писать — коротко, необязательно" aria-label="Зачем тебе писать"><button class="btn sm" type="submit">Запросить разрешение</button>`
+      : `<p class="askbar-t">${st === 'asked' ? '<i class="dotw"></i>' : ''}${esc(GATE[st])}</p>`; };
+  if (!c || !c.peer || c.deleted || c.assistant && !CH.as) { if (bar) { bar.hidden = true; } CH.gate = null; return; }
+  if (fresh && bar) { bar.hidden = true; if (c.can_write === false && !CH.as) $('composer').hidden = true; }   // без мигания поля ввода
+  try { const r = await api('/api/rel', { peer: id, ...(CH.as ? { as: CH.as } : {}) }); show(r.out && r.out.write); }
+  catch (e) { show(null); }
+}
+if ($('askbar')) $('askbar').onsubmit = async (e) => {
+  e.preventDefault(); const bar = $('askbar'), go = bar.querySelector('button'), n = bar.querySelector('input'); if (!go) return;
+  go.disabled = true;
+  try { await api('/api/net-ask', { to: CH.sel, note: n ? n.value.trim() : '', ...(CH.as ? { as: CH.as } : {}) }); await gatePaint(); }
+  catch (e2) { go.disabled = false; let er = bar.querySelector('.err'); if (!er) { er = document.createElement('span'); er.className = 'err'; er.setAttribute('role', 'alert'); bar.prepend(er); } er.textContent = e2.message; }
+};
 
 function cur() { return CH.list.find((c) => c.id === CH.sel); }
 // «Написать» чужому агенту или ассистенту: чата в списке ещё нет — пустое окно, как в Telegram; строка в списке
@@ -286,6 +314,7 @@ async function openChat(id) {
   }
   paintHead(); paintRows();
   const c = cur();
+  gatePaint(true);
   $('ctext').placeholder = CH.as ? 'Письмо от имени агента…' : c && c.assistant ? 'Сообщение ассистенту…' : c && c.human ? 'Сообщение человеку…'
     : c && c.peer && c.can_write ? (c.wakes ? 'Письмо разбудит агента…' : 'Письмо не разбудит агента…') : 'Сообщение агенту…';
   if (c && c.assistant && window.SVF && !CH.as) { $('conv').classList.add('uxf'); await window.SVF.open($('msgs'), c.addr); }    // ассистент — лента как в мессенджере
@@ -444,8 +473,10 @@ const NET_IC = {
   approve: '<path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6z"/>',
   admin: '<path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6z"/><path d="M9.2 12l2 2 3.8-3.8"/>',
   set: '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
+  tick: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2.5h6"/>',
 };
 function netKind(m, t) {
+  if (m.net === 'tick') return ['tick', 'info'];     // сводка непросмотренного по расписанию
   const topic = /закрыл тебе письма|чёрн/.test(t) ? 'ban' : /^⏰|будить/.test(t) ? 'wake' : /^🛡/.test(t) ? 'admin'
     : /^⚙/.test(t) ? 'set' : /Одобрено|Отклонено/.test(t) ? 'approve' : 'write';
   const res = /^(❌|⚠)|не разрешил|Отклонено|не выполнено/.test(t) ? 'no' : m.net === 'ask' ? 'wait'
@@ -455,7 +486,7 @@ function netKind(m, t) {
 function netPill(m) {
   const el = document.createElement('div'), t = String(m.text || '').trim(), c = cur();
   const [ic, res] = netKind(m, t);
-  const body = t.replace(/^(⏰|🔑|✅|❌|⚠|⚙|🛡)\uFE0F?\s*/u, '');
+  const body = t.replace(/^(⏰|🔑|✅|❌|⚠|⚙|🛡|🕒)\uFE0F?\s*/u, '');
   const first = (body.match(/^[\s\S]*?(?:[.!?](?=\s|$)|»\.?(?=\s|$))/) || [body])[0];
   const mine = m.dir === 'me' || m.dir === 'out';
   const pn = m.peer_name && m.peer_name !== 'агент' ? m.peer_name : m.peer || 'собеседника', cn = c ? chatName(c) : 'собеседника';
