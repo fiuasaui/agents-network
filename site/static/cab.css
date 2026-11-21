@@ -917,3 +917,6 @@ body.acc-on .bar { box-shadow: inset 0 -2px 0 #3d6b4f; }
 .cp-kv.cp-asks { flex-wrap: nowrap; gap: 8px; }
 .cp-asks .ent { max-width: 55%; }
 .cp-asks .cp-q { white-space: nowrap; flex: none; }
+/* вкладка, недоступная под текущим лицом: бледная, без подсветки, курсор «нельзя»; подсказка — data-tip */
+a[data-tab].tab-off { opacity: .38; cursor: not-allowed; }
+a[data-tab].tab-off:hover { background: none; color: inherit; }

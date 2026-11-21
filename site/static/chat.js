@@ -163,6 +163,12 @@ function asPaint() {
   const fk = faceKey(), curI = items.find((x) => x.id === fk) || me;
   const sig = items.map((x) => x.id + x.name + x.sub + (x.av || '')).join('|') + '#' + fk;
   box.classList.toggle('on', !!fk); document.body.classList.toggle('as-on', !!CH.as); document.body.classList.toggle('acc-on', !!CH.acc);
+  // под лицом «Весь аккаунт» вкладка «Чаты» отключена видимо, с объяснением при наведении, а не молча не работает
+  for (const t of document.querySelectorAll('a[data-tab="chats"]')) {
+    t.classList.toggle('tab-off', !!CH.acc); t.setAttribute('aria-disabled', CH.acc ? 'true' : 'false');
+    if (CH.acc) { t.dataset.tip = 'Сейчас ты действуешь от имени всего аккаунта — у аккаунта чатов нет, он не пишет писем. Чтобы писать, выбери в шапке себя или своего агента.'; t.dataset.tipH = 'Чаты недоступны'; }
+    else { delete t.dataset.tip; delete t.dataset.tipH; }
+  }
   if (box.dataset.sig === sig) return; box.dataset.sig = sig;
   const avOf = (x) => (x.type === 'agent' ? avHtml(x.name, x.id, false, x.av) : `<span class="av me-av${x.type === 'account' ? ' acc-av' : ''}" aria-hidden="true">${esc(avatar(humanName(ME.name, ME.nick), ME.nick).ini)}</span>`);
   $('as-chip').innerHTML = `${avOf(curI)}<span class="as-t"><small>${CH.acc ? 'весь аккаунт' : CH.as ? 'от имени агента' : 'от своего имени'}</small><b>${esc(curI.name)}</b></span><svg class="as-ch" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg>`;
@@ -191,7 +197,8 @@ async function loadMine() {
 }
 function setAs(id) {
   if (faceKey() === (id || '')) return;
-  lpReset(); CH.acc = id === '@acct'; CH.as = CH.acc ? null : id || null; asSave(); CH.extra = null; CH.list = []; CH.sysSig = null; CH.hasSys = false; CH.sys = { msgs: [], waiting: 0 };
+  lpReset(); CH.acc = id === '@acct'; CH.as = CH.acc ? null : id || null; asSave();
+  if (CH.acc && typeof TAB !== 'undefined' && TAB === 'chats') location.hash = '#access';     // у аккаунта чатов нет — сразу в «Доступ» CH.extra = null; CH.list = []; CH.sysSig = null; CH.hasSys = false; CH.sys = { msgs: [], waiting: 0 };
   if (CH.sel) closeChat();
   $('rows').innerHTML = ''; asPaint(); loadChats();
   const et = $('conv-empty-t'); if (et) { et.dataset.t0 = et.dataset.t0 || et.textContent;
@@ -874,3 +881,6 @@ async function threadLoop() {
 function lpReset() { if (CH.lpAbort) CH.lpAbort.abort(); }
 //: фоновая вкладка не опрашивает — вернулся на неё, забираем новое сразу
 document.addEventListener('visibilitychange', () => { if (document.hidden || TAB !== 'chats') return; loadChats(); if (CH.sel) lpReset(); });
+
+// клик по отключённой вкладке «Чаты» под лицом аккаунта — никуда не ведёт, подсказка остаётся
+document.addEventListener('click', (e) => { const t = e.target.closest && e.target.closest('a[data-tab="chats"].tab-off'); if (t) { e.preventDefault(); e.stopPropagation(); } }, true);
