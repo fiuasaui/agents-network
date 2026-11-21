@@ -209,8 +209,9 @@ const TYPES = {
 };
 
 // ---------- участник объектом: аватарка и имя вместо слов и стрелок ----------
-// Обычный клик — маленькое меню (карточка, новая вкладка, скопировать адрес и ID); средняя кнопка, Ctrl/Cmd-клик и правая
-// кнопка — как у обычной ссылки на страницу участника. e — {id, type, name, address, av, page} с сервера (relay.ent).
+// Обычный клик — сразу его карточка; в кабинете — окном карточки с «Назад»,
+// на публичных страницах — переход по ссылке. Правая кнопка и долгое касание — маленькое меню (карточка, новая вкладка,
+// адрес, ID); средняя кнопка и Ctrl/Cmd-клик — как у ссылки. e — {id, type, name, address, av, page} с сервера (relay.ent).
 function entPage(e) {
   if (e.page) return e.page;
   const a = String(e.address || '').replace(/^@/, '');
@@ -231,17 +232,26 @@ function ent(e, o) {
   const IC = { card: '<rect x="4" y="5" width="16" height="14" rx="3"/><path d="M8 10h8M8 14h5"/>', tab: '<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5H5V6h5"/>',
     copy: '<rect x="8" y="8" width="12" height="12" rx="2.5"/><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-9A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8"/>' };
   const it = (k, ic, t, sub) => `<button type="button" class="entp-i" data-k="${k}"><svg viewBox="0 0 24 24" aria-hidden="true">${IC[ic]}</svg><span>${esc(t)}</span>${sub ? `<i>${esc(sub)}</i>` : ''}</button>`;
-  document.addEventListener('click', (ev) => {
-    const a = ev.target.closest && ev.target.closest('a.ent[data-ent]');
-    if (pop && !(ev.target.closest && ev.target.closest('.entp'))) close();
-    if (!a || ev.button !== 0 || ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey) return;
-    ev.preventDefault(); ev.stopPropagation();
+  const menu = (ev, a) => {
     let e; try { e = JSON.parse(a.dataset.ent); } catch (er) { return; }
+    close(); ev.preventDefault(); ev.stopPropagation();
     pop = document.createElement('div'); pop.className = 'entp'; pop.setAttribute('role', 'menu');
     pop.innerHTML = `<div class="entp-h">${typeBadge(e.type)}<b>${esc(e.name)}</b></div>`
       + (typeof openCard === 'function' ? it('card', 'card', 'Карточка') : e.type !== 'gone' ? it('cab', 'card', 'Карточка в кабинете') : '')
       + it('tab', 'tab', 'Открыть в новой вкладке') + it('addr', 'copy', 'Скопировать адрес', e.address) + it('id', 'copy', 'Скопировать ID', e.id);
-    document.body.append(pop);
+    onTop(pop);      // поверх модальной карточки — верхним слоем, иначе меню уходит под окно
+    menuAt(a, e);
+  };
+  document.addEventListener('click', (ev) => {
+    const a = ev.target.closest && ev.target.closest('a.ent[data-ent]');
+    if (pop && !(ev.target.closest && ev.target.closest('.entp'))) close();
+    if (!a || ev.button !== 0 || ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey) return;
+    if (typeof openCard !== 'function') return;          // публичная страница — обычный переход по ссылке
+    let e; try { e = JSON.parse(a.dataset.ent); } catch (er) { return; }
+    ev.preventDefault(); ev.stopPropagation(); openCard(e.id, false, null, 'nav');
+  }, true);
+  document.addEventListener('contextmenu', (ev) => { const a = ev.target.closest && ev.target.closest('a.ent[data-ent]'); if (a) menu(ev, a); }, true);
+  const menuAt = (a, e) => {
     const r = a.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
     pop.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.left)) + 'px';
     pop.style.top = (r.bottom + h + 8 < innerHeight ? r.bottom + 6 : Math.max(8, r.top - h - 6)) + 'px';
@@ -255,7 +265,7 @@ function ent(e, o) {
       try { await navigator.clipboard.writeText(k === 'id' ? e.id : e.address); b.querySelector('span').textContent = 'Скопировано'; } catch (er) { b.querySelector('span').textContent = 'Не скопировалось'; }
       setTimeout(close, 700);
     };
-  }, true);
+  };
   document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') close(); });
   addEventListener('scroll', close, true); addEventListener('resize', close);
 })();

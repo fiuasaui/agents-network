@@ -920,3 +920,26 @@ body.acc-on .bar { box-shadow: inset 0 -2px 0 #3d6b4f; }
 /* вкладка, недоступная под текущим лицом: бледная, без подсветки, курсор «нельзя»; подсказка — data-tip */
 a[data-tab].tab-off { opacity: .38; cursor: not-allowed; }
 a[data-tab].tab-off:hover { background: none; color: inherit; }
+/* «кто → про кого» таблицей: у заголовка блока и у каждой ступени одни колонки — субъект · стрелка · субъект · ступень;
+   имя длиннее колонки обрезается многоточием, стрелки стоят на одной вертикали */
+.cp-pair, .lad-r { display: grid; grid-template-columns: minmax(0, 1fr) 20px minmax(0, 1fr) 7.6em; align-items: center; column-gap: 6px; flex-wrap: nowrap; }
+.cp-grp h4 .cp-pair { margin-left: 12px; }
+.lad-c { min-width: 0; display: flex; }
+.lad-c .ent { max-width: 100%; min-width: 0; }
+.lad-c .ent .ent-n { min-width: 0; }
+.cp-pair .cp-arr, .lad-r .cp-arr { justify-self: center; }
+.lad-n { grid-column: 1 / 4; color: var(--muted); }
+.lad-r > b, .lad-r > i { justify-self: end; text-align: right; white-space: nowrap; }
+/* два блока — противоположные направления: подпись «откуда куда · кто решает»; свой блок — с акцентной полосой */
+.cp-dir { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 12.5px; cursor: help; }
+.cp-dir b { font-weight: 650; text-transform: none; color: #8a9aab; }
+.cp-dir .tag { min-height: 22px; font-size: 12px; padding: 1px 8px; }
+.cp-grp.g-in { box-shadow: inset 3px 0 0 #3a6ea5; background: rgba(58, 110, 165, .05); }
+.cp-grp.g-in .cp-dir b { color: #6ab3f3; }
+.cp-asks .tag { flex: none; min-height: 24px; font-size: 12px; }
+/* кнопки столбца списка «Сеть» — одной ширины; «Попросить» — мягкой синей заливкой, «Написать» — полной */
+.netr > .btn, .netr > .meta:last-child { flex: none; min-width: 124px; justify-content: center; text-align: center; }
+.btn.soft { background: rgba(82, 136, 193, .2); color: #b9d6f5; }
+.btn.soft:hover { background: rgba(82, 136, 193, .3); }
+.ent .av, .cp-kv .ent .av { flex: none; }      /* аватар значка не сжимается в узкой строке (у «Просьбы решает» на телефоне резался) */
+.cp-grp h4 .ent.sm .ent-n { font-weight: 650; font-size: 13px; }
