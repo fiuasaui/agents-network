@@ -198,7 +198,8 @@ async function loadMine() {
 function setAs(id) {
   if (faceKey() === (id || '')) return;
   lpReset(); CH.acc = id === '@acct'; CH.as = CH.acc ? null : id || null; asSave();
-  if (CH.acc && typeof TAB !== 'undefined' && TAB === 'chats') location.hash = '#access';     // у аккаунта чатов нет — сразу в «Доступ» CH.extra = null; CH.list = []; CH.sysSig = null; CH.hasSys = false; CH.sys = { msgs: [], waiting: 0 };
+  if (CH.acc && typeof TAB !== 'undefined' && TAB === 'chats') location.hash = '#access';     // у аккаунта чатов нет — сразу в «Доступ»
+  CH.extra = null; CH.list = []; CH.sysSig = null; CH.hasSys = false; CH.sys = { msgs: [], waiting: 0 };     // новое лицо — список чатов с нуля
   if (CH.sel) closeChat();
   $('rows').innerHTML = ''; asPaint(); loadChats();
   const et = $('conv-empty-t'); if (et) { et.dataset.t0 = et.dataset.t0 || et.textContent;
@@ -466,6 +467,21 @@ function sysCard(m) {
 // нажал — письмо целиком под плашкой; раскрытое помнится, пока открыта страница. Исходящее — оранжевое «←», входящее — фиолетовое «→»
 const PEER_OPEN = new Set();
 function plural(n, a, b, c) { const m = n % 10, h = n % 100; return n + ' ' + (m === 1 && h !== 11 ? a : m >= 2 && m <= 4 && (h < 10 || h >= 20) ? b : c); }
+// подсказка Сети к моему письму: поле info ответа на отправку — сможет ли адресат ответить и что поставить; видна
+// только отправившей стороне, хранится при письме. Действие — настройки карточки собеседника
+function infoLine(m) {
+  const el = document.createElement('div'), x = m.info[0], wake = x.code === 'no_wake';
+  el.className = 'bub netn nmine r-info ninfo'; el.dataset.infoFor = m.mid;
+  const txt = m.info.map((i) => String(i.text || '').replace(/ POST \/v1\/rel \{[^}]*\}( \([^)]*\))?/g, ' в настройках собеседника').replace(/ \(или поле "wake": true в письме\)/, '')).join(' ');
+  const c = cur(), nm = c ? chatName(c) : '';      // в кабинете собеседник — по имени, как в шапке чата
+  const txt2 = nm ? txt.replace(/@[\w.-]+(\/[\w.-]+)?/, nm) : txt;
+  el.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${NET_IC[wake ? 'wake' : 'write']}</svg><div><div class="nt">${esc(txt2)}</div>
+    <div class="meta">Сеть · подсказка к твоему письму · ${esc(hm(m.at))}${x.peer && typeof openCard === 'function' ? ' · <button class="more" type="button">Настройки собеседника</button>' : ''}</div></div>`;
+  el.dataset.tip = 'Подсказку дала Сеть по твоим правилам про собеседника: письмо их не меняет. Её видишь только ты';
+  const b = el.querySelector('.more'); if (b) b.onclick = async () => { await openCard(x.peer); if (typeof openSet === 'function') openSet(); };
+  return el;
+}
+
 function peerLine(m) {
   const el = document.createElement('div');
   el.className = 'bub ptr ' + m.dir;
@@ -578,13 +594,14 @@ function appendMsgs(list) {
     if (day !== lastDay) { const s = document.createElement('div'); s.className = 'day'; s.textContent = dayLabel(m.at); box.appendChild(s); lastDay = day; }
     if (CH.sepNeed && m.dir === 'to_me' && !m.delivered) { const s = document.createElement('div'); s.className = 'unread-sep'; s.textContent = 'Непрочитанные сообщения'; box.appendChild(s); CH.sepNeed = false; }
     const b = bubble(m); box.appendChild(b); CH.msgs.push(m);
+    if (m.info && m.info.length && !box.querySelector(`[data-info-for="${CSS.escape(m.mid)}"]`)) box.appendChild(infoLine(m));
     if (b.classList.contains('unread')) seenObserve(b);
   }
   if (!CH.msgs.length && !box.querySelector('.thread-empty')) {
     const c = cur();
-    box.innerHTML = CH.as ? `<div class="thread-empty">Здесь пока пусто. Письмо уйдёт от имени агента, и он узнает о нём. Напишет первым — ${esc(c && c.addr || 'адресат')} сможет ему ответить (если у агента так настроено).</div>`
-      : c && c.human ? `<div class="thread-empty">Здесь пока пусто. Письмо уйдёт от тебя, @${esc(ME.nick)}, человеку ${esc(c.addr)} — его агенты письмо не читают. <b>Напишешь первым — он сможет писать тебе.</b> Ответ придёт сюда.</div>`
-      : c && c.peer ? `<div class="thread-empty">Здесь пока пусто. Письмо уйдёт от тебя, @${esc(ME.nick)}. <b>Напишешь первым — ${c.assistant ? 'ассистент' : 'агент'} сможет писать тебе.</b> Ответ придёт сюда; в списке чат появится после первого письма.</div>`
+    box.innerHTML = CH.as ? `<div class="thread-empty">Здесь пока пусто. Письмо уйдёт от имени агента, и он узнает о нём. Письмо правил не меняет: сможет ли ${esc(c && c.addr || 'адресат')} ответить — по правилам агента, Сеть подскажет под письмом.</div>`
+      : c && c.human ? `<div class="thread-empty">Здесь пока пусто. Письмо уйдёт от тебя, @${esc(ME.nick)}, человеку ${esc(c.addr)} — его агенты письмо не читают. Письмо правил не меняет: сможет ли он ответить — по твоим правилам, Сеть подскажет под письмом. Ответ придёт сюда.</div>`
+      : c && c.peer ? `<div class="thread-empty">Здесь пока пусто. Письмо уйдёт от тебя, @${esc(ME.nick)}. Письмо правил не меняет: сможет ли ${c.assistant ? 'ассистент' : 'агент'} ответить — по твоим правилам, Сеть подскажет под письмом. Ответ придёт сюда; в списке чат появится после первого письма.</div>`
       : '<div class="thread-empty">Здесь пока пусто. Напиши агенту — письмо придёт ему с пометкой «от твоего человека», и он ответит сюда.</div>';
   } else if (CH.msgs.length) { const te = box.querySelector('.thread-empty'); if (te) te.remove(); }
   if (nearBottom || list.some((m) => m.dir === 'me')) box.scrollTop = box.scrollHeight;
@@ -700,7 +717,7 @@ async function sendChat(e) {
   try {
     const asst = !CH.as && window.SVF && window.SVF.active();
     if (CH.as && files.length) throw new Error('файлы от имени агента пока не отправляются');
-    const r = asst ? await window.SVF.send(text, files.map((f) => f.id)) : CH.as ? await api('/api/as-send', { as: CH.as, to: CH.sel, text, let_reply: true })
+    const r = asst ? await window.SVF.send(text, files.map((f) => f.id)) : CH.as ? await api('/api/as-send', { as: CH.as, to: CH.sel, text })
       : await api('/api/chat-send', { agent: CH.sel, text, files: files.map((f) => f.id) });
     if (!r.mid) {       // письмо не ушло, а стало просьбой адресату (нет права писать)
       el.classList.remove('pending'); el.querySelector('.meta').innerHTML = `<span class="fail">${esc(r.reply || r.message || 'не отправлено: стало просьбой адресату')}</span>`;

@@ -91,13 +91,16 @@ def db_open(path):
     if "mode" not in ocols:         # кто может писать человеку: open · ask (по просьбе) · closed · hidden
         c.execute("ALTER TABLE owners ADD COLUMN mode TEXT DEFAULT 'open'")
     if "mutual" in [r[1] for r in c.execute("PRAGMA table_info(agents)")]:
-        # настройки взаимности агента больше нет: кто пишет первым, решает параметром let_reply первого письма
+        # настройки взаимности агента больше нет; письмо правил не меняет вовсе
         c.execute("ALTER TABLE agents DROP COLUMN mutual")
     acols = [r[1] for r in c.execute("PRAGMA table_info(agents)")]
     if "wake" not in acols:         # кто будит агента письмом: JSON настроек, NULL — по умолчанию (WAKE_DEFAULT)
         c.execute("ALTER TABLE agents ADD COLUMN wake TEXT")
     if "acted" not in acols:        # последнее действие агента в сети (письмо, доверие, просьба, решение) — публично, без «с кем»
         c.execute("ALTER TABLE agents ADD COLUMN acted REAL")
+    if "info" not in [r[1] for r in c.execute("PRAGMA table_info(msgs)")]:
+        # подсказка отправителю к его письму: JSON списка {code, text, peer}; видит только отправившая сторона
+        c.execute("ALTER TABLE msgs ADD COLUMN info TEXT")
     if "kind" not in [r[1] for r in c.execute("PRAGMA table_info(msgs)")]:
         # вид служебного письма: 'ask' — просьба писать, 'answer' — ответ сети на мою просьбу; NULL — обычное письмо
         c.execute("ALTER TABLE msgs ADD COLUMN kind TEXT")
@@ -628,7 +631,7 @@ class Relay:
             with LOCK:
                 q = {**q, "name": check_name(q["name"], self.name_avoid(me))}
         if "mutual" in q:
-            raise ValueError("настройки взаимности больше нет: кто пишет первым, решает параметром let_reply первого письма")
+            raise ValueError("настройки взаимности больше нет: письмо правил не меняет; кто может тебе отвечать — /v1/rel с level")
         if "about" in q:        # не режем молча: агент должен знать (приёмка us)
             q = {**q, "about": check_about(q["about"])}
         with LOCK:
@@ -1060,32 +1063,6 @@ class Relay:
             return ""
         return "open" if o == "*" else "trusted"
 
-    LET_REPLY_HELP = ("это твоё первое письмо {dst}, а ответить тебе он пока не может. По умолчанию кто пишет первым, тот "
-                      "открывается адресату: реши явно и отправь снова с параметром \"let_reply\": true — разрешить ему отвечать "
-                      "тебе (обычно да: ждёшь ответа) · false — не разрешать (ответ станет просьбой) · \"human\" — спросить "
-                      "твоего человека.")
-
-    def mutual(self, src, dst, let):
-        """Взаимное открытие: кто пишет первым, тот разрешает адресату отвечать. Человек открывается сам;
-        агент — параметром let_reply первого письма (настройки взаимности нет). Возвращает
-        действие: None · "trust" (записать доверие отправителя адресату) · "ask" (через одобрение). Под LOCK, ДО записи письма."""
-        if self.is_assistant(dst):
-            return None
-        if self.is_owner(src):      # человек — записью доверия, даже если сейчас открыт всем: сменит режим — ответ не пропадёт
-            return "trust" if let in (None, True, "true", 1, "yes") and not self.trusts(src, dst) else None
-        if self.may_write(dst, src):
-            return None
-        if let in ("human", "ask"):
-            return "ask"
-        if let is None:
-            if self.db.execute("SELECT 1 FROM msgs WHERE src=? AND dst=? LIMIT 1", (dst, src)).fetchone() and \
-                    not self.db.execute("SELECT 1 FROM msgs WHERE src=? AND dst=? LIMIT 1", (src, dst)).fetchone():
-                return "trust"      # это ответ: тот, кто написал тебе, продолжит разговор
-            if self.db.execute("SELECT 1 FROM msgs WHERE src=? AND dst=? LIMIT 1", (src, dst)).fetchone():
-                return None         # первое письмо уже решило — дальше без вопроса
-            raise ValueError(self.LET_REPLY_HELP.format(dst=self.addr_of(dst)))
-        return "trust" if let in (True, "true", 1, "yes") else None
-
     def open_back(self, src, dst, act):
         """Исполнить решение mutual() после записи письма. Под LOCK."""
         if act == "trust":
@@ -1096,6 +1073,41 @@ class Relay:
         if act == "ask":
             return self.mutual_ask(src, dst)
         return None
+
+    def reply_info(self, me, peer):
+        """Подсказка отправителю: письмо правил не меняет, поэтому говорим, что адресат сможет в ответ по МОИМ
+        правилам про него и что поставить. [] — всё в порядке. Один объект для API, приёмной, тулзы ассистента и кабинета. Под LOCK."""
+        if not peer or self.same_side(me, peer) or self.is_assistant(me):
+            return []
+        a, e = self.addr_of(peer), self.rule_eff(me, peer)
+        r = "wake" if e["reach"][0] == "write" and e["wake"][0] else e["reach"][0]
+        human = self.is_owner(me)
+        if human:
+            who = "ты сам"
+        else:
+            who = "твой человек или администратор" if (self.db.execute("SELECT owner FROM agents WHERE id=?", (me,)).fetchone() or [None])[0] else "ты сам"
+        how = ("в карточке собеседника — «Настройки»" if human else
+               f"POST /v1/rel {{\"peer\": \"{a}\", \"level\": \"write\"}} (через воркер — /rel; разрешить писать — с одобрением твоего человека)")
+        if r == "block":
+            return [{"code": "block", "peer": peer, "text": f"{a} у тебя в чёрном списке: ответить и попросить он не сможет."}]
+        if r == "closed":
+            return [{"code": "closed", "peer": peer, "text": f"Ответить тебе {a} не сможет и даже не попросит разрешения: у тебя для него «Никто». "
+                     f"Ждёшь ответа — открой ему писать: {how}. Не ждёшь — так и оставь."}]
+        if r == "ask":
+            return [{"code": "ask", "peer": peer, "text": f"Ответить сразу {a} не сможет: у тебя для него «По просьбе» — его ответ станет просьбой, "
+                     f"решит её {who}. Ждёшь ответа — открой ему писать или жди его просьбы; открыть — {how}."}]
+        if r == "write" and not human:
+            return [{"code": "no_wake", "peer": peer, "text": f"{a} может тебе отвечать, но его письма тебя не будят — увидишь их, когда проверишь почту. "
+                     f"Ждёшь ответа — разреши ему будить: POST /v1/rel {{\"peer\": \"{a}\", \"level\": \"wake\"}} (или поле \"wake\": true в письме). "
+                     "Для тесного контакта это хорошая практика, по умолчанию — да; не доверяешь агенту — не ставь; можно согласовать со своим "
+                     "человеком или администратором."}]
+        return []
+
+    def note_info(self, mid, info):
+        """Запомнить подсказку при письме — кабинет рисует её под письмом и после обновления. Под LOCK."""
+        if info:
+            self.db.execute("UPDATE msgs SET info=? WHERE mid=?", (json.dumps(info, ensure_ascii=False), mid))
+        return info
 
     def mutual_ask(self, src, dst):
         """Взаимность через одобрение. В местной сети одобрений нет: человек машины — её владелец, открываемся сразу;
@@ -1469,7 +1481,8 @@ class Relay:
             if not how:
                 raise PermissionError(f"{self.addr_of(dst)} не принимает твои письма: попроси разрешения — POST /v1/ask "
                                       f"{{\"to\": \"{self.addr_of(dst)}\", \"note\": \"зачем\"}} (через воркер — /ask)")
-            act = self.mutual(src, dst, q.get("let_reply"))
+            if "let_reply" in q:
+                raise ValueError("let_reply больше нет: письмо правил не меняет; кто может тебе отвечать — /v1/rel с level, подсказка — в поле info ответа")
             mid = "m-" + secrets.token_hex(6)
             now = time.time()
             text = clean_html(text) if fmt(q) else text
@@ -1477,16 +1490,13 @@ class Relay:
                 text += self.by_note(src, by, bool(fmt(q)))
             self.db.execute("INSERT INTO msgs (mid, src, dst, text, reply_to, at, fmt, files, thread, by) VALUES (?,?,?,?,?,?,?,?,?,?)",
                             (mid, src, dst, text, q.get("reply_to"), now, fmt(q), fj, th, by))
-            back = self.open_back(src, dst, act)
             # жду ответа: его письма будят меня — если ему можно мне писать (ступень одна)
             wk = bool(q.get("wake")) and self.wake_peer(src, dst, True, strict=False) is not False
             self.acted(src)
+            info = self.note_info(mid, self.reply_info(src, dst))      # что он сможет в ответ и что поставить
             WAKE.notify_all()
         return {"ok": True, "mid": mid, "how": how, **({"thread": th} if th else {}), **({"wakes_me": wk} if q.get("wake") else {}),
-                **({"wake_note": "он не может тебе писать — будить тебя его письма не смогут: разреши ему отвечать "
-                                 "(let_reply: true или /trust), тогда «wake» сработает"} if q.get("wake") and not wk else {}),
-                **({"reply": {"opened": "адресат может тебе отвечать", "asked": "разрешить адресату отвечать — спросили твоего человека"}[back]}
-                   if back else {})}
+                **({"info": info} if info else {})}
 
     def by_note(self, src, by, html=False):
         """Приписка «написал не сам агент, а его человек» — в конце текста письма. Под LOCK."""
@@ -1559,14 +1569,15 @@ class Relay:
                 w += " AND COALESCE(m.thread, '')=?"
                 args.append(thread_of(q) or "")
             rows = self.db.execute(
-                "SELECT m.mid, m.src, m.dst, m.text, m.reply_to, m.at, m.acked, m.fmt, m.files, m.thread, b.nick FROM msgs m LEFT JOIN owners b ON b.id=m.by WHERE " + w + " ORDER BY m.at DESC LIMIT ?",
+                "SELECT m.mid, m.src, m.dst, m.text, m.reply_to, m.at, m.acked, m.fmt, m.files, m.thread, b.nick, m.info FROM msgs m LEFT JOIN owners b ON b.id=m.by WHERE " + w + " ORDER BY m.at DESC LIMIT ?",
                 (*args, lim)).fetchall()
             hn = {}
             out = [{"mid": mid, "dir": "out" if src == me else "in", "from": src, "to": dst, "peer": self.addr_of(dst if src == me else src),
                     "peer_human": hn.setdefault(dst if src == me else src, self.human_nick(dst if src == me else src)),
                     "text": t, "reply_to": r, "at": at, **({"read": True} if ak else {}), **({"format": f} if f else {}),
-                    **({"files": self.files_out(fl)} if fl else {}), **({"thread": th} if th else {}), **({"by_human": "@" + bn} if bn else {})}
-                   for mid, src, dst, t, r, at, ak, f, fl, th, bn in rows]
+                    **({"files": self.files_out(fl)} if fl else {}), **({"thread": th} if th else {}), **({"by_human": "@" + bn} if bn else {}),
+                    **({"info": json.loads(inf)} if inf and src == me else {})}
+                   for mid, src, dst, t, r, at, ak, f, fl, th, bn, inf in rows]
         return {"msgs": out, **({"next": out[-1]["at"]} if len(out) == lim else {}),
                 "hint": "свежее сначала; следующая страница — before из next; peer — переписка с одним адресатом; thread — одна ветка"}
 
@@ -1771,12 +1782,11 @@ class Relay:
             how = self.may_write(owner, dst)
             if not how:
                 raise PermissionError(f"{self.addr_of(dst)} пока не принимает твои письма — попроси разрешения")
-            act = self.mutual(owner, dst, None)     # человек, написав первым, открывается адресату
-            mid, now = "m-" + secrets.token_hex(6), time.time()
+            mid, now = "m-" + secrets.token_hex(6), time.time()      # письмо правил не меняет
             self.db.execute("INSERT INTO msgs (mid, src, dst, text, reply_to, at, files) VALUES (?,?,?,?,?,?,?)", (mid, owner, dst, text, reply_to, now, fj))
-            self.open_back(owner, dst, act)
+            info = self.note_info(mid, self.reply_info(owner, dst))
             WAKE.notify_all()
-        return {"ok": True, "mid": mid, "how": how}
+        return {"ok": True, "mid": mid, "how": how, **({"info": info} if info else {})}
 
     def human_dm(self, owner, to, text, reply_to=None, files=None):
         """Человек пишет человеку: письмо между двумя ow-…; агенты его не читают, оно живёт в чатах «Люди»
@@ -1791,12 +1801,11 @@ class Relay:
             how = self.may_write(owner, dst)
             if not how:     # по просьбе — письмо становится просьбой; закрыт и скрыт — отказ
                 raise PermissionError(f"{self.addr_of(dst)} не принимает письма от незнакомых — письмо не ушло. " + self.knock_human(owner, dst, text))
-            act = self.mutual(owner, dst, None)
-            mid, now = "m-" + secrets.token_hex(6), time.time()
+            mid, now = "m-" + secrets.token_hex(6), time.time()      # письмо правил не меняет
             self.db.execute("INSERT INTO msgs (mid, src, dst, text, reply_to, at, files) VALUES (?,?,?,?,?,?,?)", (mid, owner, dst, text, reply_to, now, fj))
-            self.open_back(owner, dst, act)
+            info = self.note_info(mid, self.reply_info(owner, dst))
             WAKE.notify_all()
-        return {"ok": True, "mid": mid, "how": how}
+        return {"ok": True, "mid": mid, "how": how, **({"info": info} if info else {})}
 
     def knock_human(self, src, dst, text, note=None):
         """Просьба писать человеку: в его чат с отправителем (агентом или человеком) падает просьба с
@@ -1946,7 +1955,7 @@ class Relay:
             except LookupError:
                 return self.peer_thread(owner, agent, after, limit)
             rows = self.db.execute(
-                "SELECT m.mid, m.src, m.dst, m.text, m.reply_to, m.at, m.acked, sa.nick, sa.name, so.nick, da.nick, da.name, dw.nick, m.fmt, sa.owner, da.owner, m.files, bo.nick, m.via, m.kind "
+                "SELECT m.mid, m.src, m.dst, m.text, m.reply_to, m.at, m.acked, sa.nick, sa.name, so.nick, da.nick, da.name, dw.nick, m.fmt, sa.owner, da.owner, m.files, bo.nick, m.via, m.kind, m.info "
                 "FROM msgs m LEFT JOIN agents sa ON sa.id=m.src LEFT JOIN owners so ON so.id=sa.owner LEFT JOIN owners bo ON bo.id=m.by "
                 "LEFT JOIN agents da ON da.id=m.dst LEFT JOIN owners dw ON dw.id=da.owner "
                 "WHERE (m.src=? OR m.dst=?) AND m.at>? ORDER BY m.at DESC LIMIT ?", (aid, aid, float(after or 0), int(limit))).fetchall()
@@ -1954,7 +1963,7 @@ class Relay:
         def addr(i, n, nm, o):
             return (f"@{o}/{n}" if o and n else f"@{n}" if n else i, nm)
         msgs = []
-        for mid, src, dst, text, rto, at, acked, sn, snm, so, dn, dnm, do, fm, sow, dow, fl, bn, via, kd in reversed(rows):
+        for mid, src, dst, text, rto, at, acked, sn, snm, so, dn, dnm, do, fm, sow, dow, fl, bn, via, kd, inf in reversed(rows):
             d = self._dir(src, dst, aid, owner)
             peer = addr(dst, dn, dnm, do) if d == "out" else addr(src, sn, snm, so) if d == "in" else (None, None)
             if peer[0] and str(peer[0]).startswith("hu-"):     # чужой человек в почте агента — его @ник
@@ -1967,20 +1976,21 @@ class Relay:
                          **({"peer_owner": po, "peer_mine": pw == owner} if d in ("out", "in") else {}),
                          **({"format": fm} if fm else {}), **({"files": self.files_out(fl)} if fl else {}),
                          **({"by_human": "@" + bn} if bn else {}), **({"via": "key"} if via == "key" else {}),
-                         **({"net": kd} if kd in NET_KINDS else {})})
+                         **({"net": kd} if kd in NET_KINDS else {}), **({"info": json.loads(inf)} if inf and d == "out" else {})})
         return {"agent": aid, "msgs": msgs}
 
     def peer_thread(self, owner, agent, after=0, limit=200):
         """Переписка человека с чужим агентом или с человеком: только их письма друг другу. Под LOCK."""
         aid = self.resolve_peer(agent)
-        rows = self.db.execute("SELECT m.mid, m.src, m.text, m.reply_to, m.at, m.acked, m.fmt, m.files, b.nick, m.via, m.kind FROM msgs m LEFT JOIN owners b ON b.id=m.by "
+        rows = self.db.execute("SELECT m.mid, m.src, m.text, m.reply_to, m.at, m.acked, m.fmt, m.files, b.nick, m.via, m.kind, m.info FROM msgs m LEFT JOIN owners b ON b.id=m.by "
                                "WHERE ((m.src=? AND m.dst=?) OR (m.src=? AND m.dst=?)) AND m.at>? "
                                "ORDER BY m.at DESC LIMIT ?", (owner, aid, aid, owner, float(after or 0), int(limit))).fetchall()
         return {"agent": aid, "peer": True, "msgs": [{"mid": m, "dir": "me" if s_ == owner else "to_me", "text": t, "reply_to": r, "at": at,
                                                       "delivered": bool(ak), **({"format": f} if f else {}),
                                                       **({"files": self.files_out(fl)} if fl else {}), **({"by_human": "@" + bn} if bn else {}),
-                                                      **({"via": "key"} if via == "key" else {}), **({"net": kd} if kd in NET_KINDS else {})}
-                                                     for m, s_, t, r, at, ak, f, fl, bn, via, kd in reversed(rows)]}
+                                                      **({"via": "key"} if via == "key" else {}), **({"net": kd} if kd in NET_KINDS else {}),
+                                                      **({"info": json.loads(inf)} if inf and s_ == owner else {})}
+                                                     for m, s_, t, r, at, ak, f, fl, bn, via, kd, inf in reversed(rows)]}
 
     def human_seen(self, owner, agent, mids):
         """Человек дочитал до этих писем своего агента (или чужого, с которым переписывается сам) — снять из непрочитанных."""
@@ -2333,7 +2343,12 @@ class Relay:
                                                     (me, REFUSED, now - REPLY_TTL))]
         extra = self.unread_extra(me)
         total = sum(c["unread"] for c in chats)
-        return {"unread": total, "chats": chats, "actions": {"asks_to_me": asks_in, "my_asks_waiting": asks_out, **extra},
+        quiet = [c["peer"] for c in chats if not c["wakes"] and c["type"] in ("agent", "assistant", "human") and not self.same_side(me, c["id"])]
+        info = [{"code": "no_wake", "peers": quiet[:10], "text": f"Письма {', '.join(quiet[:5])}{' и других' if len(quiet) > 5 else ''} лежат и тебя не будят. "
+                 "С кем ведёшь разговор — разреши будить: POST /v1/rel {\"peer\": адрес, \"level\": \"wake\"} (через воркер — /rel), тогда его письма "
+                 "дойдут сразу. Для тесного контакта это хорошая практика; не доверяешь — не ставь; можно согласовать со своим человеком или "
+                 "администратором."}] if quiet and not self.is_owner(me) and not self.is_assistant(me) else []    #
+        return {"unread": total, "chats": chats, "actions": {"asks_to_me": asks_in, "my_asks_waiting": asks_out, **extra}, **({"info": info} if info else {}),
                 "hint": "прочитать хвост чата — /v1/read {\"peer\": адрес} (отмечает прочитанным, даёт 3 прошлых письма для контекста); переписка целиком — /v1/history; будит ли — /v1/wake"}
 
     def unread_extra(self, me):
@@ -2362,6 +2377,7 @@ class Relay:
         mine = (a.get("my_requests_waiting") or []) + (a.get("my_asks_waiting") or [])
         if not parts:
             return None
+        parts += [x["text"] for x in r.get("info") or []]      # что поставить собеседникам
         if mine:
             parts.append(f"Ждёшь ты — {len(mine)}: " + "; ".join(str(x.get("what") or x.get("to")) for x in mine[:5]))
         e = self.rule_eff(me)["tick"][0]
