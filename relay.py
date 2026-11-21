@@ -386,6 +386,9 @@ def sys_notes(bn, via=None):
     return {"system": s} if s else {}
 
 
+SENDER_NET = {"rel": "network", "trust": "system", "text": "Системное сообщение Сети, а не письмо: его пишет Сеть по действию участника (просьба, решение, сводка)."}
+
+
 def sys_join(base, extra):
     """Пометки Сети одним полем `system`: из sys_notes и пометки пары."""
     s = list((base or {}).get("system") or []) + list(extra or [])
@@ -1628,16 +1631,18 @@ class Relay:
                 w += " AND COALESCE(m.thread, '')=?"
                 args.append(thread_of(q) or "")
             rows = self.db.execute(
-                "SELECT m.mid, m.src, m.dst, m.text, m.reply_to, m.at, m.acked, m.fmt, m.files, m.thread, b.nick, m.info, m.kind FROM msgs m LEFT JOIN owners b ON b.id=m.by WHERE " + w + " ORDER BY m.at DESC LIMIT ?",
+                "SELECT m.mid, m.src, m.dst, m.text, m.reply_to, m.at, m.acked, m.fmt, m.files, m.thread, b.nick, m.info, m.kind, m.via FROM msgs m LEFT JOIN owners b ON b.id=m.by WHERE " + w + " ORDER BY m.at DESC LIMIT ?",
                 (*args, lim)).fetchall()
-            hn = {}
+            hn, sd = {}, {}
+            snd = lambda src, kd: SENDER_NET if kd in NET_KINDS else sd.setdefault(src, self.sender_of(me, src))   # кто пишет — как в почте
             out = [{"mid": mid, "dir": "out" if src == me else "in", "from": src, "to": dst, "peer": self.addr_of(dst if src == me else src),
                     "peer_human": hn.setdefault(dst if src == me else src, self.human_nick(dst if src == me else src)),
                     "text": t, "reply_to": r, "at": at, **({"read": True} if ak else {}), **({"format": f} if f else {}),
-                    **({"files": self.files_out(fl)} if fl else {}), **({"thread": th} if th else {}), **({"by_human": "@" + bn} if bn else {}), **sys_notes(bn),
+                    **({"files": self.files_out(fl)} if fl else {}), **({"thread": th} if th else {}), **({"by_human": "@" + bn} if bn else {}), **sys_notes(bn, via),
+                    **({"sender": snd(src, kd)} if src != me else {}),
                     **({"info": json.loads(inf)} if inf and src == me else {}),
                     **({"net": kd} if kd in NET_KINDS else {})}      # системное событие Сети — тем же полем, что в чате кабинета
-                   for mid, src, dst, t, r, at, ak, f, fl, th, bn, inf, kd in rows]
+                   for mid, src, dst, t, r, at, ak, f, fl, th, bn, inf, kd, via in rows]
         return {"msgs": out, **({"next": out[-1]["at"]} if len(out) == lim else {}),
                 "hint": "свежее сначала; следующая страница — before из next; peer — переписка с одним адресатом; thread — одна ветка"}
 
@@ -1687,7 +1692,7 @@ class Relay:
             args.append(th)
         first = self.db.execute("SELECT MIN(m.at) FROM msgs m WHERE " + w + " AND m.dst=? AND m.acked IS NULL", (*args, me)).fetchone()[0]
         last_read = self.db.execute("SELECT MAX(m.acked) FROM msgs m WHERE " + w + " AND m.dst=?", (*args, me)).fetchone()[0]
-        cols = "SELECT m.mid, m.src, m.text, m.at, m.acked, m.fmt, m.files, m.thread, b.nick, m.kind FROM msgs m LEFT JOIN owners b ON b.id=m.by WHERE "
+        cols = "SELECT m.mid, m.src, m.text, m.at, m.acked, m.fmt, m.files, m.thread, b.nick, m.kind, m.via FROM msgs m LEFT JOIN owners b ON b.id=m.by WHERE "
         if first is None:
             tail, hidden, hidden_in = [], 0, 0
             before = self.db.execute(cols + w + " ORDER BY m.at DESC LIMIT ?", (*args, ctx)).fetchall()[::-1]
@@ -1702,15 +1707,16 @@ class Relay:
         tools = self.tools_of([r[0] for r in tail + before])
 
         def one(r, cut=None):
-            mid, src, t, at, ak, f, fl, thr, bn, kd = r
+            mid, src, t, at, ak, f, fl, thr, bn, kd, via = r
             if cut and len(t) > cut:
                 t = t[:cut] + f"… (ещё {len(t) - cut} знаков — /v1/history)"
             return {"mid": mid, "dir": "out" if src == me else "in", "text": t, "at": at,
                     **({"new": True} if src != me and not ak else {}), **({"format": f} if f else {}),
                     **({"files": self.files_out(fl)} if fl else {}), **({"thread": thr} if thr else {}),
-                    **({"by_human": "@" + bn} if bn else {}), **sys_notes(bn), **({"kind": kd} if kd else {}),
+                    **({"by_human": "@" + bn} if bn else {}), **sys_notes(bn, via), **({"kind": kd} if kd else {}),
                     **({"tools": tools[mid]} if mid in tools else {})}
         out = {"peer": self.addr_of(peer), "id": peer, "type": self.peer_kind(me, peer), "human": self.human_nick(peer),
+               "sender": self.sender_of(me, peer),     # кто он тебе — как поле sender письма в почте
                **({"thread": th} if th else {}),
                "unread": sum(1 for r in tail if r[1] != me and not r[4]) + hidden_in,
                "tail": [one(r) for r in tail], "hidden": hidden,
