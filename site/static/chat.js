@@ -174,9 +174,18 @@ function asOpen(on, back) {
   pop.hidden = !on; b.setAttribute('aria-expanded', on); $('as-menu').classList.toggle('open', on);
   if (on) { const x = pop.querySelector('.as-o.on') || pop.querySelector('.as-o'); x && x.focus(); } else if (back) b.focus();
 }
+// лицо из шапки помнится между обновлениями страницы: удобство одного браузера, не настройка аккаунта
+const asSave = () => { try { if (CH.as) localStorage.setItem('an_as', CH.as); else localStorage.removeItem('an_as'); } catch (e) {} };
+// свои агенты для выбора лица — с любой вкладки, а не только после чатов: открыл «Доступ» по ссылке — выбор лица на месте
+async function loadMine() {
+  try { const r = await api('/api/chats'); CH.mine = (r.chats || []).filter((c) => !c.peer); } catch (e) { return; }
+  if (CH.as && !CH.mine.some((c) => c.id === CH.as && !c.assistant)) { CH.as = null; asSave(); }   // агента удалили — снова от себя
+  asPaint();
+  if (document.body.dataset.tab === 'access' && typeof paintAccess === 'function' && ACC.t) paintAccess();
+}
 function setAs(id) {
   if ((CH.as || null) === (id || null)) return;
-  lpReset(); CH.as = id || null; CH.extra = null; CH.list = []; CH.sysSig = null; CH.hasSys = false; CH.sys = { msgs: [], waiting: 0 };
+  lpReset(); CH.as = id || null; asSave(); CH.extra = null; CH.list = []; CH.sysSig = null; CH.hasSys = false; CH.sys = { msgs: [], waiting: 0 };
   if (CH.sel) closeChat();
   $('rows').innerHTML = ''; asPaint(); loadChats();
   const et = $('conv-empty-t'); if (et) { et.dataset.t0 = et.dataset.t0 || et.textContent;
@@ -196,6 +205,8 @@ if ($('as-chip')) {
 }
 async function loadChats() {
   if (CH.as) {
+    if (!CH.mine) await loadMine();
+    if (!CH.as) return loadChats();
     const as = CH.as; let r;
     try { r = await api('/api/as-chats', { as }); } catch (e) { if (e.status === 403) return load(); if (e.status === 404) { CH.as = null; asPaint(); return loadChats(); } return; }
     if (CH.as !== as) return;

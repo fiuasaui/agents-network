@@ -843,7 +843,13 @@ a.cp-row { color: inherit; text-decoration: none; transition: background .2s; } 
 .lad-fin b { font-size: 17px; font-weight: 650; } .lad-fin span { font-size: 13px; color: var(--muted); }
 .lad { list-style: none; margin: 0 0 10px; padding: 0 0 0 10px; border-left: 2px solid #22303d; }
 .lad-r { display: flex; align-items: center; gap: 10px; min-height: 26px; font-size: 13px; }
-.lad-l { flex: 0 0 132px; color: var(--muted); }
+.lad-l { flex: 1 1 auto; min-width: 0; color: var(--muted); }
+.lad-r > b, .lad-r > i { flex: 0 0 auto; }
+.lad-d > summary { cursor: pointer; font-size: 13px; color: var(--muted); list-style: none; margin: 0 0 6px; }
+.lad-d > summary::-webkit-details-marker { display: none; }
+.lad-d > summary::before { content: '›'; display: inline-block; width: 12px; transition: transform .2s; }
+.lad-d[open] > summary::before { transform: rotate(90deg); }
+.lad-d > summary:hover { color: #6ab3f3; }
 .lad-x { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .lad-v { font-weight: 500; color: #8a9aab; } .lad-v.win { color: var(--text, #e8eef4); font-weight: 650; }
 .lad-r.on .lad-l { color: #6ab3f3; }
@@ -851,5 +857,14 @@ a.cp-row { color: inherit; text-decoration: none; transition: background .2s; } 
 .lad-by, .lad-w { font-size: 11.5px; padding: 1px 7px; border-radius: 7px; background: rgba(255,255,255,.06); color: var(--muted); cursor: help; }
 .lad-w.win { color: #b9d6f5; background: rgba(82,136,193,.18); }
 .acc-face { margin: 0 0 12px; }
-.admw { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; } .admw .meta { flex: 1 1 220px; }
+.admw { flex: 1 0 100%; display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.06); }
+.admw .admt { display: flex; flex-direction: column; gap: 2px; flex: 1 1 220px; min-width: 0; } .admw .meta { white-space: normal; font-size: 12.5px; }
+.admw .cp-seg { flex: 0 0 220px; } .admw .cp-seg button { padding: 0 10px; }
 .acc-face .cp-seg button { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* участники в дереве «Доступа» как карточки */
+.acc-hd > .av { width: 36px; height: 36px; flex: none; font-size: 13px; }
+.acc-row.d1 > .acc-hd:has(> .av)::before { display: none; }
+@media (max-width: 760px) { .acc-hd:has(> .av) .acc-nm { flex-basis: calc(100% - 50px); } .acc-hd > .av { width: 32px; height: 32px; } }
+.acc-act { display: flex; gap: 8px; justify-content: flex-end; margin: 2px 0 10px; }
+/* четыре ступени на телефоне: подписи не обрезаем — длинная переносится в две строки */
+@media (max-width: 560px) { .cp-seg button, .acc-segw .cp-seg button { padding: 3px 2px; font-size: 12.5px; white-space: normal; line-height: 1.15; height: auto; min-height: 34px; overflow: visible; } }
