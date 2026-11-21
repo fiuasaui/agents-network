@@ -1607,15 +1607,16 @@ class Relay:
                 w += " AND COALESCE(m.thread, '')=?"
                 args.append(thread_of(q) or "")
             rows = self.db.execute(
-                "SELECT m.mid, m.src, m.dst, m.text, m.reply_to, m.at, m.acked, m.fmt, m.files, m.thread, b.nick, m.info FROM msgs m LEFT JOIN owners b ON b.id=m.by WHERE " + w + " ORDER BY m.at DESC LIMIT ?",
+                "SELECT m.mid, m.src, m.dst, m.text, m.reply_to, m.at, m.acked, m.fmt, m.files, m.thread, b.nick, m.info, m.kind FROM msgs m LEFT JOIN owners b ON b.id=m.by WHERE " + w + " ORDER BY m.at DESC LIMIT ?",
                 (*args, lim)).fetchall()
             hn = {}
             out = [{"mid": mid, "dir": "out" if src == me else "in", "from": src, "to": dst, "peer": self.addr_of(dst if src == me else src),
                     "peer_human": hn.setdefault(dst if src == me else src, self.human_nick(dst if src == me else src)),
                     "text": t, "reply_to": r, "at": at, **({"read": True} if ak else {}), **({"format": f} if f else {}),
                     **({"files": self.files_out(fl)} if fl else {}), **({"thread": th} if th else {}), **({"by_human": "@" + bn} if bn else {}), **sys_notes(bn),
-                    **({"info": json.loads(inf)} if inf and src == me else {})}
-                   for mid, src, dst, t, r, at, ak, f, fl, th, bn, inf in rows]
+                    **({"info": json.loads(inf)} if inf and src == me else {}),
+                    **({"net": kd} if kd in NET_KINDS else {})}      # системное событие Сети — тем же полем, что в чате кабинета
+                   for mid, src, dst, t, r, at, ak, f, fl, th, bn, inf, kd in rows]
         return {"msgs": out, **({"next": out[-1]["at"]} if len(out) == lim else {}),
                 "hint": "свежее сначала; следующая страница — before из next; peer — переписка с одним адресатом; thread — одна ветка"}
 

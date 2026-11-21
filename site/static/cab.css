@@ -990,3 +990,6 @@ a[data-tab].tab-off:hover { background: none; color: inherit; }
 .cp-seg.rq button.nx[data-req]:hover { background: rgba(122, 170, 220, .14); color: #fff; }
 .cp-seg.rq button.pd { color: #e8c37a; border: 1.5px dashed rgba(232, 195, 122, .5); }
 .cp-seg.rq.shut { opacity: .5; }
+/* под письмом — шириной письма: ширину ставит fitUnder по пузырю, пункт растянут, «Сеть» — к правому краю */
+.sysn.under, .bub.under { max-width: none; box-sizing: border-box; align-items: stretch; }
+.sysn.under .sysn-i { display: flex; border-radius: 12px; } .sysn.under .sysn-i > span { flex: 1; min-width: 0; }

@@ -488,6 +488,14 @@ function infoLine(m) {
 // Сноской под письмом, вне пузыря: текст письма такую сноску нарисовать не может
 const SYS_IC = { by_human: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
   via_key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l8-8M16 7l2 2M14 9l2 2"/>' };
+// всё, что Сеть пишет под письмом (сноска, отбивка), — шириной самого письма: ширина берётся у пузыря и следует за ним
+const UNDER = typeof ResizeObserver === 'function' ? new ResizeObserver((es) => es.forEach((e) => (e.target._under || []).forEach((x) => {
+  if (x.isConnected) x.style.width = e.target.offsetWidth + 'px'; }))) : null;
+function fitUnder(b, el) {
+  el.classList.add('under'); el.style.width = b.offsetWidth ? b.offsetWidth + 'px' : '';
+  (b._under = b._under || []).push(el); if (UNDER) UNDER.observe(b);
+  return el;
+}
 function sysLine(m) {
   const el = document.createElement('div');
   el.className = 'sysn ' + (m.dir === 'me' ? 'smine' : 'stheirs'); el.dataset.sysFor = m.mid;
@@ -615,8 +623,8 @@ function appendMsgs(list) {
     if (day !== lastDay) { const s = document.createElement('div'); s.className = 'day'; s.textContent = dayLabel(m.at); box.appendChild(s); lastDay = day; }
     if (CH.sepNeed && m.dir === 'to_me' && !m.delivered) { const s = document.createElement('div'); s.className = 'unread-sep'; s.textContent = 'Непрочитанные сообщения'; box.appendChild(s); CH.sepNeed = false; }
     const b = bubble(m); box.appendChild(b); CH.msgs.push(m);
-    if (Array.isArray(m.system) && m.system.length && !m.net && !box.querySelector(`[data-sys-for="${CSS.escape(m.mid)}"]`)) box.appendChild(sysLine(m));
-    if (m.info && m.info.length && !box.querySelector(`[data-info-for="${CSS.escape(m.mid)}"]`)) box.appendChild(infoLine(m));
+    if (Array.isArray(m.system) && m.system.length && !m.net && !box.querySelector(`[data-sys-for="${CSS.escape(m.mid)}"]`)) box.appendChild(fitUnder(b, sysLine(m)));
+    if (m.info && m.info.length && !box.querySelector(`[data-info-for="${CSS.escape(m.mid)}"]`)) box.appendChild(fitUnder(b, infoLine(m)));
     if (b.classList.contains('unread')) seenObserve(b);
   }
   if (!CH.msgs.length && !box.querySelector('.thread-empty')) {
@@ -633,6 +641,9 @@ function appendMsgs(list) {
 // последнего письма; что могло поменяться задним числом (просьба ждёт решения, письмо мне не прочитано) — перечитываем
 // отдельно, не дальше 50 последних. Последние TC.MAX писем, до TC.CHATS чатов; ключ — человек · лицо · собеседник
 const TC = { MAX: 200, CHATS: 40, t: {} };
+// версия кэша: сервер стал отдавать у писем новое поле — старые копии стираем, чат перечитается целиком
+const TC_V = '2';
+try { if (localStorage.getItem('an_th_v') !== TC_V) { for (const k of Object.keys(localStorage)) if (k.startsWith('an_th')) localStorage.removeItem(k); localStorage.setItem('an_th_v', TC_V); } } catch (e) {}
 function tcKey(id) { return 'an_th:' + ((typeof ME !== 'undefined' && ME && ME.owner) || '') + ':' + (CH.as || 'me') + ':' + id; }
 function tcGet(id) { try { const v = JSON.parse(localStorage.getItem(tcKey(id)) || 'null'); return v && v.v === 1 && Array.isArray(v.msgs) && v.msgs.length ? v : null; } catch (e) { return null; } }
 function tcPut(id) {
@@ -647,7 +658,7 @@ function tcPut(id) {
   }, 300);
 }
 function tcDrop(id) { try { localStorage.removeItem(tcKey(id)); } catch (e) {} }
-function tcClear() { try { for (const k of Object.keys(localStorage)) if (k.startsWith('an_th')) localStorage.removeItem(k); } catch (e) {} }
+function tcClear() { try { for (const k of Object.keys(localStorage)) if (k.startsWith('an_th') && k !== 'an_th_v') localStorage.removeItem(k); } catch (e) {} }
 window.tcClear = tcClear;
 function tcShow(id) {      // из памяти — сразу, до сети; к первому непрочитанному, как при загрузке
   const c = tcGet(id); if (!c) return false;
