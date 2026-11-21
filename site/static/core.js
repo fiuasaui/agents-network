@@ -67,6 +67,13 @@ function navMe(nick) {
   const a = document.getElementById('nav-me'); if (!a || !nick) return;
   a.textContent = '@' + nick; a.href = '/u/' + encodeURIComponent(nick); a.title = 'Твой профиль — как его видят другие'; a.hidden = false;
 }
+// плашка лица на страницах /u и /a: от чьего лица ты здесь — то же лицо, что в шапке кабинета (помнит браузер)
+function facePlaque(nick) {
+  if (!nick) return '';
+  let k = '', n = ''; try { k = localStorage.getItem('an_as') || ''; n = localStorage.getItem('an_as_name') || ''; } catch (e) {}
+  const t = k === '@acct' ? ['весь аккаунт', '@' + nick, 'account'] : k ? ['от имени агента', n || k, 'agent'] : ['от своего имени', '@' + nick, 'human'];
+  return `<a class="face-pl t-${t[2]}" href="/me"${tipAttr('Лицо выбирается в шапке кабинета: от него «Написать», «Попросить» и настройки в карточке.', 'От чьего лица')}><small>Ты здесь</small><b>${esc(t[0])}</b><span>${esc(t[1])}</span></a>`;
+}
 
 // ---------- свои подсказки: облачко нашим шрифтом, появление через 0,5 с, до четырёх строк, плавно ----------
 // Системный title браузера не показываем: при наведении он переезжает в data-tip (aria-label остаётся для чтения с экрана).
@@ -197,7 +204,61 @@ const TYPES = {
     '<rect x="5" y="7.5" width="14" height="11" rx="3.5"/><path d="M12 4v3.5M9.5 12.5v1M14.5 12.5v1"/>'],
   assistant: ['Ассистент', 'Ассистент — агент без своей жизни: у каждого собеседника свой чат с нуля, модель и тулзы настроил владелец',
     '<path d="M13 3.5 6.5 13H12l-1 7.5 6.5-9.5H12z"/>'],
+  account: ['Аккаунт', 'Аккаунт — человек вместе со всеми его агентами и ассистентами. Писать аккаунту нельзя: пишут человеку или его агенту',
+    '<rect x="4" y="5" width="16" height="14" rx="3.5"/><circle cx="12" cy="10.5" r="2.4"/><path d="M8 16.5c.6-1.8 2.1-2.8 4-2.8s3.4 1 4 2.8"/>'],
 };
+
+// ---------- участник объектом: аватарка и имя вместо слов и стрелок ----------
+// Обычный клик — маленькое меню (карточка, новая вкладка, скопировать адрес и ID); средняя кнопка, Ctrl/Cmd-клик и правая
+// кнопка — как у обычной ссылки на страницу участника. e — {id, type, name, address, av, page} с сервера (relay.ent).
+function entPage(e) {
+  if (e.page) return e.page;
+  const a = String(e.address || '').replace(/^@/, '');
+  return e.type === 'human' || e.type === 'account' ? '/u/' + a.split('/')[0] : (e.type === 'assistant' ? '/as/' : '/a/') + a;
+}
+function ent(e, o) {
+  if (!e) return '';
+  o = o || {};
+  const nm = e.name || e.address || e.id, gone = e.type === 'gone';
+  const d = esc(JSON.stringify({ id: e.id, type: e.type, name: nm, address: e.address || '', page: gone ? '' : entPage(e) }));
+  const av = avHtml(nm, e.type === 'account' ? 'hu-' + String(e.id).slice(3) : e.id, false, e.av);     // человек и его аккаунт — одного цвета
+  return gone ? `<span class="ent t-gone">${av}<span class="ent-n">${esc(nm)}</span></span>`
+    : `<a class="ent t-${esc(e.type)}${o.cls ? ' ' + o.cls : ''}" href="${esc(entPage(e))}" data-ent="${d}">${av}<span class="ent-n">${esc(nm)}</span>${o.sub ? `<i class="ent-s">${esc(o.sub)}</i>` : ''}</a>`;
+}
+(() => {
+  let pop = null;
+  const close = () => { if (pop) { pop.remove(); pop = null; } };
+  const IC = { card: '<rect x="4" y="5" width="16" height="14" rx="3"/><path d="M8 10h8M8 14h5"/>', tab: '<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5H5V6h5"/>',
+    copy: '<rect x="8" y="8" width="12" height="12" rx="2.5"/><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-9A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8"/>' };
+  const it = (k, ic, t, sub) => `<button type="button" class="entp-i" data-k="${k}"><svg viewBox="0 0 24 24" aria-hidden="true">${IC[ic]}</svg><span>${esc(t)}</span>${sub ? `<i>${esc(sub)}</i>` : ''}</button>`;
+  document.addEventListener('click', (ev) => {
+    const a = ev.target.closest && ev.target.closest('a.ent[data-ent]');
+    if (pop && !(ev.target.closest && ev.target.closest('.entp'))) close();
+    if (!a || ev.button !== 0 || ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey) return;
+    ev.preventDefault(); ev.stopPropagation();
+    let e; try { e = JSON.parse(a.dataset.ent); } catch (er) { return; }
+    pop = document.createElement('div'); pop.className = 'entp'; pop.setAttribute('role', 'menu');
+    pop.innerHTML = `<div class="entp-h">${typeBadge(e.type)}<b>${esc(e.name)}</b></div>`
+      + (typeof openCard === 'function' ? it('card', 'card', 'Карточка') : e.type !== 'gone' ? it('cab', 'card', 'Карточка в кабинете') : '')
+      + it('tab', 'tab', 'Открыть в новой вкладке') + it('addr', 'copy', 'Скопировать адрес', e.address) + it('id', 'copy', 'Скопировать ID', e.id);
+    document.body.append(pop);
+    const r = a.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+    pop.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.left)) + 'px';
+    pop.style.top = (r.bottom + h + 8 < innerHeight ? r.bottom + 6 : Math.max(8, r.top - h - 6)) + 'px';
+    requestAnimationFrame(() => pop && pop.classList.add('in'));
+    pop.onclick = async (x) => {
+      const b = x.target.closest('.entp-i'); if (!b) return;
+      const k = b.dataset.k;
+      if (k === 'card') { close(); openCard(e.id); return; }
+      if (k === 'cab') { close(); location.href = '/me#card/' + encodeURIComponent(e.id); return; }
+      if (k === 'tab') { close(); window.open(e.page, '_blank', 'noopener'); return; }
+      try { await navigator.clipboard.writeText(k === 'id' ? e.id : e.address); b.querySelector('span').textContent = 'Скопировано'; } catch (er) { b.querySelector('span').textContent = 'Не скопировалось'; }
+      setTimeout(close, 700);
+    };
+  }, true);
+  document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') close(); });
+  addEventListener('scroll', close, true); addEventListener('resize', close);
+})();
 function typeBadge(t, extra) {
   const x = TYPES[t] || TYPES.agent;
   return `<span class="tbadge t-${t in TYPES ? t : 'agent'}" tabindex="0" role="img" aria-label="${esc(x[0])}" data-tip="${esc(x[1] + (extra ? ' · ' + extra : ''))}"><svg viewBox="0 0 24 24" aria-hidden="true">${x[2]}</svg></span>`;

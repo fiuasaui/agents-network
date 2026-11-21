@@ -152,9 +152,11 @@ def db_open(path):
                 c.execute(f"ALTER TABLE {t} RENAME TO {t}_old")
     if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='level_one'").fetchone():
         level_migrate(c)
+    if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='id_two'").fetchone():
+        id_migrate(c)
     for t, reach in (("trust", "write"), ("blocks", "block")):
-        c.execute(f"""CREATE VIEW IF NOT EXISTS {t} AS SELECT CASE WHEN subj LIKE 'acct:%' THEN substr(subj, 6, 11) ELSE subj END AS owner,
-          CASE WHEN obj LIKE 'acct:%' THEN substr(obj, 6) ELSE obj END AS peer, at, CASE WHEN obj LIKE 'acct:%' THEN 0 ELSE 1 END AS only
+        c.execute(f"""CREATE VIEW IF NOT EXISTS {t} AS SELECT CASE WHEN subj LIKE 'ac-%' THEN 'hu-' || substr(subj, 4) ELSE subj END AS owner,
+          CASE WHEN obj LIKE 'ac-%' THEN 'hu-' || substr(obj, 4) ELSE obj END AS peer, at, CASE WHEN obj LIKE 'ac-%' THEN 0 ELSE 1 END AS only
           FROM rules WHERE reach='{reach}' AND obj!='*'""")
     return c
 
@@ -228,6 +230,47 @@ def level_migrate(c):
     c.execute("DELETE FROM rules WHERE reach IS NULL AND wake IS NULL AND hidden IS NULL AND asks IS NULL AND tick IS NULL")
     c.execute("CREATE TABLE level_one (at REAL)")
     c.execute("INSERT INTO level_one VALUES (?)", (time.time(),))
+
+
+ID_SKIP = ("secret", "pass", "hash", "salt", "token", "sig")     # столбцы-секреты миграция ID не трогает
+
+
+def id_migrate(c):
+    """Один раз: говорящие ID во всей базе — человек ow-X → hu-X, аккаунт acct:ow-X → ac-X, ассистент an-X → as-X.
+    Проходит все таблицы и текстовые значения (в том числе JSON и тексты писем), кроме столбцов-секретов; представления
+    пересоздаются. Прежние ID на входе принимают norm_id и resolve."""
+    asst = {i[3:] for i, in c.execute("SELECT id FROM agents WHERE id LIKE 'an-%' AND COALESCE(kind, '') LIKE 'assistant%'")}
+    rx_ac = re.compile(r"acct:(?:ow|hu)-([0-9a-f]{8})(?![0-9a-f])")
+    rx_hu = re.compile(r"(?<![0-9A-Za-z_-])ow-([0-9a-f]{8})(?![0-9a-f])")
+    rx_as = re.compile(r"(?<![0-9A-Za-z_-])an-([0-9a-f]{8})(?![0-9a-f])")
+
+    def fix(v):
+        v2 = rx_hu.sub(lambda m: "hu-" + m.group(1), rx_ac.sub(lambda m: "ac-" + m.group(1), v))
+        return rx_as.sub(lambda m: ("as-" if m.group(1) in asst else "an-") + m.group(1), v2) if asst else v2
+    for t in ("trust", "blocks"):
+        if c.execute("SELECT 1 FROM sqlite_master WHERE type='view' AND name=?", (t,)).fetchone():
+            c.execute(f"DROP VIEW {t}")
+    n = 0
+    for t, in c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall():
+        for col in [r[1] for r in c.execute(f'PRAGMA table_info("{t}")')]:
+            if any(x in col.lower() for x in ID_SKIP):
+                continue
+            pats = ["%ow-%", "%acct:%"] + (["%an-%"] if asst else [])
+            try:
+                rows = c.execute(f'SELECT rowid, "{col}" FROM "{t}" WHERE typeof("{col}")=\'text\' AND ('
+                                 + " OR ".join(f'"{col}" LIKE ?' for _ in pats) + ")", pats).fetchall()
+            except sqlite3.OperationalError:     # таблица без rowid — у нас таких нет
+                continue
+            for rid, v in rows:
+                v2 = fix(v)
+                if v2 != v:
+                    try:
+                        c.execute(f'UPDATE "{t}" SET "{col}"=? WHERE rowid=?', (v2, rid))
+                        n += 1
+                    except sqlite3.IntegrityError:
+                        pass
+    c.execute("CREATE TABLE id_two (at REAL, n INTEGER)")
+    c.execute("INSERT INTO id_two VALUES (?, ?)", (time.time(), n))
 
 
 # кто будит агента письмом: воркер ждёт только будящие письма, прочие лежат в почте до проверки
@@ -325,7 +368,40 @@ def clean_html(t):
 THREAD_RE = re.compile(r"^[\w.-]{1,40}$")
 
 
-KEY_RE = re.compile(r"^(ow-[0-9a-f]+):([A-Za-z0-9_-]{8,})$")
+# говорящие ID: an- агент · as- ассистент · hu- человек · ac- его аккаунт (тот же хвост, что у человека).
+# Прежние ow-… (человек) и acct:ow-… (аккаунт) сеть принимает на входе и переводит в новые — подключённые машины не отваливаются.
+ID_PFX = ("an-", "as-", "hu-", "ac-", "ow-")
+OLD_ID = re.compile(r"^(?:acct:(?:ow|hu)-([0-9a-f]{8})|ow-([0-9a-f]{8}))$")
+KEY_RE = re.compile(r"^((?:ow|hu|ac)-[0-9a-f]+):([A-Za-z0-9_-]{8,})$")
+
+
+def acc_id(h):
+    """Аккаунт человека: hu-X → ac-X (аккаунт и человек — один хвост)."""
+    h = norm_id(h)
+    return "ac-" + h[3:] if str(h).startswith(("hu-", "ac-")) else None
+
+
+def hum_id(x):
+    """Человек аккаунта: ac-X → hu-X; прочее — как есть."""
+    x = norm_id(x)
+    return "hu-" + x[3:] if str(x).startswith("ac-") else x
+
+
+def norm_id(x):
+    """Прежний ID на входе → новый: ow-X → hu-X, acct:ow-X → ac-X. Остальное не трогает."""
+    if not isinstance(x, str):
+        return x
+    m = OLD_ID.match(x)
+    return x if not m else ("ac-" + m.group(1) if m.group(1) else "hu-" + m.group(2))
+
+
+def norm_ids(q):
+    """Тело запроса целиком: строки-ID старого вида → новые; ключ «ac-…:секрет» → человек hu-…"""
+    if isinstance(q, dict):
+        return {k: norm_ids(v) for k, v in q.items()}
+    if isinstance(q, list):
+        return [norm_ids(v) for v in q]
+    return norm_id(q)
 
 
 def owner_key(q, auth=""):
@@ -336,14 +412,14 @@ def owner_key(q, auth=""):
         k = str(auth)[7:]
     m = KEY_RE.match(k.strip()) if k else None
     if m and not q.get("owner"):
-        q["owner"], q["owner_secret"] = m.group(1), m.group(2)
+        q["owner"], q["owner_secret"] = hum_id(norm_id(m.group(1))), m.group(2)
         q.pop("key", None)
     return q
 
 
 def key_str(oid, sec):
     """Ключ человека одной строкой — так его показывают кабинет и ответы API."""
-    return f"{oid}:{sec}" if oid and sec else ""
+    return f"{acc_id(oid) or oid}:{sec}" if oid and sec else ""
 
 
 def thread_of(q):
@@ -369,8 +445,8 @@ def norm_nick(n):
     n = str(n or "").strip().lstrip("@").lower()
     if not NICK.match(n):
         raise ValueError("ник: 3–32 знака, латиница в нижнем регистре, цифры, _ . - ; первый — буква или цифра")
-    if n in ("owner", "human") or n.startswith(("ow-", "an-")):
-        raise ValueError(f"ник @{n} занят сетью: owner, human, ow-…, an-… — служебные адреса")
+    if n in ("owner", "human") or n.startswith(ID_PFX):
+        raise ValueError(f"ник @{n} занят сетью: owner, human, hu-…, ac-…, an-…, as-… — служебные адреса")
     return n
 
 
@@ -416,7 +492,7 @@ class Relay:
 
     def owner_register(self, q):
         n = norm_nick(q.get("nick"))
-        oid, sec = "ow-" + secrets.token_hex(4), secrets.token_urlsafe(24)
+        oid, sec = "hu-" + secrets.token_hex(4), secrets.token_urlsafe(24)
         with LOCK:
             if self.db.execute("SELECT 1 FROM owners WHERE nick=?", (n,)).fetchone():
                 raise FileExistsError(f"ник человека @{n} занят")
@@ -439,7 +515,7 @@ class Relay:
             return None
         if not q.get("owner_secret"):      # пустой секрет — отозванный ключ (secret=''), не вход
             raise PermissionError("неверный owner или owner_secret")
-        r = self.db.execute("SELECT id FROM owners WHERE id=? AND secret=?", (q.get("owner"), q.get("owner_secret"))).fetchone()
+        r = self.db.execute("SELECT id FROM owners WHERE id=? AND secret=?", (hum_id(q.get("owner")), q.get("owner_secret"))).fetchone()
         if not r:
             raise PermissionError("неверный owner или owner_secret")
         return r[0]
@@ -483,9 +559,12 @@ class Relay:
 
     def resolve(self, to):
         """Адрес — ID (an-…), ник агента (@nick) или полный (@человек/агент); возвращает ID агента.
-        Человек целиком (@человек или ow-…) — только в /trust: доверие всем его агентам."""
+        Аккаунт (@человек, ac-…) и человек (@человек/human, hu-…) — не агенты: для них target."""
         to = str(to or "").strip()
-        if to.startswith("an-"):
+        if to.startswith(("an-", "as-")):
+            if to.startswith("an-") and not self.db.execute("SELECT 1 FROM agents WHERE id=?", (to,)).fetchone() and \
+                    self.db.execute("SELECT 1 FROM agents WHERE id=?", ("as-" + to[3:],)).fetchone():
+                return "as-" + to[3:]       # ассистент по прежнему ID (до у ассистентов был an-)
             return to
         t = to.lstrip("@").lower()
         if "/" in t:
@@ -502,6 +581,8 @@ class Relay:
             return rs[0][0]
         if rs:
             raise LookupError(f"агент @{t} есть у нескольких людей — пиши полным адресом: " + ", ".join(f"@{o}/{t}" for _, o in rs[:5]))
+        if self.db.execute("SELECT 1 FROM owners WHERE nick=?", (t,)).fetchone():
+            raise LookupError(f"@{t} — аккаунт человека, а не агент: человеку пиши @{t}/human, его агенту — @{t}/<агент>")
         raise LookupError("нет агента " + to)
 
     def register(self, q):
@@ -558,7 +639,7 @@ class Relay:
             if q.get("nick"):
                 self.take_nick(me, q["nick"])
             r = self.db.execute("SELECT id, name, about, open, nick, COALESCE(asks, 1), COALESCE(hidden, 0) FROM agents WHERE id=?", (me,)).fetchone()
-            trusts = [o[5:] if o.startswith("acct:") else o for o, in self.db.execute("SELECT obj FROM rules WHERE subj=? AND obj!='*' AND reach='write'", (me,))]
+            trusts = [hum_id(o) for o, in self.db.execute("SELECT obj FROM rules WHERE subj=? AND obj!='*' AND reach='write'", (me,))]
         return {"id": r[0], "nick": r[4], "name": r[1], "about": r[2], "open": bool(r[3]), "asks": bool(r[5]), "hidden": bool(r[6]),
                 "trusts": trusts}
 
@@ -569,7 +650,7 @@ class Relay:
             ow = self.db.execute("SELECT id FROM owners WHERE id=? OR nick=?", (raw, raw)).fetchone() if "/" not in raw and not raw.startswith("an-") else None
             if ow and not self.db.execute("SELECT 1 FROM agents WHERE nick=?", (raw,)).fetchone():
                 peer = ow[0]    # человек — экземпляр, как агент: только он; весь его аккаунт — явным account
-                ob = "acct:" + peer if q.get("account") else peer
+                ob = acc_id(peer) if q.get("account") else peer
                 if q.get("on", True):
                     self.allow(me, ob, force=True)
                     self.knock_answer(me, peer, True)      # просил сам человек — ему письмо «пиши»
@@ -600,9 +681,9 @@ class Relay:
         """Адрес агента словами: @человек/ник, @ник или ID. Замок берёт сам — зовут и вне его."""
         with LOCK:
             r = self.db.execute("SELECT a.nick, o.nick FROM agents a LEFT JOIN owners o ON o.id=a.owner WHERE a.id=?", (aid,)).fetchone()
-            h = None if r else self.db.execute("SELECT nick FROM owners WHERE id=?", (aid,)).fetchone()
-        if not r:
-            return f"@{h[0]}" if h else aid
+            h = None if r else self.db.execute("SELECT nick FROM owners WHERE id=?", (hum_id(aid),)).fetchone()
+        if not r:       # аккаунт — @ник, сам человек — @ник/human
+            return (f"@{h[0]}" if str(aid).startswith("ac-") else f"@{h[0]}/human") if h else aid
         return (f"@{r[1]}/{r[0]}" if r[1] and r[0] else f"@{r[0]}" if r[0] else aid) if r else aid
 
     def note_to(self, src, dst, text, kind="answer"):
@@ -620,7 +701,7 @@ class Relay:
             raise PermissionError(f"{self.addr_of(me)} закрыл тебе письма и просьбы (чёрный список) — писать, просить и будить его нельзя")
 
     def block(self, me, peer, on=True):
-        """Чёрный список: peer — агент или человек, только он; весь аккаунт — peer `acct:ow-…`. Закрыть —
+        """Чёрный список: peer — агент или человек, только он; весь аккаунт — peer `ac-…` или `@ник`. Закрыть —
         ступень block, колокольчик снять, просьбы стереть; снять — вернуть к общим правилам. Под LOCK."""
         ob = peer
         if on:
@@ -631,7 +712,7 @@ class Relay:
         return self.blocks_of(me)
 
     def blocks_of(self, me):
-        return [{"peer": self.addr_of(o[5:] if o.startswith("acct:") else o), "id": o[5:] if o.startswith("acct:") else o, "at": at}
+        return [{"peer": self.addr_of(o), "id": o, "at": at}
                 for o, at in self.db.execute("SELECT obj, at FROM rules WHERE subj=? AND reach='block' ORDER BY at DESC", (me,)).fetchall()]
 
     def blocks(self, q):
@@ -640,7 +721,7 @@ class Relay:
         with LOCK:
             if not q.get("peer"):
                 return {"blocks": self.blocks_of(me)}
-            peer = self.target(q["peer"])
+            peer = self.target(q["peer"], account=True)
             if peer == me:
                 raise ValueError("себя в чёрный список не закрыть")
             on = q.get("on", True) is not False
@@ -693,7 +774,7 @@ class Relay:
         администратору (asks) — в настройках агента; кого из Сети будят письма (from) — колокольчики его правил.
         Под LOCK."""
         w = {"owner": True, "mine": True, "answers": True, "asks": bool(self.rule_eff(aid)["asks"][0])}
-        w["from"] = [o for o, in       # агент, человек `ow-…` (только он) или весь аккаунт `acct:ow-…`
+        w["from"] = [o for o, in       # агент, человек `hu-…` (только он) или весь аккаунт `ac-…`
                      self.db.execute("SELECT obj FROM rules WHERE subj=? AND obj!='*' AND wake=1 ORDER BY at", (aid,))]
         return w
 
@@ -740,22 +821,19 @@ class Relay:
                 for x in (v if isinstance(v, list) else [v])[:50]:
                     x = str(x).strip()
                     if x:
-                        if x.endswith("/*"):        # «@ник/*» — весь его аккаунт
-                            b_ = x[:-2]
-                            o_ = self.human_of(b_ if b_.startswith("@") else "@" + b_) if "/" not in b_ and not b_.startswith(("ow-", "an-")) else None
-                            o_ = o_ or self.owner_id(self.target(b_))
+                        if x.endswith("/*") and x.count("/") > 1:      # «@ник/агент/*» — весь аккаунт его человека
+                            o_ = self.owner_id(self.target(x[:-2]))
                             if not o_:
-                                raise LookupError(f"{b_} — нет такого аккаунта")
-                            ids.append("acct:" + o_)
+                                raise LookupError(f"{x[:-2]} — нет такого аккаунта")
+                            ids.append(acc_id(o_))
                             continue
-                        hum = self.human_of(x) if x.startswith("@") and "/" not in x else None
-                        ids.append(hum or self.target(x))
+                        ids.append(self.target(x, account=True))      # @ник и ac-… — аккаунт, @ник/human — сам человек
                 want = set(ids)        # человек — только он
                 for ob, in self.db.execute("SELECT obj FROM rules WHERE subj=? AND obj!='*' AND wake=1", (aid,)).fetchall():
                     if ob not in want:
                         self.rule_put(aid, ob, wake=None)
                 for ob in want:     # ступень одна: будить — только тем, кто может писать
-                    self.wake_peer(aid, ob[5:] if ob.startswith("acct:") else ob, True, ob.startswith("acct:"))
+                    self.wake_peer(aid, hum_id(ob), True, ob.startswith("ac-"))
             else:       # asks — своё правило агента «ко всем»; null — как у «мои агенты» и Сети
                 self.rule_put(aid, "*", asks=None if v is None or v == "default" else bool(v))
         WAKE.notify_all()       # ждущий опрос перечитает настройку: лежавшее письмо может теперь будить
@@ -783,7 +861,7 @@ class Relay:
     def wake_view(self, aid):
         """Настройки пробуждения словами — для агента и кабинета. Под LOCK."""
         w = self.wake_of(aid)
-        return {"wake": {**w, "from": [self.addr_of(x[5:]) + "/*" if x.startswith("acct:") else self.addr_of(x) for x in w.get("from") or []]}, "help": WAKE_HELP,
+        return {"wake": {**w, "from": [self.addr_of(x) for x in w.get("from") or []]}, "help": WAKE_HELP,
                 "note": "будящие письма воркер доставляет в сессию сразу; остальные лежат в почте — проверяй /v1/unread и читай /v1/read. "
                 "Ждёшь ответа от ассистента или агента — разреши ему будить себя: {\"peer\": \"адрес\", \"on\": true} или письмо с \"wake\": true"}
 
@@ -798,7 +876,7 @@ class Relay:
             if q.get("peer"):
                 if q.get("on", True) is not False:
                     self.need_waker(me, {"from": True})
-                pid = self.target(q["peer"])
+                pid = self.target(q["peer"], account=True)
                 self.wake_peer(me, pid, q.get("on", True) is not False, bool(q.get("account")))
                 if q.get("on", True) is not False:
                     self.wake_granted(me, pid)
@@ -829,7 +907,7 @@ class Relay:
 
     def is_hidden(self, x):
         """Скрыт ли участник: агент — витрина agents.hidden, человек — его правило «ко всем» (каскадом с аккаунта). Под LOCK."""
-        if str(x).startswith("ow-") and self.is_owner(x):
+        if str(x).startswith("hu-") and self.is_owner(x):
             return bool(self.rule_eff(x)["hidden"][0])
         r = self.db.execute("SELECT COALESCE(hidden, 0) FROM agents WHERE id=?", (x,)).fetchone()
         return bool(r and r[0])
@@ -865,7 +943,7 @@ class Relay:
         не будит, просить его нельзя."""
         note = " ".join(str(note or "").split())[:300]
         with LOCK:
-            if self.human_of(to) or str(to or "").startswith("ow-"):
+            if self.human_of(to) or str(to or "").startswith("hu-"):
                 raise ValueError("человека письмо не будит — будить можно только агента")
             dst = self.resolve(to)
             if dst == src or not self.db.execute("SELECT 1 FROM agents WHERE id=?", (dst,)).fetchone() or self.hidden_wall(src, dst):
@@ -1047,26 +1125,42 @@ class Relay:
         """Снять разрешение писать, выданное me: к агенту peer — только ему; к человеку peer — ему, его
         аккаунту и всем его агентам. Чёрный список не трогает. Под LOCK."""
         o = self.owner_id(peer) if self.is_owner(peer) else None
-        objs = [peer] + (["acct:" + o] + [a for a, in self.db.execute("SELECT id FROM agents WHERE owner=?", (o,))] if o else [])
+        objs = [peer] + ([acc_id(o)] + [a for a, in self.db.execute("SELECT id FROM agents WHERE owner=?", (o,))] if o else [])
         for ob in objs:
             if self.rule_get(me, ob)["reach"] == "write":
                 self.rule_put(me, ob, reach=None)
 
-    def target(self, to):
-        """Получатель письма: ID агента (как resolve) или ID чужого человека `ow-…`."""
-        t = str(to or "").strip().lstrip("@").lower()
-        if t.startswith("ow-"):
-            if not self.db.execute("SELECT 1 FROM owners WHERE id=?", (t,)).fetchone():
+    def target(self, to, account=False):
+        """Участник по адресу: агент или ассистент (как resolve), человек — `hu-…` или `@ник/human`. Аккаунт — `ac-…`, `@ник` (если агента без человека с таким ником
+        нет) или прежнее `@ник/*`: только с account=True — правила, доступ, карточка; писать аккаунту нельзя."""
+        t = norm_id(str(to or "").strip().lstrip("@").lower())
+        acc = None
+        if t.startswith(("hu-", "ac-")):
+            if not self.db.execute("SELECT 1 FROM owners WHERE id=?", (hum_id(t),)).fetchone():
                 raise LookupError("нет человека " + t)
-            return t
-        try:
-            return self.resolve(to)
-        except LookupError:
-            # адрес человека из справочника — @ник без агента (прогон 16.11: «@simvika» → «нет агента»)
-            r = None if "/" in t else self.db.execute("SELECT id FROM owners WHERE nick=?", (t,)).fetchone()
+            if t.startswith("hu-"):
+                return t
+            acc = t
+        elif t.endswith(("/human", "/*")) and t.count("/") == 1:
+            r = self.db.execute("SELECT id FROM owners WHERE nick=?", (t.split("/")[0],)).fetchone()
             if not r:
-                raise
-            return r[0]
+                raise LookupError("нет человека @" + t.split("/")[0])
+            if t.endswith("/human"):
+                return r[0]
+            acc = acc_id(r[0])
+        else:
+            try:
+                return self.resolve(to)
+            except LookupError:
+                # @ник без агента — аккаунт человека
+                r = None if "/" in t else self.db.execute("SELECT id FROM owners WHERE nick=?", (t,)).fetchone()
+                if not r:
+                    raise
+                acc = acc_id(r[0])
+        if not account:
+            n = self.db.execute("SELECT nick FROM owners WHERE id=?", (hum_id(acc),)).fetchone()[0]
+            raise LookupError(f"@{n} — аккаунт, писать ему нельзя: человеку — @{n}/human, его агенту — @{n}/<агент>")
+        return acc
 
     def is_owner(self, x):
         with LOCK:      # зовут и вне замка (сайт после may_write): одно соединение на все потоки — гонка давала «нет человека»
@@ -1079,14 +1173,18 @@ class Relay:
     # конкретного собеседника, потом про его аккаунт, потом «все»; внутри — я сам, мой аккаунт; ниже — умолчание Сети.
     def kind3(self, x):
         """Род участника для правил: human · assistant · agent. Под LOCK."""
-        if str(x).startswith("ow-") and self.is_owner(x):
+        if str(x).startswith("ac-"):
+            return "account"
+        if str(x).startswith("hu-") and self.is_owner(x):
             return "human"
         r = self.db.execute("SELECT COALESCE(kind, '') FROM agents WHERE id=?", (x,)).fetchone()
         return "assistant" if r and r[0].startswith("assistant") else "agent"
 
     def owner_id(self, x):
-        """Аккаунт участника: человек — сам, агент — его человек, агент без человека — None. Под LOCK."""
-        if str(x).startswith("ow-") and self.is_owner(x):
+        """Аккаунт участника: человек — сам, аккаунт — его человек, агент — его человек, агент без человека — None. Под LOCK."""
+        if str(x).startswith("ac-"):
+            return hum_id(x)
+        if str(x).startswith("hu-") and self.is_owner(x):
             return x
         with LOCK:
             r = self.db.execute("SELECT owner FROM agents WHERE id=?", (x,)).fetchone()
@@ -1095,17 +1193,19 @@ class Relay:
     def subj_chain(self, me):
         k = self.kind3(me)
         if k == "human":
-            return [me, "acct:" + me], k
+            return [me, acc_id(me)], k
         o = self.owner_id(me)
-        return [me] + (["acct:" + o] if o else []), k        # без групп: экземпляр → аккаунт
+        return [me] + ([acc_id(o)] if o else []), k        # без групп: экземпляр → аккаунт
 
     def obj_chain(self, peer):
         if peer in (None, "*"):
             return ["*"]
+        if str(peer).startswith("ac-"):
+            return [peer, "*"]
         o = self.owner_id(peer)
         if o == peer:
-            return [peer, "acct:" + peer, "*"]
-        return [peer] + (["acct:" + o] if o else []) + ["*"]
+            return [peer, acc_id(peer), "*"]
+        return [peer] + ([acc_id(o)] if o else []) + ["*"]
 
     def rule_eff(self, me, peer=None):
         """Действующие правила me к peer: {reach|wake|hidden: (значение, кто, к кому)}; hidden — только «ко всем»,
@@ -1166,8 +1266,8 @@ class Relay:
             for s_ in sc:
                 r, w = rows.get((s_, o), (None, None))
                 lv = ("wake" if r == "write" and w and agent else r) if r else None
-                out.append({"by": "account" if s_.startswith("acct:") else "self",
-                            "about": "all" if o == "*" else "account" if o.startswith("acct:") else "self",
+                out.append({"by": "account" if s_.startswith("ac-") else "self",
+                            "about": "all" if o == "*" else "account" if o.startswith("ac-") else "self",
                             "level": lv, "win": bool(lv) and not won})
                 won = won or bool(lv)
         e = self.rule_eff(subj, obj)
@@ -1194,13 +1294,15 @@ class Relay:
             r = None
         if not r:
             return {"who": "human"}
-        return {"who": "admin", "admin": self.addr_of(r[0]), "wakes": bool(self.rule_eff(r[0], aid)["asks"][0])}
+        return {"who": "admin", "admin": self.addr_of(r[0]), "admin_id": r[0], "wakes": bool(self.rule_eff(r[0], aid)["asks"][0])}
 
     def rule_obj(self, peer, scope="self"):
         """Объект правила для собеседника: scope account — весь его аккаунт (если он у него есть), иначе он сам — агент или
         человек, как экземпляр. Под LOCK."""
+        if str(peer).startswith("ac-"):
+            return peer
         o = self.owner_id(peer)
-        return "acct:" + o if scope == "account" and o else peer
+        return acc_id(o) if scope == "account" and o else peer
 
     def rule_get(self, subj, obj):
         r = self.db.execute(f"SELECT {', '.join(RULE_F)} FROM rules WHERE subj=? AND obj=?", (subj, obj)).fetchone()
@@ -1213,9 +1315,9 @@ class Relay:
         for k, v in f.items():
             if k not in cur:
                 raise ValueError(f"правило: поле {k} неизвестно — " + ", ".join(RULE_F))
-            if subj.startswith("acct:") and subj.count(":") > 1:
+            if ":" in subj:
                 raise ValueError("групп «мои агенты» и «мои ассистенты» нет: правило — на аккаунт или на конкретного агента")
-            if k in AGENT_F and v is not None and (subj.startswith("ow-") or self.kind3(subj) == "assistant"):
+            if k in AGENT_F and v is not None and (subj.startswith("hu-") or self.kind3(subj) == "assistant"):
                 raise ValueError(WAKE_LEVELS + " — задай на аккаунте (действует на всех агентов) или у агента")
             if k == "reach" and v is not None and v not in REACH:
                 raise ValueError("reach: " + " · ".join(REACH))
@@ -1242,7 +1344,7 @@ class Relay:
 
     def rule_sync(self, subj):
         """Пересчитать витрину аккаунта subj: действующие «ко всем» его агентов и человека. Под LOCK."""
-        s = subj[5:].split(":")[0] if subj.startswith("acct:") else subj
+        s = hum_id(subj)
         o = self.owner_id(s)
         for a in ([x for x, in self.db.execute("SELECT id FROM agents WHERE owner=?", (o,))] if o else [s]):
             e = self.rule_eff(a)
@@ -1279,14 +1381,14 @@ class Relay:
         """Уровень правила словами — для «откуда взялось». Под LOCK."""
         if s == "net":
             return "по умолчанию Сети"
-        who = "мой аккаунт" if s.startswith("acct:") else ("я сам" if s.startswith("ow-") else "этот агент")
-        to = "все" if o == "*" else ("весь его аккаунт" if o.startswith("acct:") else "он сам")
+        who = "мой аккаунт" if s.startswith("ac-") else ("я сам" if s.startswith("hu-") else "этот агент")
+        to = "все" if o == "*" else ("весь его аккаунт" if o.startswith("ac-") else "он сам")
         return f"{who} → {to}"
 
     def human_target(self, src, to):
         """Адрес своего человека: `owner` или его `ow-…`. Чужой `ow-…` — не сюда, а обычным получателем (target)."""
         to = str(to or "").strip().lstrip("@").lower()
-        if to not in ("owner", "human") and not to.startswith("ow-"):
+        if to not in ("owner", "human") and not to.startswith("hu-"):
             # свой человек по нику (@simanna) — тоже сюда, если у агента нет агента с таким ником
             r = self.db.execute("SELECT o.id FROM owners o JOIN agents a ON a.owner=o.id WHERE a.id=? AND o.nick=?", (src, to)).fetchone()
             if not r or "/" in to or self.db.execute("SELECT 1 FROM agents WHERE nick=?", (to,)).fetchone():
@@ -1294,7 +1396,7 @@ class Relay:
             return r[0]
         r = self.db.execute("SELECT owner FROM agents WHERE id=?", (src,)).fetchone()
         mine = r[0] if r else None
-        if to.startswith("ow-") and to != mine:
+        if to.startswith("hu-") and to != mine:
             return None         # чужой человек — получатель как агент: см. target() и may_write()
         if not mine:
             raise PermissionError("у тебя нет человека: агент без владельца пишет только агентам")
@@ -1714,7 +1816,7 @@ class Relay:
     def allow_human(self, owner, agent, on=True):
         """Человек разрешает чужому агенту писать ему — запись доверия от самого человека; снять — так же."""
         with LOCK:
-            aid = self.resolve_human(agent) if str(agent or "").startswith("ow-") else self.resolve(agent)
+            aid = self.resolve_human(agent) if str(agent or "").startswith("hu-") else self.resolve(agent)
             if on:
                 self.allow(owner, aid, force=True)
                 asked = self.db.execute("DELETE FROM knocks WHERE src=? AND dst=?", (aid, owner)).rowcount
@@ -1728,19 +1830,22 @@ class Relay:
         return {"ok": True, "allowed": bool(on)}
 
     def human_of(self, to):
-        """Адрес — человек? ow-… или @ник человека, если такого агента без человека нет. Иначе None. Под LOCK."""
-        t = str(to or "").strip().lstrip("@").lower()
-        if not t or "/" in t or t.startswith("an-"):
+        """Адрес — сам человек? `hu-…` или `@ник/human`. Иначе None. Под LOCK."""
+        t = norm_id(str(to or "").strip().lstrip("@").lower())
+        if t.endswith("/human") and t.count("/") == 1:
+            r = self.db.execute("SELECT id FROM owners WHERE nick=?", (t[:-6],)).fetchone()
+            return r[0] if r else None
+        if not t or "/" in t or t.startswith(("an-", "as-", "ac-")):
             return None
-        r = self.db.execute("SELECT id FROM owners WHERE id=? OR nick=?", (t, t)).fetchone()
-        if r and (t.startswith("ow-") or not self.db.execute("SELECT 1 FROM agents WHERE nick=? AND owner IS NULL", (t,)).fetchone()):
-            return r[0]
-        return None
+        r = self.db.execute("SELECT id FROM owners WHERE id=?", (t,)).fetchone() if t.startswith("hu-") else None
+        return r[0] if r else None
 
     def resolve_human(self, to):
-        """Человек по ow-… или @нику. Под LOCK."""
-        t = str(to or "").strip()
-        r = self.db.execute("SELECT id FROM owners WHERE id=? OR nick=?", (t, t.lstrip("@").lower())).fetchone()
+        """Человек по `hu-…`, `@ник/human` или `@нику` (прежние ow-… тоже). Под LOCK."""
+        t = hum_id(norm_id(str(to or "").strip()))
+        n = t.lstrip("@").lower()
+        n = n[:-6] if n.endswith("/human") else n
+        r = self.db.execute("SELECT id FROM owners WHERE id=? OR nick=?", (t, n)).fetchone()
         if not r:
             raise LookupError("нет человека " + t)
         return r[0]
@@ -1750,13 +1855,13 @@ class Relay:
     def gone(self, x):
         """Собеседника больше нет в Сети: человек или агент удалён (в будущем — и забанен). Под LOCK."""
         x = str(x or "")
-        return x[:3] in ("an-", "ow-") and not self.db.execute("SELECT 1 FROM agents WHERE id=? UNION ALL SELECT 1 FROM owners WHERE id=?", (x, x)).fetchone()
+        return x[:3] in ("an-", "as-", "hu-") and not self.db.execute("SELECT 1 FROM agents WHERE id=? UNION ALL SELECT 1 FROM owners WHERE id=?", (x, x)).fetchone()
 
     def resolve_peer(self, agent):
         """Собеседник чата человека: агент, человек или исчезнувший (по ID, если переписка с ним осталась). Под LOCK."""
         a = str(agent or "")
         try:
-            return self.resolve_human(a) if a.startswith("ow-") else self.resolve(a)
+            return self.resolve_human(a) if a.startswith("hu-") else self.resolve(a)
         except LookupError:
             if self.gone(a):
                 return a
@@ -1767,7 +1872,7 @@ class Relay:
         out = []
         for hid, nick, created, hname in self.db.execute(
                 "SELECT o.id, o.nick, o.created, o.name FROM owners o WHERE o.id<>? AND o.id IN "
-                "(SELECT dst FROM msgs WHERE src=? AND dst LIKE 'ow-%' UNION SELECT src FROM msgs WHERE dst=? AND src LIKE 'ow-%')",
+                "(SELECT dst FROM msgs WHERE src=? AND dst LIKE 'hu-%' UNION SELECT src FROM msgs WHERE dst=? AND src LIKE 'hu-%')",
                 (owner, owner, owner)).fetchall():
             last = self.db.execute("SELECT src, text, at, fmt FROM msgs WHERE (src=? AND dst=?) OR (src=? AND dst=?) ORDER BY at DESC LIMIT 1",
                                    (owner, hid, hid, owner)).fetchone()
@@ -1792,12 +1897,12 @@ class Relay:
         # собеседник исчез: переписка осталась — чат «Удалённый пользователь», без имени, ника и сведений
         for gid, first in self.db.execute(
                 "SELECT x, MIN(at) FROM (SELECT dst x, at FROM msgs WHERE src=? UNION ALL SELECT src, at FROM msgs WHERE dst=?) "
-                "WHERE (x LIKE 'an-%' OR x LIKE 'ow-%') AND x NOT IN (SELECT id FROM agents) AND x NOT IN (SELECT id FROM owners) GROUP BY x",
+                "WHERE (x LIKE 'an-%' OR x LIKE 'as-%' OR x LIKE 'hu-%') AND x NOT IN (SELECT id FROM agents) AND x NOT IN (SELECT id FROM owners) GROUP BY x",
                 (owner, owner)).fetchall():
             last = self.db.execute("SELECT src, text, at, fmt FROM msgs WHERE (src=? AND dst=?) OR (src=? AND dst=?) ORDER BY at DESC LIMIT 1",
                                    (owner, gid, gid, owner)).fetchone()
             unread, = self.db.execute("SELECT COUNT(*) FROM msgs WHERE src=? AND dst=? AND acked IS NULL", (gid, owner)).fetchone()
-            hum = gid.startswith("ow-")
+            hum = gid.startswith("hu-")
             out.append({"id": gid, "peer": True, "deleted": True, "type": "human" if hum else "agent", **({"human": True} if hum else {}),
                         "allowed": False, "blocked": False, "can_write": False, "nick": None, "name": self.GONE, "about": "", "open": False,
                         "seen": None, "created": first, "av": None, "addr": "", "unread": unread,
@@ -1845,7 +1950,7 @@ class Relay:
         for mid, src, dst, text, rto, at, acked, sn, snm, so, dn, dnm, do, fm, sow, dow, fl, bn, via, kd in reversed(rows):
             d = self._dir(src, dst, aid, owner)
             peer = addr(dst, dn, dnm, do) if d == "out" else addr(src, sn, snm, so) if d == "in" else (None, None)
-            if peer[0] and str(peer[0]).startswith("ow-"):     # чужой человек в почте агента — его @ник
+            if peer[0] and str(peer[0]).startswith("hu-"):     # чужой человек в почте агента — его @ник
                 with LOCK:
                     peer = (self.addr_of(peer[0]), "человек")
             # чей агент собеседник — для плашки переписки в чате: человек, имя агента, адрес
@@ -1915,7 +2020,7 @@ class Relay:
         со сколькими людьми переписывался, сколько писем. Кто конкретно — не показываем. Скрытый агент — «нет такого»."""
         with LOCK:
             aid = self.resolve(q.get("agent") or q.get("to"))
-            r = self.db.execute("SELECT a.id, a.nick, a.name, a.about, a.open, COALESCE(a.asks, 1), COALESCE(a.hidden, 0), a.seen, a.created, a.av, a.owner, o.nick "
+            r = self.db.execute("SELECT a.id, a.nick, a.name, a.about, a.open, COALESCE(a.asks, 1), COALESCE(a.hidden, 0), a.seen, a.created, a.av, a.owner, o.nick, o.name "
                                 "FROM agents a LEFT JOIN owners o ON o.id=a.owner WHERE a.id=?", (aid,)).fetchone()
             viewer = q.get("_viewer") or (self.db.execute("SELECT id FROM agents WHERE id=? AND secret=?", (q.get("id"), q.get("secret"))).fetchone() or [None])[0]
             if not r or (r[6] and not q.get("_owner_view") and not (viewer and not self.hidden_wall(viewer, r[0]))):
@@ -1927,7 +2032,8 @@ class Relay:
         return {"id": r[0], "address": self.addr_of(r[0]), "nick": r[1], "name": r[2], "about": r[3], "open": bool(r[4]),
                 "kind": kind, "kind_text": KIND_TEXT[kind], "hidden": bool(r[6]), "seen": r[7], "created": r[8], "acted": acted,
                 **({"acted_ago": ago(acted)} if acted else {}),
-                **({"av": r[9]} if r[9] else {}), "human": r[11], "type": "assistant" if self.is_assistant(r[0]) else "agent", **st,
+                **({"av": r[9]} if r[9] else {}), "human": r[11],
+                **({"human_id": r[10], "human_name": r[12]} if r[10] else {}), "type": "assistant" if self.is_assistant(r[0]) else "agent", **st,
                 **({"me": me} if me else {})}
 
     def card_me(self, q, aid, r):
@@ -1958,6 +2064,27 @@ class Relay:
     # ---------- отношение: одни объекты в трёх контекстах — я-человек и чужой, мой агент и чужой, мой агент сам ----------
     REL_WRITE = ("allow", "default", "block")
 
+    def ent(self, x):
+        """Участник объектом для интерфейса: {id, type, name, address, av, page} — значок с аватаркой и именем вместо
+        слов. type: agent · assistant · human · account · gone. Замок берёт сам."""
+        x = str(x or "")
+        with LOCK:
+            if x.startswith(("hu-", "ac-")):
+                r = self.db.execute("SELECT nick, name FROM owners WHERE id=?", (hum_id(x),)).fetchone()
+                if not r:
+                    return {"id": x, "type": "gone", "name": self.GONE}
+                acc = x.startswith("ac-")
+                return {"id": x, "type": "account" if acc else "human", "name": "@" + r[0] if acc else (r[1] or "@" + r[0]),
+                        "address": "@" + r[0] + ("" if acc else "/human"), "page": "/u/" + r[0]}
+            r = self.db.execute("SELECT a.nick, a.name, o.nick, COALESCE(a.kind, ''), a.av FROM agents a LEFT JOIN owners o ON o.id=a.owner "
+                                "WHERE a.id=?", (x,)).fetchone()
+        if not r:
+            return {"id": x, "type": "gone", "name": self.GONE}
+        addr = f"@{r[2]}/{r[0]}" if r[2] else f"@{r[0]}"
+        asst = r[3].startswith("assistant")
+        return {"id": x, "type": "assistant" if asst else "agent", "name": r[1] if r[1] and r[1] != "агент" else addr,
+                "address": addr, "page": ("/as/" if asst else "/a/") + addr[1:], **({"av": r[4]} if r[4] else {})}
+
     def rel(self, me, peer):
         """Отношение me (агент или человек) к peer — один объект для API агента (/v1/rel), кабинета и карточки. `in` — что peer можно ко мне (решаю я): ступень лестницы и колокольчик — действующие, с уровнем, откуда
         взялись, и своя запись на уровнях «я сам» и «мой аккаунт»; `out` — что мне к нему (решает он). Под LOCK."""
@@ -1973,14 +2100,14 @@ class Relay:
         def mine(subj):
             """Своя запись subj про peer: (ступень, на кого) и (колокольчик, на кого) — на него самого или весь аккаунт."""
             r = {}
-            for ob, sc in ((peer, "self"), *((("acct:" + pa, "account"),) if pa else ())):
+            for ob, sc in ((peer, "self"), *(((acc_id(pa), "account"),) if pa else ())):
                 g = self.rule_get(subj, ob)
                 for f in ("reach", "wake"):
                     if g[f] is not None and f not in r:
                         r[f] = (g[f], sc)
             return r
         own = mine(me)
-        acc = mine("acct:" + acct) if acct else {}
+        acc = mine(acc_id(acct)) if acct else {}
         dflt = self.rule_eff(me)["reach"]
         kin = self.db.execute("SELECT 1 FROM knocks WHERE src=? AND dst=? AND note!=? AND at>?", (peer, me, REFUSED, time.time() - REPLY_TTL)).fetchone()
         how = self.may_write(me, peer)
@@ -1992,7 +2119,12 @@ class Relay:
         wask = bool(not wk and how and not p_h and self.db.execute(
             "SELECT 1 FROM msgs WHERE src=? AND dst=? AND kind='ask' AND text LIKE '⏰%' AND at>?", (me, peer, time.time() - REPLY_TTL)).fetchone())
         w_own = {"write": "allow", "block": "block"}.get((own.get("reach") or (None,))[0], "default")
-        return {"me": self.addr_of(me), "me_kind": "human" if me_h else "agent", "peer": self.addr_of(peer),
+        ab = None if p_h else self.asks_by(peer)
+        if ab and ab.get("who") == "admin":
+            ab["ent"] = self.ent(ab.pop("admin_id", None))
+        ents = {"me": self.ent(me), "peer": self.ent(peer), **({"me_acc": self.ent(acc_id(acct))} if acct else {}),
+                **({"peer_acc": self.ent(acc_id(pa))} if pa else {})}
+        return {"me": self.addr_of(me), "me_kind": "human" if me_h else "agent", "peer": self.addr_of(peer), "ents": ents,
                 "peer_kind": "human" if p_h else "assistant" if self.is_assistant(peer) else "agent",
                 **({"peer_human": self.addr_of(ph)} if ph else {}), **({"peer_account": self.addr_of(pa)} if pa else {}),
                 "in": {"reach": e["reach"][0], "reach_text": REACH_TEXT[e["reach"][0]], "reach_from": self.level_name(*e["reach"][1:]),
@@ -2006,13 +2138,13 @@ class Relay:
                        **({} if me_h else {"wake": bool(e["wake"][0]), "wake_from": self.level_name(*e["wake"][1:]),
                                            "wake_scope": (own.get("wake") or (None, None))[1] if (own.get("wake") or (0,))[0] else None})},
                 "out": {"write": st, "text": WRITE_TEXT.get(st, "он закрыл тебе письма" if st == "blocked" else ""),
-                        "ladder": self.ladder(peer, me), **({} if p_h else {"asks_by": self.asks_by(peer)}),
+                        "ladder": self.ladder(peer, me), **({} if p_h else {"asks_by": ab}),
                         **({} if p_h else {"wakes": bool(wk), **({"wake_asked": True} if wask else {})})}}
 
     def rel_set(self, me, peer, write=None, wake=None, scope="self", subj=None, level=None):
         """Поменять отношение к peer: write — allow · default · block · ask · closed (ступень лестницы;
         default — снять свою запись), wake — будят ли его письма (None — не трогать, "default" — снять); scope "self" — он сам
-        (агент или человек), "account" — весь его аккаунт; subj — чья запись: me (по умолчанию) или "acct:ow-…" (весь мой аккаунт, только человек и ключ).
+        (агент или человек), "account" — весь его аккаунт; subj — чья запись: me (по умолчанию) или "ac-…" (весь мой аккаунт, только человек и ключ).
         level — одна ступень вместо write+wake: closed · ask · write (пишет, не будит) · wake (пишет и будит) · block ·
         default. Возвращает, что поменялось словами. Под LOCK."""
         subj = subj or me
@@ -2059,7 +2191,7 @@ class Relay:
             on = wake is True or wake in (1, "on")
             g = self.rule_get(ws, tgt)
             if on:
-                if not str(ws).startswith("acct:"):
+                if not str(ws).startswith("ac-"):
                     self.need_waker(me, {"from": True})
                 if g["reach"] != "write" and self.rule_eff(me, peer)["reach"][0] != "write":
                     raise PermissionError("будить могут только те, чьи письма доходят: сначала ступень «Пишет»")
@@ -2099,7 +2231,7 @@ class Relay:
         if str(q.get("peer") or "") == "*":
             return self.rel_all(me, q)
         with LOCK:
-            peer = self.target(q.get("peer") or q.get("to"))
+            peer = self.target(q.get("peer") or q.get("to"), account=True)
             if not ("write" in q or "wake" in q or "level" in q):
                 return self.rel(me, peer)
             sc = q.get("scope") or "self"
@@ -2403,7 +2535,7 @@ def handler(relay):
                 self._out(400, {"error": str(e)})
 
         def do_GET(self):
-            self._go({k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()})
+            self._go(norm_ids({k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}))
 
         def do_POST(self):
             n = int(self.headers.get("Content-Length") or 0)
@@ -2411,7 +2543,7 @@ def handler(relay):
                 q = json.loads(self.rfile.read(n) or b"{}")
             except json.JSONDecodeError:
                 return self._out(400, {"error": "тело — JSON"})
-            self._go(q if isinstance(q, dict) else {})
+            self._go(norm_ids(q) if isinstance(q, dict) else {})
 
         def _out(self, code, obj):
             b = json.dumps(obj, ensure_ascii=False).encode()

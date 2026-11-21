@@ -19,7 +19,7 @@ const lsGet = (k) => { try { return JSON.parse(localStorage.getItem(k) || 'null'
 let FLT0 = KINDS; { const v = lsGet('an_flt'); if (Array.isArray(v)) FLT0 = v.filter((k) => KINDS.includes(k)); }
 const OWN0 = lsGet('an_own') || null;     // {was: включены ли были «Люди»} — тумблер включён; null — выключен
 const saveFlt = () => { try { localStorage.setItem('an_flt', JSON.stringify([...CH.flt])); localStorage.setItem('an_own', JSON.stringify(CH.own)); } catch (e) {} };
-const CH = { as: null, seg: FLT ? 'all' : SEG0, flt: new Set(FLT0), own: OWN0, sub: SUB0, hasSys: false, sys: { msgs: [], waiting: 0 }, list: [], now: 0, sel: null, folder: 'all', q: '', last: 0, msgs: [], sending: false, timer: null, ltimer: null };
+const CH = { as: null, acc: false, seg: FLT ? 'all' : SEG0, flt: new Set(FLT0), own: OWN0, sub: SUB0, hasSys: false, sys: { msgs: [], waiting: 0 }, list: [], now: 0, sel: null, folder: 'all', q: '', last: 0, msgs: [], sending: false, timer: null, ltimer: null };
 const PIN = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l-1 6 4 4v2h-5v6l-1 1-1-1v-6H6v-2l4-4z"/></svg>';
 const DIRS = { me: 'Я', to_me: '', out: '→', in: '←' };
 
@@ -36,9 +36,11 @@ const GONE_AV = '<span class="av gone" aria-hidden="true"><svg viewBox="0 0 24 2
 function chatType(c) { return c.human || c.type === 'human' ? 'human' : c.assistant || c.type === 'assistant' ? 'assistant' : 'agent'; }
 function chatName(c) { return c.name && c.name !== 'агент' ? c.name : '@' + (c.nick || c.id); }
 
+const ACC_EMPTY = '<li class="rows-empty">У аккаунта чатов нет: он не пишет писем. Писать — от своего имени или от агента, выбор в шапке.<br><a href="#access">Открыть «Доступ»</a></li>';
 function paintRows() {
   // список как в Telegram: без кнопок-папок; архив — строкой сверху, внутри — свой список со стрелкой назад
   const ul = $('rows'); ul.innerHTML = '';
+  if (CH.acc) { ul.innerHTML = ACC_EMPTY; return; }
   const q = CH.q.toLowerCase(), arch = CH.folder === 'arch';
   $('lttl').textContent = arch ? 'Архив' : CH.as ? 'Чаты агента' : 'Чаты'; $('lback').hidden = !arch; $('lhd').classList.toggle('arch', arch);
   const when_ = (c) => (c.last ? c.last.at : -1e12 + c.created);
@@ -154,17 +156,19 @@ function asName(id) { const c = (CH.mine || []).find((x) => x.id === id); return
 function asPaint() {
   const box = $('as-menu'); if (!box) return;
   const mine = (CH.mine || []).filter((c) => !c.assistant);
-  box.hidden = !mine.length; if (!mine.length) return;
-  const me = { id: '', name: humanName(ME.name, ME.nick), sub: ME.name ? '@' + ME.nick + ' · от своего имени' : 'от своего имени', human: true };
-  const items = [me, ...mine.map((c) => ({ id: c.id, name: chatName(c), sub: (c.admin ? 'администратор · ' : '') + '@' + ME.nick + '/' + (c.nick || c.id), av: c.av }))];
-  const curI = items.find((x) => x.id === (CH.as || '')) || me;
-  const sig = items.map((x) => x.id + x.name + x.sub + (x.av || '')).join('|') + '#' + (CH.as || '');
-  box.classList.toggle('on', !!CH.as); document.body.classList.toggle('as-on', !!CH.as);
+  box.hidden = false;       // лицо «Весь аккаунт» есть всегда, даже без агентов
+  const me = { id: '', name: humanName(ME.name, ME.nick), sub: ME.name ? '@' + ME.nick + '/human · от своего имени' : 'от своего имени', type: 'human' };
+  const acc = { id: '@acct', name: '@' + ME.nick, sub: 'весь аккаунт · правила и Сеть, без чатов', type: 'account' };
+  const items = [acc, me, ...mine.map((c) => ({ id: c.id, name: chatName(c), sub: (c.admin ? 'администратор · ' : '') + '@' + ME.nick + '/' + (c.nick || c.id), av: c.av, type: 'agent' }))];
+  const fk = faceKey(), curI = items.find((x) => x.id === fk) || me;
+  const sig = items.map((x) => x.id + x.name + x.sub + (x.av || '')).join('|') + '#' + fk;
+  box.classList.toggle('on', !!fk); document.body.classList.toggle('as-on', !!CH.as); document.body.classList.toggle('acc-on', !!CH.acc);
   if (box.dataset.sig === sig) return; box.dataset.sig = sig;
-  const avOf = (x) => (x.id ? avHtml(x.name, x.id, false, x.av) : `<span class="av me-av" aria-hidden="true">${esc(avatar(humanName(ME.name, ME.nick), ME.nick).ini)}</span>`);
-  $('as-chip').innerHTML = `${avOf(curI)}<span class="as-t"><small>${CH.as ? 'от имени агента' : 'от своего имени'}</small><b>${esc(curI.name)}</b></span><svg class="as-ch" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg>`;
-  $('as-chip').dataset.tip = CH.as ? `Сейчас — от имени агента «${curI.name}»: его чаты, его «Система», письма от его имени с пометкой, что писал человек` : 'Сейчас — от своего имени. Нажми, чтобы смотреть и писать от имени своего агента';
-  $('as-pop').innerHTML = '<div class="as-h">От чьего имени действовать</div>' + items.map((x) => `<button type="button" role="option" class="as-o${x.id === (CH.as || '') ? ' on' : ''}" data-id="${esc(x.id)}" aria-selected="${x.id === (CH.as || '')}">${avOf(x)}<span class="as-ot"><b>${typeBadge(x.human ? 'human' : 'agent')}${esc(x.name)}</b><small>${esc(x.sub)}</small></span><svg class="as-tk" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>`).join('')
+  const avOf = (x) => (x.type === 'agent' ? avHtml(x.name, x.id, false, x.av) : `<span class="av me-av${x.type === 'account' ? ' acc-av' : ''}" aria-hidden="true">${esc(avatar(humanName(ME.name, ME.nick), ME.nick).ini)}</span>`);
+  $('as-chip').innerHTML = `${avOf(curI)}<span class="as-t"><small>${CH.acc ? 'весь аккаунт' : CH.as ? 'от имени агента' : 'от своего имени'}</small><b>${esc(curI.name)}</b></span><svg class="as-ch" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg>`;
+  $('as-chip').dataset.tip = CH.acc ? 'Сейчас — весь аккаунт: «Доступ» показывает всех твоих участников, карточки меняют правила про весь аккаунт. Чатов у аккаунта нет — писать от себя или агента.'
+    : CH.as ? `Сейчас — от имени агента «${curI.name}»: его чаты, его «Система», письма от его имени с пометкой, что писал человек` : 'Сейчас — от своего имени. Нажми, чтобы выбрать агента или весь аккаунт';
+  $('as-pop').innerHTML = '<div class="as-h">От чьего имени действовать</div>' + items.map((x) => `<button type="button" role="option" class="as-o${x.id === fk ? ' on' : ''}" data-id="${esc(x.id)}" aria-selected="${x.id === fk}">${avOf(x)}<span class="as-ot"><b>${typeBadge(x.type)}${esc(x.name)}</b><small>${esc(x.sub)}</small></span><svg class="as-tk" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>`).join('')
     + '<p class="as-f">От имени ассистента — позже.</p>';
   for (const b of $('as-pop').querySelectorAll('.as-o')) b.onclick = () => { asOpen(false, true); setAs(b.dataset.id || null); };
 }
@@ -175,7 +179,9 @@ function asOpen(on, back) {
   if (on) { const x = pop.querySelector('.as-o.on') || pop.querySelector('.as-o'); x && x.focus(); } else if (back) b.focus();
 }
 // лицо из шапки помнится между обновлениями страницы: удобство одного браузера, не настройка аккаунта
-const asSave = () => { try { if (CH.as) localStorage.setItem('an_as', CH.as); else localStorage.removeItem('an_as'); } catch (e) {} };
+const faceKey = () => (CH.acc ? '@acct' : CH.as || '');
+// имя лица — для плашки на страницах /u и /a: там кабинета нет, а видно, от чьего лица ты действуешь
+const asSave = () => { try { const k = faceKey(); if (k) { localStorage.setItem('an_as', k); localStorage.setItem('an_as_name', CH.acc ? '@' + ME.nick : asName(CH.as)); } else { localStorage.removeItem('an_as'); localStorage.removeItem('an_as_name'); } } catch (e) {} };
 // свои агенты для выбора лица — с любой вкладки, а не только после чатов: открыл «Доступ» по ссылке — выбор лица на месте
 async function loadMine() {
   try { const r = await api('/api/chats'); CH.mine = (r.chats || []).filter((c) => !c.peer); } catch (e) { return; }
@@ -184,8 +190,8 @@ async function loadMine() {
   if (document.body.dataset.tab === 'access' && typeof paintAccess === 'function' && ACC.t) paintAccess();
 }
 function setAs(id) {
-  if ((CH.as || null) === (id || null)) return;
-  lpReset(); CH.as = id || null; asSave(); CH.extra = null; CH.list = []; CH.sysSig = null; CH.hasSys = false; CH.sys = { msgs: [], waiting: 0 };
+  if (faceKey() === (id || '')) return;
+  lpReset(); CH.acc = id === '@acct'; CH.as = CH.acc ? null : id || null; asSave(); CH.extra = null; CH.list = []; CH.sysSig = null; CH.hasSys = false; CH.sys = { msgs: [], waiting: 0 };
   if (CH.sel) closeChat();
   $('rows').innerHTML = ''; asPaint(); loadChats();
   const et = $('conv-empty-t'); if (et) { et.dataset.t0 = et.dataset.t0 || et.textContent;
@@ -204,6 +210,10 @@ if ($('as-chip')) {
   });
 }
 async function loadChats() {
+  if (CH.acc) {      // лицо «Весь аккаунт»: аккаунт писем не пишет — чатов нет
+    CH.list = []; CH.hasSys = false; asPaint();
+    paintRows(); return;
+  }
   if (CH.as) {
     if (!CH.mine) await loadMine();
     if (!CH.as) return loadChats();
@@ -263,7 +273,7 @@ window.peerChat = function (a) {
 window.asstChat = window.peerChat;
 // адрес или id, которого нет в списке (ссылка /me#chats/@ник/агент со страницы агента или ассистенты) — узнать, кто это
 async function resolveChat(x) {
-  if (/^ow-/.test(x)) {     // человек: ссылка «Написать» с его страницы
+  if (/^(hu|ac|ow)-/.test(x)) {     // человек: ссылка «Написать» с его страницы
     try { const h = await api('/v1/human', { human: x });
       CH.extra = { id: h.id, peer: true, human: true, nick: h.human, name: '@' + h.human, addr: '@' + h.human, about: '', av: null, seen: null, unread: 0, last: null };
       if (!CH.list.some((c) => c.id === h.id)) CH.list.push(CH.extra); return h.id; } catch (e) { return null; }
@@ -306,6 +316,7 @@ function paintHead() {
 }
 
 async function openChat(id) {
+  if (CH.acc && id) { setAs(null); hint('Писать — от своего имени: лицо в шапке переключено на тебя'); }     // у аккаунта чатов нет
   if (id !== SYS && !CH.list.some((c) => c.id === id)) {
     const r = await resolveChat(id); if (!r) { closeChat(); return; }
     if (r !== id) { id = r; if (!CH.list.some((c) => c.id === id)) await loadChats(); }

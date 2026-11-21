@@ -101,16 +101,16 @@ function paintNet() {
 }
 function parseKey(t) {
   t = t.trim();
-  const one = t.replace(/^["']|["']$/g, '').match(/^(ow-[0-9a-f]+):([A-Za-z0-9_-]{8,})$/);     // ключ одной строкой
+  const one = t.replace(/^["']|["']$/g, '').match(/^((?:ow|hu|ac)-[0-9a-f]+):([A-Za-z0-9_-]{8,})$/);     // ключ одной строкой
   if (one) return { owner: one[1], owner_secret: one[2] };
   try { const j = JSON.parse(t); if (j.key) return parseKey(j.key); if (j.owner && j.owner_secret) return j; } catch (e) {}
-  const o = t.match(/ow-[0-9a-f]+/), s = t.match(/"?owner_secret"?\s*[:=]\s*"?([A-Za-z0-9_-]{16,})/);
+  const o = t.match(/(?:ow|hu|ac)-[0-9a-f]+/), s = t.match(/"?owner_secret"?\s*[:=]\s*"?([A-Za-z0-9_-]{16,})/);
   return o && s ? { owner: o[0], owner_secret: s[1] } : null;
 }
 $('cf').onsubmit = async (e) => {
   e.preventDefault();
   const k = parseKey($('kval').value), b = $('cgo'); $('cerr').textContent = '';
-  if (!k) { $('cerr').textContent = 'Не похоже на ключ: нужна строка вида ow-…:секрет из кабинета сайта.'; return; }
+  if (!k) { $('cerr').textContent = 'Не похоже на ключ: нужна строка вида ac-…:секрет из кабинета сайта.'; return; }
   b.disabled = true; b.textContent = 'Подключаю…';
   try {
     const r = await api('/api/connect', k);
