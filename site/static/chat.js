@@ -482,6 +482,19 @@ function infoLine(m) {
   return el;
 }
 
+// системные пометки Сети к письму: «написал человек от имени агента», «отправлено ключом» — поле system, не текст письма.
+// Сноской под письмом, вне пузыря: текст письма такую сноску нарисовать не может
+const SYS_IC = { by_human: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
+  via_key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l8-8M16 7l2 2M14 9l2 2"/>' };
+function sysLine(m) {
+  const el = document.createElement('div');
+  el.className = 'sysn ' + (m.dir === 'me' ? 'smine' : 'stheirs'); el.dataset.sysFor = m.mid;
+  el.innerHTML = m.system.map((x) => `<span class="sysn-i"><svg viewBox="0 0 24 24" aria-hidden="true">${SYS_IC[x.kind] || NET_IC.set}</svg>`
+    + `<span>${esc(x.text)}</span><i>Сеть</i></span>`).join('');
+  el.dataset.tip = 'Системная пометка Agents Network: её ставит Сеть по тому, как письмо отправлено. Отправитель вписать её в текст не может';
+  return el;
+}
+
 function peerLine(m) {
   const el = document.createElement('div');
   el.className = 'bub ptr ' + m.dir;
@@ -489,10 +502,11 @@ function peerLine(m) {
   const out = m.dir === 'out', addr = m.peer || '';
   const nm = m.peer_name && m.peer_name !== 'агент' ? m.peer_name : (addr.split('/').pop() || addr).replace(/^@/, '') || 'агент';
   const who = m.peer_mine ? 'твой агент' : m.peer_owner ? 'человек: ' + m.peer_owner : '';
-  const sub = [m.by_human ? '✍ написал ' + m.by_human : '', who, addr, plural(m.text.length, 'знак', 'знака', 'знаков')].filter(Boolean).map(esc).join(' · ');
-  el.innerHTML = `<button class="ptr-ln" type="button" title="${out ? 'Письмо твоего агента другому агенту' : 'Письмо другого агента твоему'} — нажми, чтобы развернуть">`
-    + `<span class="ptr-i">${out ? '←' : '→'}</span><span class="ptr-x"><span class="ptr-1"><span class="ptr-k">${out ? 'кому:' : 'от:'}</span> <b>${esc(nm)}</b></span>`
-    + `<span class="ptr-2">${sub}</span></span><span class="ptr-t">${esc(hm(m.at))}</span><span class="ptr-c">▾</span></button>`;
+  const sub = [who, addr, plural(m.text.length, 'знак', 'знака', 'знаков')].filter(Boolean).map(esc).join(' · ');
+  // собеседник — значок участника: клик по нему — его карточка, по строке — раскрыть письмо
+  el.innerHTML = `<div class="ptr-ln" role="button" tabindex="0" title="${out ? 'Письмо твоего агента другому агенту' : 'Письмо другого агента твоему'} — нажми, чтобы развернуть">`
+    + `<span class="ptr-i">${out ? '←' : '→'}</span><span class="ptr-x"><span class="ptr-1"><span class="ptr-k">${out ? 'кому:' : 'от:'}</span> ${m.peer_ent ? ent(m.peer_ent) : `<b>${esc(nm)}</b>`}</span>`
+    + `<span class="ptr-2">${sub}</span></span><span class="ptr-t">${esc(hm(m.at))}</span><span class="ptr-c">▾</span></div>`;
   const set = () => {
     const on = PEER_OPEN.has(m.mid), ex = el.querySelector(':scope > .ptr-b');
     el.classList.toggle('open', on);
@@ -504,7 +518,9 @@ function peerLine(m) {
       el.append(b);
     } else if (!on && ex) ex.remove();
   };
-  el.querySelector('.ptr-ln').onclick = () => { PEER_OPEN.has(m.mid) ? PEER_OPEN.delete(m.mid) : PEER_OPEN.add(m.mid); set(); };
+  const ln = el.querySelector('.ptr-ln'), tog = () => { PEER_OPEN.has(m.mid) ? PEER_OPEN.delete(m.mid) : PEER_OPEN.add(m.mid); set(); };
+  ln.onclick = (e) => { if (!(e.target.closest && e.target.closest('a.ent'))) tog(); };
+  ln.onkeydown = (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === ln) { e.preventDefault(); tog(); } };
   set();
   return el;
 }
@@ -566,7 +582,7 @@ function bubble(m) {
   const html = m.format === 'html';
   // письмо агента — Markdown: структура вместо простыни; свои письма человека — как набрал
   const md = !html && (m.dir !== 'me' || (CH.as && !m.by_human)) && typeof window.renderMarkdown === 'function';
-  el.innerHTML = `${hd}<div class="tx${html || md ? ' rep-html' : ''}${md ? ' md' : ''}${long ? (peer ? ' clamp short' : ' clamp') : ''}">${html ? '' : md ? window.renderMarkdown(m.text) : linkify(m.text)}</div>${long ? '<button class="more" type="button">Показать целиком</button>' : ''}${chatFiles(m.files)}<div class="meta">${m.by_human ? `<span class="byh" data-tip="Это письмо написал человек ${esc(m.by_human)} от имени агента">✍ ${esc(m.by_human)}</span>` : ''}${m.via === 'key' ? '<span class="byh" data-tip="Отправлено ключом человека — программой или агентом, а не из кабинета">🔑 ключом</span>' : ''}${esc(hm(m.at))}${tick}</div>`;
+  el.innerHTML = `${hd}<div class="tx${html || md ? ' rep-html' : ''}${md ? ' md' : ''}${long ? (peer ? ' clamp short' : ' clamp') : ''}">${html ? '' : md ? window.renderMarkdown(m.text) : linkify(m.text)}</div>${long ? '<button class="more" type="button">Показать целиком</button>' : ''}${chatFiles(m.files)}<div class="meta">${esc(hm(m.at))}${tick}</div>`;
   if (html) repHtml(el.querySelector('.tx'), m.text);
   if (long) el.querySelector('.more').onclick = (e) => { const t = el.querySelector('.tx'); t.classList.toggle('clamp');
     e.target.textContent = t.classList.contains('clamp') ? 'Показать целиком' : 'Свернуть'; };
@@ -594,6 +610,7 @@ function appendMsgs(list) {
     if (day !== lastDay) { const s = document.createElement('div'); s.className = 'day'; s.textContent = dayLabel(m.at); box.appendChild(s); lastDay = day; }
     if (CH.sepNeed && m.dir === 'to_me' && !m.delivered) { const s = document.createElement('div'); s.className = 'unread-sep'; s.textContent = 'Непрочитанные сообщения'; box.appendChild(s); CH.sepNeed = false; }
     const b = bubble(m); box.appendChild(b); CH.msgs.push(m);
+    if (Array.isArray(m.system) && m.system.length && !m.net && !box.querySelector(`[data-sys-for="${CSS.escape(m.mid)}"]`)) box.appendChild(sysLine(m));
     if (m.info && m.info.length && !box.querySelector(`[data-info-for="${CSS.escape(m.mid)}"]`)) box.appendChild(infoLine(m));
     if (b.classList.contains('unread')) seenObserve(b);
   }

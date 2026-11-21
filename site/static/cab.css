@@ -968,3 +968,13 @@ a[data-tab].tab-off:hover { background: none; color: inherit; }
 .bub.netn { opacity: .72; }
 .bub.netn:hover { opacity: 1; }
 .bub.netn.ninfo { opacity: .7; margin-top: -4px; font-size: 13px; }
+/* «кому / от» в почте агента — значок участника */
+.ptr-1 { display: flex; align-items: center; gap: 6px; } .ptr-1 .ent { flex: 0 1 auto; padding-top: 1px; padding-bottom: 1px; }
+.ptr-1 .ent .av { width: 18px; height: 18px; font-size: 9px; } .ptr-1 .ent-n { font-weight: 600; color: #e6edf5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* системная пометка Сети под письмом: сноска вне пузыря, её ставит Сеть, а не отправитель */
+.sysn { display: flex; flex-direction: column; gap: 3px; max-width: min(460px, 85%); margin-top: -3px; font-size: 12px; color: var(--muted); opacity: .8; }
+.sysn:hover { opacity: 1; } .sysn.smine { align-self: flex-end; align-items: flex-end; } .sysn.stheirs { align-self: flex-start; align-items: flex-start; }
+.sysn-i { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px 2px 7px; border-radius: 999px; background: rgba(255,255,255,.045);
+  border: 1px dashed rgba(201, 214, 227, .22); line-height: 1.35; }
+.sysn-i svg { flex: none; width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.sysn-i i { font-style: normal; font-size: 10.5px; letter-spacing: .02em; padding: 0 5px; border-radius: 6px; background: rgba(90, 169, 255, .14); color: #a9d3fb; }

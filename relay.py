@@ -50,6 +50,9 @@ def db_open(path):
         c.execute("ALTER TABLE msgs ADD COLUMN thread TEXT")
     if "by" not in mcols:           # человек, написавший от имени агента: видно всем участникам переписки
         c.execute("ALTER TABLE msgs ADD COLUMN by TEXT")
+    # приписка «написал не сам …» жила в тексте письма — теперь системная пометка из msgs.by: из текста убрать
+    for mid_, t_ in c.execute("SELECT mid, text FROM msgs WHERE by IS NOT NULL AND text LIKE '%[написал не сам %'").fetchall():
+        c.execute("UPDATE msgs SET text=? WHERE mid=?", (BY_NOTE_RE.sub("", t_), mid_))
     if "via" not in mcols:          # 'key' — письмо человека отправлено ключом: писал не обязательно он сам, мог его агент
         c.execute("ALTER TABLE msgs ADD COLUMN via TEXT")
     if "seen" not in cols:          # когда агент последний раз забирал почту — «в сети» в кабинете
@@ -365,12 +368,24 @@ class _Clean(HTMLParser):
             self.out.append(html.escape(data, quote=False))
 
 
+def sys_notes(bn, via=None):
+    """Системные пометки Сети к письму: отдельным полем `system`, а не текстом письма — их пишет Сеть, отправитель
+    подделать не может (в тексте их нет вовсе; воркер выводит их агенту вне границ письма, кабинет — сноской под письмом)."""
+    s = []
+    if bn:
+        s.append({"kind": "by_human", "who": "@" + bn, "text": f"Написал не сам агент, а его человек @{bn} — от имени агента"})
+    if via == "key":
+        s.append({"kind": "via_key", "text": "Отправлено ключом человека — программой или агентом, а не из кабинета"})
+    return {"system": s} if s else {}
+
+
 def clean_html(t):
     c = _Clean()
     c.feed(t); c.close()
     return "".join(c.out) + "".join(f"</{x}>" for x in reversed(c.open))
 
 
+BY_NOTE_RE = re.compile(r"(?:\n\n|<p>)\[написал не сам [^\]\n]*\](?:</p>)?\s*$")
 THREAD_RE = re.compile(r"^[\w.-]{1,40}$")
 
 
@@ -1486,8 +1501,7 @@ class Relay:
             mid = "m-" + secrets.token_hex(6)
             now = time.time()
             text = clean_html(text) if fmt(q) else text
-            if by:      # приписка в самом тексте: видно и в логе, и любому клиенту — ради субординации, не антифрода
-                text += self.by_note(src, by, bool(fmt(q)))
+            # «написал человек от имени агента» — не текстом, а полем msgs.by → системная пометка `sys` на выдаче
             self.db.execute("INSERT INTO msgs (mid, src, dst, text, reply_to, at, fmt, files, thread, by) VALUES (?,?,?,?,?,?,?,?,?,?)",
                             (mid, src, dst, text, q.get("reply_to"), now, fmt(q), fj, th, by))
             # жду ответа: его письма будят меня — если ему можно мне писать (ступень одна)
@@ -1497,12 +1511,6 @@ class Relay:
             WAKE.notify_all()
         return {"ok": True, "mid": mid, "how": how, **({"thread": th} if th else {}), **({"wakes_me": wk} if q.get("wake") else {}),
                 **({"info": info} if info else {})}
-
-    def by_note(self, src, by, html=False):
-        """Приписка «написал не сам агент, а его человек» — в конце текста письма. Под LOCK."""
-        n = (self.db.execute("SELECT nick FROM owners WHERE id=?", (by,)).fetchone() or [by])[0]
-        t = f"[написал не сам {self.addr_of(src)}, а его человек @{n} (владелец) — от имени агента]"
-        return f"<p>{t}</p>" if html else "\n\n" + t
 
     def inbox(self, q):
         """Почта агента долгим опросом. `wake: true` (так ждёт воркер) — только письма, которые будят агента по его
@@ -1547,7 +1555,7 @@ class Relay:
                           "at": r[5], "from_nick": r[6], "from_owner": r[7],
                           **({"from_human": True} if r[8] and r[8] == mine else {"from_person": True} if r[8] else {}),
                           **({"format": r[9]} if r[9] else {}), **({"files": self.files_out(r[10])} if r[10] else {}),
-                          **({"thread": r[11]} if r[11] else {}), **({"by_human": "@" + r[12]} if r[12] else {}),
+                          **({"thread": r[11]} if r[11] else {}), **({"by_human": "@" + r[12]} if r[12] else {}), **sys_notes(r[12], r[14]),
                           **({"kind": r[13]} if r[13] else {}), **({"woke": r[15]} if only_wake else {}),
                           **({"via": "key"} if r[14] == "key" else {}),
                           **({"chat": ctxs.pop(r[1])} if r[1] in ctxs else {})} for r in rows],
@@ -1575,7 +1583,7 @@ class Relay:
             out = [{"mid": mid, "dir": "out" if src == me else "in", "from": src, "to": dst, "peer": self.addr_of(dst if src == me else src),
                     "peer_human": hn.setdefault(dst if src == me else src, self.human_nick(dst if src == me else src)),
                     "text": t, "reply_to": r, "at": at, **({"read": True} if ak else {}), **({"format": f} if f else {}),
-                    **({"files": self.files_out(fl)} if fl else {}), **({"thread": th} if th else {}), **({"by_human": "@" + bn} if bn else {}),
+                    **({"files": self.files_out(fl)} if fl else {}), **({"thread": th} if th else {}), **({"by_human": "@" + bn} if bn else {}), **sys_notes(bn),
                     **({"info": json.loads(inf)} if inf and src == me else {})}
                    for mid, src, dst, t, r, at, ak, f, fl, th, bn, inf in rows]
         return {"msgs": out, **({"next": out[-1]["at"]} if len(out) == lim else {}),
@@ -1648,7 +1656,7 @@ class Relay:
             return {"mid": mid, "dir": "out" if src == me else "in", "text": t, "at": at,
                     **({"new": True} if src != me and not ak else {}), **({"format": f} if f else {}),
                     **({"files": self.files_out(fl)} if fl else {}), **({"thread": thr} if thr else {}),
-                    **({"by_human": "@" + bn} if bn else {}), **({"kind": kd} if kd else {}),
+                    **({"by_human": "@" + bn} if bn else {}), **sys_notes(bn), **({"kind": kd} if kd else {}),
                     **({"tools": tools[mid]} if mid in tools else {})}
         out = {"peer": self.addr_of(peer), "id": peer, "type": self.peer_kind(me, peer), "human": self.human_nick(peer),
                **({"thread": th} if th else {}),
@@ -1962,9 +1970,12 @@ class Relay:
 
         def addr(i, n, nm, o):
             return (f"@{o}/{n}" if o and n else f"@{n}" if n else i, nm)
-        msgs = []
+        msgs, ents = [], {}
         for mid, src, dst, text, rto, at, acked, sn, snm, so, dn, dnm, do, fm, sow, dow, fl, bn, via, kd, inf in reversed(rows):
             d = self._dir(src, dst, aid, owner)
+            pid = dst if d == "out" else src if d == "in" else None     # собеседник объектом — значок «кому / от»
+            if pid and pid not in ents:
+                ents[pid] = self.ent(pid)
             peer = addr(dst, dn, dnm, do) if d == "out" else addr(src, sn, snm, so) if d == "in" else (None, None)
             if peer[0] and str(peer[0]).startswith("hu-"):     # чужой человек в почте агента — его @ник
                 with LOCK:
@@ -1972,10 +1983,10 @@ class Relay:
             # чей агент собеседник — для плашки переписки в чате: человек, имя агента, адрес
             po, pw = (do, dow) if d == "out" else (so, sow) if d == "in" else (None, None)
             msgs.append({"mid": mid, "dir": d, "text": text, "reply_to": rto, "at": at, "delivered": bool(acked),
-                         "peer": peer[0], "peer_name": peer[1],
+                         "peer": peer[0], "peer_name": peer[1], **({"peer_ent": ents[pid]} if pid else {}),
                          **({"peer_owner": po, "peer_mine": pw == owner} if d in ("out", "in") else {}),
                          **({"format": fm} if fm else {}), **({"files": self.files_out(fl)} if fl else {}),
-                         **({"by_human": "@" + bn} if bn else {}), **({"via": "key"} if via == "key" else {}),
+                         **({"by_human": "@" + bn} if bn else {}), **({"via": "key"} if via == "key" else {}), **sys_notes(bn, via),
                          **({"net": kd} if kd in NET_KINDS else {}), **({"info": json.loads(inf)} if inf and d == "out" else {})})
         return {"agent": aid, "msgs": msgs}
 
@@ -1988,7 +1999,7 @@ class Relay:
         return {"agent": aid, "peer": True, "msgs": [{"mid": m, "dir": "me" if s_ == owner else "to_me", "text": t, "reply_to": r, "at": at,
                                                       "delivered": bool(ak), **({"format": f} if f else {}),
                                                       **({"files": self.files_out(fl)} if fl else {}), **({"by_human": "@" + bn} if bn else {}),
-                                                      **({"via": "key"} if via == "key" else {}), **({"net": kd} if kd in NET_KINDS else {}),
+                                                      **({"via": "key"} if via == "key" else {}), **sys_notes(bn, via), **({"net": kd} if kd in NET_KINDS else {}),
                                                       **({"info": json.loads(inf)} if inf and s_ == owner else {})}
                                                      for m, s_, t, r, at, ak, f, fl, bn, via, kd, inf in reversed(rows)]}
 
