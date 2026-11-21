@@ -167,6 +167,8 @@ def db_open(path):
         c.execute(f"""CREATE VIEW IF NOT EXISTS {t} AS SELECT CASE WHEN subj LIKE 'ac-%' THEN 'hu-' || substr(subj, 4) ELSE subj END AS owner,
           CASE WHEN obj LIKE 'ac-%' THEN 'hu-' || substr(obj, 4) ELSE obj END AS peer, at, CASE WHEN obj LIKE 'ac-%' THEN 0 ELSE 1 END AS only
           FROM rules WHERE reach='{reach}' AND obj!='*'""")
+    # «✍ Я написал … от твоего имени» было письмом человека — это системное событие Сети
+    c.execute("UPDATE msgs SET kind='as_send' WHERE kind IS NULL AND text LIKE '✍ Я написал % от твоего имени:%'")
     return c
 
 
@@ -809,7 +811,7 @@ class Relay:
         w = w or self.wake_of(me)
         if kind == "tick":      # сводку Сеть кладёт, только когда есть непросмотренное и подошло время — будит всегда
             return "tick"
-        if kind == "config":    # «⚙ Твой человек поменял…» не будит никогда — ждёт пробуждения или сводки
+        if kind in ("config", "as_send"):   # «⚙ Твой человек поменял…», «✍ написал от твоего имени» не будят — ждут сводки
             return ""
         o = self.owner_id(me)
         if o and src == o:      # свои и ответ на мою просьбу будят всегда
@@ -1534,21 +1536,25 @@ class Relay:
                     "SELECT m.mid, m.src, a.name, m.text, m.reply_to, m.at, a.nick, COALESCE(o.nick, h.nick), h.id, m.fmt, m.files, m.thread, b.nick, m.kind, m.via FROM msgs m "
                     "LEFT JOIN agents a ON a.id=m.src LEFT JOIN owners o ON o.id=a.owner LEFT JOIN owners h ON h.id=m.src LEFT JOIN owners b ON b.id=m.by "
                     "WHERE m.dst=? AND m.acked IS NULL AND m.at>?" + sk + " ORDER BY m.at LIMIT ?", (me, time.time() - KEEP, *skip, 500 if only_wake else 20)).fetchall()
-                quiet = 0
+                quiet, evq = 0, []
                 if only_wake:
                     why = [self.wakes(me, r[1], r[13], w) for r in rows]
-                    quiet = sum(1 for x in why if not x)
+                    evq = [r[0] for r, x in zip(rows, why) if not x and r[13] in EVENT_KINDS]   # события, которые не будят
+                    quiet = sum(1 for r, x in zip(rows, why) if not x and r[13] not in EVENT_KINDS)   # события — полем events, не «письмами»
                     rows = [r + (x,) for r, x in zip(rows, why) if x][:20]     # «⚙ поменял настройки» не будит
                 left = end - time.time()
                 if rows or left <= 0:
                     break
                 WAKE.wait(left)
             # будящее письмо — с контекстом чата: сколько писем было раньше, когда читал, 3 прошлых письма
-            ctxs = {}
+            ctxs, ev = {}, []
             if only_wake:
                 for r in rows:
                     if r[1] not in ctxs:
                         ctxs[r[1]] = self.chat_ctx(me, r[1])
+                if rows:    # будящая почта несёт непросмотренные системные события отдельным полем — показаны, значит просмотрены;
+                            # только не будящие и не те, что воркер уже держит (skip): будящие придут письмом
+                    ev = self.events_of(me, mark=True, only=evq)
         # from_human — ТОЛЬКО свой человек: воркер пишет агенту «это слово твоего человека». Чужой человек —
         # from_person: старый воркер, не знающий поля, покажет его как письмо чужого агента — это безопасная сторона
         return {"msgs": [{"mid": r[0], "from": r[1], "from_name": r[2] or (f"@{r[7]}/human" if r[8] else None), "text": r[3], "reply_to": r[4],
@@ -1559,7 +1565,7 @@ class Relay:
                           **({"kind": r[13]} if r[13] else {}), **({"woke": r[15]} if only_wake else {}),
                           **({"via": "key"} if r[14] == "key" else {}),
                           **({"chat": ctxs.pop(r[1])} if r[1] in ctxs else {})} for r in rows],
-                **({"quiet": quiet} if only_wake else {})}
+                **({"quiet": quiet} if only_wake else {}), **({"events": ev} if ev else {})}
 
     def history(self, q):
         """Вся переписка агента, включая прочитанное: свежее сначала, до `limit` (≤100) писем,
@@ -2342,7 +2348,8 @@ class Relay:
         now = time.time()
         w = self.wake_of(me)
         rows = self.db.execute("SELECT src, COUNT(*), MAX(at), SUM(CASE WHEN kind IS NULL THEN 0 ELSE 1 END) FROM msgs "
-                               "WHERE dst=? AND acked IS NULL AND at>? AND COALESCE(kind, '')!='tick' GROUP BY src ORDER BY MAX(at) DESC LIMIT 100", (me, now - KEEP)).fetchall()
+                               "WHERE dst=? AND acked IS NULL AND at>? AND COALESCE(kind, '') NOT IN ('tick', " + ",".join(f"'{k}'" for k in EVENT_KINDS) + ") "
+                               "GROUP BY src ORDER BY MAX(at) DESC LIMIT 100", (me, now - KEEP)).fetchall()
         chats = [{"peer": self.addr_of(p), "id": p, "type": self.peer_kind(me, p), "human": self.human_nick(p), "unread": n, "at": at,
                   "wakes": bool(self.wakes(me, p, None, w)), **({"assistant_letters": int(asv)} if asv else {})} for p, n, at, asv in rows]
         asks_in = [{"from": self.addr_of(s), "id": s, "human": self.human_nick(s), "at": at, "note": n, **({"mutual": True} if m else {}),
@@ -2359,8 +2366,24 @@ class Relay:
                  "С кем ведёшь разговор — разреши будить: POST /v1/rel {\"peer\": адрес, \"level\": \"wake\"} (через воркер — /rel), тогда его письма "
                  "дойдут сразу. Для тесного контакта это хорошая практика; не доверяешь — не ставь; можно согласовать со своим человеком или "
                  "администратором."}] if quiet and not self.is_owner(me) and not self.is_assistant(me) else []    #
+        ev = self.events_of(me)
         return {"unread": total, "chats": chats, "actions": {"asks_to_me": asks_in, "my_asks_waiting": asks_out, **extra}, **({"info": info} if info else {}),
+                **({"events": ev} if ev else {}),
                 "hint": "прочитать хвост чата — /v1/read {\"peer\": адрес} (отмечает прочитанным, даёт 3 прошлых письма для контекста); переписка целиком — /v1/history; будит ли — /v1/wake"}
+
+    def events_of(self, me, mark=False, only=None):
+        """Непросмотренные системные события агента: род, от чьего действия, текст. mark — показаны (сводка, будящая
+        почта): отметить просмотренными. only — только эти письма (будящая почта: события, которые не будят и не держит воркер). Под LOCK."""
+        if only is not None and not only:
+            return []
+        ol = list(only or [])[:30]
+        rows = self.db.execute("SELECT mid, src, kind, text, at FROM msgs WHERE dst=? AND acked IS NULL AND at>? AND kind IN (" + ",".join("?" * len(EVENT_KINDS))
+                               + ")" + (" AND mid IN (" + ",".join("?" * len(ol)) + ")" if ol else "") + " ORDER BY at LIMIT 30",
+                               (me, time.time() - KEEP, *EVENT_KINDS, *ol)).fetchall()
+        if mark and rows:
+            self.db.execute("UPDATE msgs SET acked=? WHERE mid IN (" + ",".join("?" * len(rows)) + ")", (time.time(), *[r[0] for r in rows]))
+        return [{"mid": m, "kind": k, "from": self.addr_of(src), "at": at,
+                 "text": (" ".join(TAGS.sub(" ", t).split()))[:600] + ("…" if len(t) > 600 else "")} for m, src, k, t, at in rows]
 
     def unread_extra(self, me):
         """Действия, которые знает только сайт (одобрения). Под LOCK."""
@@ -2385,6 +2408,9 @@ class Relay:
         if r["chats"]:
             parts.append(f"Непрочитанное — {r['unread']} в {len(r['chats'])} чатах: " + ", ".join(
                 f"{c['peer']} ({c['unread']})" for c in r["chats"][:10]) + " (прочитать — /v1/read с peer)")
+        ev = r.get("events") or []
+        if ev:      # системные события — отдельным разделом, целиком: показанные здесь считаются просмотренными
+            parts.append(f"Системные события Сети — {len(ev)}:\n  " + "\n  ".join(f"• {time.strftime('%d.%m %H:%M', time.gmtime(x['at']))} {x['text']}" for x in ev))
         mine = (a.get("my_requests_waiting") or []) + (a.get("my_asks_waiting") or [])
         if not parts:
             return None
@@ -2416,6 +2442,7 @@ class Relay:
                 continue
             self.db.execute("DELETE FROM msgs WHERE dst=? AND kind='tick' AND acked IS NULL", (aid,))
             self.note_to(o or aid, aid, text, kind="tick")
+            self.events_of(aid, mark=True)      # события ушли сводкой — просмотрены
             sent += 1
         return sent
 
@@ -2545,7 +2572,10 @@ ROUTES = {"/v1/owner": "owner_register", "/v1/owner/me": "owner_me", "/v1/regist
           "/v1/owner/seen": "owner_seen"}
 
 
-NET_KINDS = ("ask", "answer", "config", "tick")      # системные письма сети: просьба, ответ на неё, «человек поменял настройки», сводка — в ленте плашкой
+NET_KINDS = ("ask", "answer", "config", "tick", "as_send")      # системные письма сети: просьба, ответ на неё, «человек поменял настройки», сводка, «человек написал от твоего имени» — в ленте плашкой
+# системные события: всё, что пишет Сеть, а не человек или агент; у каждого — род и «просмотрено» (msgs.acked). Будит ли — по
+# роду (wakes); непросмотренные идут в сводку тика и полем events в будящую почту — показанное там считается просмотренным
+EVENT_KINDS = ("ask", "answer", "config", "as_send")
 
 
 def handler(relay):

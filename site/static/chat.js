@@ -275,6 +275,7 @@ function peerExtra(a) {
   return { id: a.id, peer: true, assistant: !!(a.assistant || a.kind === 'assistant'), addr: a.address, nick: a.nick, name: a.name, about: a.about, av: a.av, seen: a.seen, unread: 0, last: null };
 }
 window.peerChat = function (a) {
+  if (typeof isSelf === 'function' && isSelf(a.id)) { hint('Себе писать нельзя: это ты сам.'); return; }    //
   CH.extra = peerExtra(a);
   if (location.hash === '#chats/' + encodeURIComponent(a.id)) fromHash(); else location.hash = '#chats/' + encodeURIComponent(a.id);
 };
@@ -329,6 +330,7 @@ async function openChat(id) {
     const r = await resolveChat(id); if (!r) { closeChat(); return; }
     if (r !== id) { id = r; if (!CH.list.some((c) => c.id === id)) await loadChats(); }
   }
+  if (typeof isSelf === 'function' && isSelf(id)) { hint('Себе писать нельзя: это ты сам.'); closeChat(); return; }     // чат с собой
   if (FLT) { const c0 = CH.list.find((c) => c.id === id);      // открыл скрытый чат — включается его род, чужой — гасит «Только свои»
     if (c0) { if (CH.own && !mineOf(c0)) { if (CH.own.was) CH.flt.add('human'); CH.own = null; } CH.flt.add(kindOf(c0)); saveFlt(); } }
   else { const c0 = CH.list.find((c) => c.id === id); const sg = id === SYS || !c0 ? 'mine' : segOf(c0); if ((c0 || id === SYS) && CH.seg !== 'all') { CH.seg = sg; } }
@@ -536,9 +538,11 @@ const NET_IC = {
   admin: '<path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6z"/><path d="M9.2 12l2 2 3.8-3.8"/>',
   set: '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
   tick: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2.5h6"/>',
+  pen: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
 };
 function netKind(m, t) {
-  if (m.net === 'tick') return ['tick', 'info'];     // сводка непросмотренного по расписанию
+  if (m.net === 'tick') return ['tick', 'info'];
+  if (m.net === 'as_send') return ['pen', 'info'];   // «твой человек написал от твоего имени» — событие Сети     // сводка непросмотренного по расписанию
   const topic = /закрыл тебе письма|чёрн/.test(t) ? 'ban' : /^⏰|будить/.test(t) ? 'wake' : /^🛡/.test(t) ? 'admin'
     : /^⚙/.test(t) ? 'set' : /Одобрено|Отклонено/.test(t) ? 'approve' : 'write';
   const res = /^(❌|⚠)|не разрешил|Отклонено|не выполнено/.test(t) ? 'no' : m.net === 'ask' ? 'wait'
