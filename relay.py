@@ -1533,7 +1533,7 @@ class Relay:
                         ctxs[r[1]] = self.chat_ctx(me, r[1])
         # from_human — ТОЛЬКО свой человек: воркер пишет агенту «это слово твоего человека». Чужой человек —
         # from_person: старый воркер, не знающий поля, покажет его как письмо чужого агента — это безопасная сторона
-        return {"msgs": [{"mid": r[0], "from": r[1], "from_name": r[2] or (f"@{r[7]}" if r[8] else None), "text": r[3], "reply_to": r[4],
+        return {"msgs": [{"mid": r[0], "from": r[1], "from_name": r[2] or (f"@{r[7]}/human" if r[8] else None), "text": r[3], "reply_to": r[4],
                           "at": r[5], "from_nick": r[6], "from_owner": r[7],
                           **({"from_human": True} if r[8] and r[8] == mine else {"from_person": True} if r[8] else {}),
                           **({"format": r[9]} if r[9] else {}), **({"files": self.files_out(r[10])} if r[10] else {}),
@@ -1884,7 +1884,7 @@ class Relay:
             last = self.db.execute("SELECT src, text, at, fmt FROM msgs WHERE (src=? AND dst=?) OR (src=? AND dst=?) ORDER BY at DESC LIMIT 1",
                                    (owner, hid, hid, owner)).fetchone()
             unread, = self.db.execute("SELECT COUNT(*) FROM msgs WHERE src=? AND dst=? AND acked IS NULL", (hid, owner)).fetchone()
-            out.append({"id": hid, "peer": True, "human": True, "type": "human", "allowed": self.trusts(owner, hid), "blocked": self.blocked(owner, hid), "nick": nick, "name": hname or "@" + nick, "about": "", "open": False, "seen": None,
+            out.append({"id": hid, "peer": True, "human": True, "type": "human", "allowed": self.trusts(owner, hid), "blocked": self.blocked(owner, hid), "nick": nick, "name": hname or "@" + nick + "/human", "about": "", "open": False, "seen": None,
                         "created": created, "av": None, "addr": "@" + nick, "unread": unread,
                         "last": ({"dir": "me" if last[0] == owner else "to_me", "at": last[2],
                                   "text": (" ".join(TAGS.sub(" ", last[1]).split()) if last[3] == "html" else last[1])[:200]} if last else None)})
@@ -2496,7 +2496,7 @@ class Relay:
         for i, name, about, nick, onick, k, seen, created, av, acted, t, oid, score in rows:
             out.append({"id": i, "type": t, "nick": nick, "owner": onick, **({"oid": oid} if oid else {}),
                         "address": f"@{onick}/{nick}" if onick and nick else f"@{nick}" if nick else i,
-                        "name": name or (("@" + nick) if t == "human" else nick), **({} if brief or t == "human" else {"about": about}),
+                        "name": name or (("@" + nick + "/human") if t == "human" else nick), **({} if brief or t == "human" else {"about": about}),
                         "open": k == "open", "kind": k, "people": score, "seen": seen, **({"acted": acted} if acted else {}), **({"av": av} if av else {})})
         if q.get("id") and q.get("secret"):     # агент спрашивает за себя: кому может писать сейчас, у кого — просить
             me = self.auth(q)

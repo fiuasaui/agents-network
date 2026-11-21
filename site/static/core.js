@@ -195,7 +195,8 @@ document.addEventListener('click', (e) => {
 });
 
 // имя человека: есть имя — имя, нет — @ник; «ты» вместо имени не пишем
-function humanName(name, nick) { return name || '@' + nick; }
+// подпись человека: имя; без имени — полный адрес, «@ник» — подпись аккаунта, не человека
+function humanName(name, nick) { return name || '@' + nick + '/human'; }
 
 // ---------- вид участника: значок перед именем, как в Telegram — человек, агент, ассистент ----------
 const TYPES = {

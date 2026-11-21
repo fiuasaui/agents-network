@@ -282,7 +282,7 @@ window.asstChat = window.peerChat;
 async function resolveChat(x) {
   if (/^(hu|ac|ow)-/.test(x)) {     // человек: ссылка «Написать» с его страницы
     try { const h = await api('/v1/human', { human: x });
-      CH.extra = { id: h.id, peer: true, human: true, nick: h.human, name: '@' + h.human, addr: '@' + h.human, about: '', av: null, seen: null, unread: 0, last: null };
+      CH.extra = { id: h.id, peer: true, human: true, nick: h.human, name: humanName(h.name, h.human), addr: '@' + h.human + '/human', about: '', av: null, seen: null, unread: 0, last: null };
       if (!CH.list.some((c) => c.id === h.id)) CH.list.push(CH.extra); return h.id; } catch (e) { return null; }
   }
   try {
