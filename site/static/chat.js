@@ -38,11 +38,13 @@ function chatName(c) { return c.name && c.name !== 'агент' ? c.name : '@' +
 
 const ACC_EMPTY = '<li class="rows-empty">У аккаунта чатов нет: он не пишет писем. Писать — от своего имени или от агента, выбор в шапке.<br><a href="#access">Открыть «Доступ»</a></li>';
 function paintRows() {
+  if (window.foldBarPaint) foldBarPaint();      // колонка папок слева
   // список как в Telegram: без кнопок-папок; архив — строкой сверху, внутри — свой список со стрелкой назад
   const ul = $('rows'); ul.innerHTML = '';
   if (CH.acc) { ul.innerHTML = ACC_EMPTY; return; }
   const q = CH.q.toLowerCase(), arch = CH.folder === 'arch';
-  $('lttl').textContent = arch ? 'Архив' : CH.as ? 'Чаты агента' : 'Чаты'; $('lback').hidden = !arch; $('lhd').classList.toggle('arch', arch);
+  const fttl = !arch && window.foldTitle ? foldTitle() : null;     // открыта папка — её имя
+  $('lttl').textContent = arch ? 'Архив' : fttl || (CH.as ? 'Чаты агента' : 'Чаты'); $('lback').hidden = !arch; $('lhd').classList.toggle('arch', arch);
   const when_ = (c) => (c.last ? c.last.at : -1e12 + c.created);
   let rows = q ? CH.list.slice() : CH.list.filter((c) => (arch ? c.archived : !c.archived));
   rows = rows.filter((c) => !(c.peer && !c.last));      // пустой чат по «Написать» в списке не виден до первого письма
@@ -66,11 +68,15 @@ function paintRows() {
   if (!arch && (FLT ? true : CH.seg === 'mine' || CH.seg === 'all') && CH.hasSys && (!q || 'система'.includes(q))) {
     const sm = CH.sys.msgs[CH.sys.msgs.length - 1]; rows.push({ id: SYS, sys: true, pinned: CH.sysPin, last: sm ? { at: sm.at } : null, created: 0 });
   }
+  if (fttl && !q) {      // папка: её участники, и архивные тоже; фильтр рода и раздел — как во «Всех»
+    const sysR = CH.hasSys ? rows.find((c) => c.id === SYS) || (() => { const sm = CH.sys.msgs[CH.sys.msgs.length - 1]; return { id: SYS, sys: true, pinned: CH.sysPin, last: sm ? { at: sm.at } : null, created: 0 }; })() : null;
+    rows = foldRows(rows, [...CH.list.filter((c) => !(c.peer && !c.last) && (FLT ? inSeg(c) : true)), ...(sysR ? [sysR] : [])]);
+  }
   rows.sort((a, b) => (b.pinned || 0) - (a.pinned || 0) || when_(b) - when_(a));   // закреплённые сверху (последний закреплённый — первым), без писем — внизу
   const un = CH.list.filter((c) => !c.archived).reduce((s, c) => s + c.unread, 0);
   $('tb-unread').hidden = !un; $('tb-unread').textContent = un;
   const archived = CH.as ? [] : CH.list.filter((c) => c.archived && inSeg(c)).sort((a, b) => when_(b) - when_(a));
-  if (!arch && !q && archived.length) {          // строка «Архив»: имена по свежести, у кого непрочитанное — белым
+  if (!arch && !q && !fttl && archived.length) {          // строка «Архив»: имена по свежести, у кого непрочитанное — белым
     const li = document.createElement('li'); li.className = 'row arch-row'; li.tabIndex = 0; li.setAttribute('role', 'button');
     const n = archived.filter((c) => c.unread).length;
     const names = archived.slice(0, 4).map((c) => `<span class="${c.unread ? 'pvu' : ''}">${esc(chatName(c))}</span>`).join(', ') + (archived.length > 4 ? ' и ещё ' + (archived.length - 4) : '');
@@ -935,6 +941,10 @@ function chatMenu(c, x, y) {
   const m = document.createElement('div'); m.className = 'cmenu'; m.setAttribute('role', 'menu');
   const items = [[c.pinned ? 'Открепить' : 'Закрепить', () => pinChat(c, !c.pinned)], ...(c.id === SYS ? [] : [[c.archived ? 'Вернуть из архива' : 'В архив', () => archiveChat(c, !c.archived)]]), ['Открыть', () => openChat(c.id)],
     ...(c.peer && !CH.as ? [['Удалить чат', () => deleteChat(c), 'bad']] : [])];
+  if (window.fMenu) {     // папки: «Добавить в папку ›», «Убрать из «…»» — меню с подменю из folders.js
+    m.remove(); const fi = window.foldMenuItems ? foldMenuItems(c) : [];
+    fMenu(x, y, [items[0], ...(items[1] && items[1][0] !== 'Открыть' ? [items[1]] : []), ...fi, null, ...items.filter((it) => it[0] === 'Открыть' || it[2] === 'bad')]); return;
+  }
   for (const [t, fn, cl] of items) { const b = document.createElement('button'); b.type = 'button'; b.className = 'cmi' + (cl ? ' ' + cl : ''); b.setAttribute('role', 'menuitem'); b.textContent = t;
     b.onclick = () => { close(); fn(); }; m.appendChild(b); }
   onTop(m); const R = m.getBoundingClientRect();
