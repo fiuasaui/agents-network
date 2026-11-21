@@ -154,6 +154,9 @@ def db_open(path):
         level_migrate(c)
     if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='id_two'").fetchone():
         id_migrate(c)
+    # имя есть у каждого участника, кроме аккаунта: человеку — его ник, агенту и ассистенту — его локальный ник
+    c.execute("UPDATE owners SET name=nick WHERE name IS NULL OR trim(name)=''")
+    c.execute("UPDATE agents SET name=nick WHERE nick IS NOT NULL AND (name IS NULL OR trim(name)='' OR name='агент')")
     for t, reach in (("trust", "write"), ("blocks", "block")):
         c.execute(f"""CREATE VIEW IF NOT EXISTS {t} AS SELECT CASE WHEN subj LIKE 'ac-%' THEN 'hu-' || substr(subj, 4) ELSE subj END AS owner,
           CASE WHEN obj LIKE 'ac-%' THEN 'hu-' || substr(obj, 4) ELSE obj END AS peer, at, CASE WHEN obj LIKE 'ac-%' THEN 0 ELSE 1 END AS only
@@ -473,7 +476,7 @@ def check_name(name, avoid=()):
         raise ValueError(f"имя — до 40 знаков, у тебя {len(n)}: коротко, как зовут; что умеешь — в описание")
     low = n.lower()
     for a in avoid:
-        if a and len(a) >= 3 and a.lower() in low:
+        if a and len(a) >= 3 and a.lower() in low and a.lower() != low:      # имя, равное нику, — умолчание
             raise ValueError(f"в имени не повторяй ник и данные владельца («{a}»): они видны рядом сами — имя короткое и "
                              "по смыслу, например «Конвертер», «Справочная»")
     return n
@@ -496,7 +499,8 @@ class Relay:
         with LOCK:
             if self.db.execute("SELECT 1 FROM owners WHERE nick=?", (n,)).fetchone():
                 raise FileExistsError(f"ник человека @{n} занят")
-            self.db.execute("INSERT INTO owners (id, secret, nick, created) VALUES (?,?,?,?)", (oid, sec, n, time.time()))
+            nm = " ".join(str(q.get("name") or "").split())[:40] or n      # имя обязательно: не дали — ник
+            self.db.execute("INSERT INTO owners (id, secret, nick, created, name) VALUES (?,?,?,?,?)", (oid, sec, n, time.time(), nm))
             # умолчание Сети одно — «По просьбе»; человеку при регистрации — своё «ко всем: Все», как будто поставил сам
             self.rule_put(oid, "*", reach=HUMAN_OWN)
         return {"owner": oid, "owner_secret": sec, "key": key_str(oid, sec), "nick": n}
@@ -555,6 +559,8 @@ class Relay:
         if self.nick_taken(aid, n):
             raise FileExistsError(f"ник @{n} уже есть у {'твоего человека' if self.db.execute('SELECT owner FROM agents WHERE id=?', (aid,)).fetchone()[0] else 'другого агента'} — свободен, например, @{self.free_nick(aid, n)}")
         self.db.execute("UPDATE agents SET nick=? WHERE id=?", (n, aid))
+        # имени нет (воркер шлёт «агент» по умолчанию) — имя по нику
+        self.db.execute("UPDATE agents SET name=? WHERE id=? AND (name IS NULL OR trim(name)='' OR name='агент')", (n, aid))
         return n
 
     def resolve(self, to):
@@ -586,7 +592,8 @@ class Relay:
         raise LookupError("нет агента " + to)
 
     def register(self, q):
-        name = str(q.get("name") or "агент")[:80]
+        name = " ".join(str(q.get("name") or "").split())
+        name = (name if name and name != "агент" else str(q.get("nick") or "").strip().lstrip("@") or "агент")[:80]   # без имени — ник
         aid = "an-" + secrets.token_hex(4)
         sec = secrets.token_urlsafe(24)
         about = check_about(q.get("about"))
@@ -2074,7 +2081,8 @@ class Relay:
                 if not r:
                     return {"id": x, "type": "gone", "name": self.GONE}
                 acc = x.startswith("ac-")
-                return {"id": x, "type": "account" if acc else "human", "name": "@" + r[0] if acc else (r[1] or "@" + r[0]),
+                # у аккаунта имени нет — «@ник»; человек без имени — полным адресом, а не как аккаунт
+                return {"id": x, "type": "account" if acc else "human", "name": "@" + r[0] if acc else (r[1] or "@" + r[0] + "/human"),
                         "address": "@" + r[0] + ("" if acc else "/human"), "page": "/u/" + r[0]}
             r = self.db.execute("SELECT a.nick, a.name, o.nick, COALESCE(a.kind, ''), a.av FROM agents a LEFT JOIN owners o ON o.id=a.owner "
                                 "WHERE a.id=?", (x,)).fetchone()
