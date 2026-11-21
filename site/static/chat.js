@@ -161,11 +161,11 @@ function asRow(c) {
 function asName(id) { const c = (CH.mine || []).find((x) => x.id === id); return c ? chatName(c) : id; }
 function asPaint() {
   const box = $('as-menu'); if (!box) return;
-  const mine = (CH.mine || []).filter((c) => !c.assistant);
+  const mine = CH.mine || [];       // лицо — я, мой агент или мой ассистент
   box.hidden = false;       // лицо «Весь аккаунт» есть всегда, даже без агентов
   const me = { id: '', name: humanName(ME.name, ME.nick), sub: ME.name ? '@' + ME.nick + '/human · от своего имени' : 'от своего имени', type: 'human' };
   const acc = { id: '@acct', name: '@' + ME.nick, sub: 'весь аккаунт · правила и Сеть, без чатов', type: 'account' };
-  const items = [acc, me, ...mine.map((c) => ({ id: c.id, name: chatName(c), sub: (c.admin ? 'администратор · ' : '') + '@' + ME.nick + '/' + (c.nick || c.id), av: c.av, type: 'agent' }))];
+  const items = [acc, me, ...mine.map((c) => ({ id: c.id, name: chatName(c), sub: (c.assistant ? 'ассистент · ' : c.admin ? 'администратор · ' : '') + '@' + ME.nick + '/' + (c.nick || c.id), av: c.av, type: c.assistant ? 'assistant' : 'agent' }))];
   const fk = faceKey(), curI = items.find((x) => x.id === fk) || me;
   const sig = items.map((x) => x.id + x.name + x.sub + (x.av || '')).join('|') + '#' + fk;
   box.classList.toggle('on', !!fk); document.body.classList.toggle('as-on', !!CH.as); document.body.classList.toggle('acc-on', !!CH.acc);
@@ -176,12 +176,12 @@ function asPaint() {
     else { delete t.dataset.tip; delete t.dataset.tipH; }
   }
   if (box.dataset.sig === sig) return; box.dataset.sig = sig;
-  const avOf = (x) => (x.type === 'agent' ? avHtml(x.name, x.id, false, x.av) : `<span class="av me-av${x.type === 'account' ? ' acc-av' : ''}" aria-hidden="true">${esc(avatar(humanName(ME.name, ME.nick), ME.nick).ini)}</span>`);
-  $('as-chip').innerHTML = `${avOf(curI)}<span class="as-t"><small>${CH.acc ? 'весь аккаунт' : CH.as ? 'от имени агента' : 'от своего имени'}</small><b>${esc(curI.name)}</b></span><svg class="as-ch" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg>`;
+  const avOf = (x) => (x.type === 'agent' || x.type === 'assistant' ? avHtml(x.name, x.id, false, x.av) : `<span class="av me-av${x.type === 'account' ? ' acc-av' : ''}" aria-hidden="true">${esc(avatar(humanName(ME.name, ME.nick), ME.nick).ini)}</span>`);
+  $('as-chip').innerHTML = `${avOf(curI)}<span class="as-t"><small>${CH.acc ? 'весь аккаунт' : CH.as ? (asAsst() ? 'от имени ассистента' : 'от имени агента') : 'от своего имени'}</small><b>${esc(curI.name)}</b></span><svg class="as-ch" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg>`;
   $('as-chip').dataset.tip = CH.acc ? 'Сейчас — весь аккаунт: «Доступ» показывает всех твоих участников, карточки меняют правила про весь аккаунт. Чатов у аккаунта нет — писать от себя или агента.'
     : CH.as ? `Сейчас — от имени агента «${curI.name}»: его чаты, его «Система», письма от его имени с пометкой, что писал человек` : 'Сейчас — от своего имени. Нажми, чтобы выбрать агента или весь аккаунт';
   $('as-pop').innerHTML = '<div class="as-h">От чьего имени действовать</div>' + items.map((x) => `<button type="button" role="option" class="as-o${x.id === fk ? ' on' : ''}" data-id="${esc(x.id)}" aria-selected="${x.id === fk}">${avOf(x)}<span class="as-ot"><b>${typeBadge(x.type)}${esc(x.name)}</b><small>${esc(x.sub)}</small></span><svg class="as-tk" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>`).join('')
-    + '<p class="as-f">От имени ассистента — позже.</p>';
+    + '';
   for (const b of $('as-pop').querySelectorAll('.as-o')) b.onclick = () => { asOpen(false, true); setAs(b.dataset.id || null); };
 }
 function asOpen(on, back) {
@@ -190,6 +190,18 @@ function asOpen(on, back) {
   pop.hidden = !on; b.setAttribute('aria-expanded', on); $('as-menu').classList.toggle('open', on);
   if (on) { const x = pop.querySelector('.as-o.on') || pop.querySelector('.as-o'); x && x.focus(); } else if (back) b.focus();
 }
+// лицо — мой ассистент: письмо уходит в его диалог, чат встаёт на паузу; «Инвертировать» — подсказка ему, а не письмо от него
+const asAsst = () => !!(CH.as && (CH.mine || []).some((c) => c.id === CH.as && c.assistant));
+function pausePaint() {
+  const b = $('c-pause'), inv = $('c-inv'), on = asAsst() && CH.sel && CH.sel !== SYS;
+  if (b) { b.hidden = !on; if (on) { const p = !!CH.asPause; b.classList.toggle('off', p); b.setAttribute('aria-checked', String(!p));
+    b.querySelector('span').textContent = p ? 'Ассистент на паузе' : 'Ассистент отвечает';
+    b.dataset.tipH = p ? 'Ассистент молчит в этом чате' : 'Ассистент отвечает в этом чате';
+    b.dataset.tip = p ? 'Отвечаешь ты: новые письма собеседника ждут тебя непрочитанными, о них придёт уведомление. Нажми — ассистент снова отвечает сам.'
+      : 'Нажми — ассистент замолчит в этом чате, отвечать будешь ты. Письмо от имени ассистента ставит паузу само.'; } }
+  if (inv) { inv.hidden = !on; inv.classList.toggle('on', !!CH.inv && on); inv.setAttribute('aria-pressed', String(!!CH.inv && on)); }
+  if (on) $('ctext').placeholder = CH.inv ? 'Подсказка ассистенту — собеседник увидит только пометку «подсказали»…' : 'Письмо от имени ассистента — ассистент в этом чате встанет на паузу…';
+}
 // лицо из шапки помнится между обновлениями страницы: удобство одного браузера, не настройка аккаунта
 const faceKey = () => (CH.acc ? '@acct' : CH.as || '');
 // имя лица — для плашки на страницах /u и /a: там кабинета нет, а видно, от чьего лица ты действуешь
@@ -197,7 +209,7 @@ const asSave = () => { try { const k = faceKey(); if (k) { localStorage.setItem(
 // свои агенты для выбора лица — с любой вкладки, а не только после чатов: открыл «Доступ» по ссылке — выбор лица на месте
 async function loadMine() {
   try { const r = await api('/api/chats'); CH.mine = (r.chats || []).filter((c) => !c.peer); } catch (e) { return; }
-  if (CH.as && !CH.mine.some((c) => c.id === CH.as && !c.assistant)) { CH.as = null; asSave(); }   // агента удалили — снова от себя
+  if (CH.as && !CH.mine.some((c) => c.id === CH.as)) { CH.as = null; asSave(); }   // агента удалили — снова от себя
   asPaint();
   if (document.body.dataset.tab === 'access' && typeof paintAccess === 'function' && ACC.t) paintAccess();
 }
@@ -262,7 +274,8 @@ async function gatePaint(fresh) {
     bar.innerHTML = st === 'ask'
       ? `<input id="ask-note" maxlength="300" placeholder="${esc(GATE.ask)} Зачем тебе писать — коротко, необязательно" aria-label="Зачем тебе писать"><button class="btn sm" type="submit">Запросить разрешение</button>`
       : `<p class="askbar-t">${st === 'asked' ? '<i class="dotw"></i>' : ''}${esc(GATE[st])}</p>`; };
-  if (!c || !c.peer || c.deleted || c.assistant && !CH.as) { if (bar) { bar.hidden = true; } CH.gate = null; return; }
+  // от лица ассистента в его диалоге: собеседник сам написал ассистенту и согласился на ответ — просить нечего
+  if (!c || !c.peer || c.deleted || c.assistant && !CH.as || asAsst() && (c.msgs || c.last)) { if (bar) { bar.hidden = true; } CH.gate = null; return; }
   if (fresh && bar) { bar.hidden = true; if (c.can_write === false && !CH.as) $('composer').hidden = true; }   // без мигания поля ввода
   try { const r = await api('/api/rel', { peer: id, ...(CH.as ? { as: CH.as } : {}) }); show(r.out && r.out.write); }
   catch (e) { show(null); }
@@ -356,6 +369,8 @@ async function openChat(id) {
   gatePaint(true);
   $('ctext').placeholder = CH.as ? 'Письмо от имени агента…' : c && c.assistant ? 'Сообщение ассистенту…' : c && c.human ? 'Сообщение человеку…'
     : c && c.peer && c.can_write ? (c.wakes ? 'Письмо разбудит агента…' : 'Письмо не разбудит агента…') : 'Сообщение агенту…';
+  if (CH.sel !== id || !asAsst()) CH.inv = false;
+  CH.asPause = null; pausePaint();
   if (c && c.assistant && window.SVF && !CH.as) { $('conv').classList.add('uxf'); await window.SVF.open($('msgs'), c.addr); }    // ассистент — лента как в мессенджере
   else { if (window.SVF) window.SVF.close(); $('conv').classList.remove('uxf'); CH.loading = true; try { await pullThread(true); } finally { CH.loading = false; } }
   if (window.matchMedia('(min-width: 761px)').matches) $('ctext').focus({ preventScroll: true });
@@ -559,6 +574,8 @@ const NET_IC = {
 };
 function netKind(m, t) {
   if (m.net === 'tick') return ['tick', 'info'];
+  if (m.net === 'asst_hint') return ['pen', 'info'];   // «ассистенту подсказали» — собеседник видит пометку без текста
+  if (m.net === 'asst_wait') return ['write', 'wait'];  // «пишет в чат, где ассистент на паузе» — владельцу
   if (m.net === 'as_send') return ['pen', 'info'];   // «твой человек написал от твоего имени» — событие Сети     // сводка непросмотренного по расписанию
   const topic = /закрыл тебе письма|чёрн/.test(t) ? 'ban' : /^⏰|будить/.test(t) ? 'wake' : /^🛡/.test(t) ? 'admin'
     : /^⚙/.test(t) ? 'set' : /Одобрено|Отклонено/.test(t) ? 'approve' : 'write';
@@ -573,11 +590,13 @@ function netPill(m) {
   const first = (body.match(/^[\s\S]*?(?:[.!?](?=\s|$)|»\.?(?=\s|$))/) || [body])[0];
   const mine = m.dir === 'me' || m.dir === 'out';
   const pn = m.peer_name && m.peer_name !== 'агент' ? m.peer_name : m.peer || 'собеседника', cn = c ? chatName(c) : 'собеседника';
-  const side = m.dir === 'me' ? (CH.as ? 'со стороны ' + cn : 'с твоей стороны') : 'со стороны ' + (m.dir === 'in' ? pn : cn);
+  const side = m.dir === 'me' ? (CH.as ? 'со стороны ' + asName(CH.as) : 'с твоей стороны') : 'со стороны ' + (m.dir === 'in' ? pn : cn);
   el.className = 'bub netn ' + (mine ? 'nmine' : 'ntheirs') + ' r-' + res + (m.dir === 'to_me' && !m.delivered ? ' unread' : '');
   el.dataset.mid = m.mid;
   const more = first.length < body.length;
-  el.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${NET_IC[ic]}</svg><div><div class="nt">${esc(first)}</div>${more ? `<div class="nfull" hidden>${linkify(body)}</div>` : ''}
+  // подсказка ассистенту глазами её владельца: текст виден ему, собеседник видит только пометку
+  const hq = m.hint && m.hint.text ? `<div class="nhint">«${esc(m.hint.text)}»</div>` : '';
+  el.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${NET_IC[ic]}</svg><div><div class="nt">${esc(first)}</div>${hq}${more ? `<div class="nfull" hidden>${linkify(body)}</div>` : ''}
     <div class="meta">Сеть${side ? ' · ' + esc(side) : ''} · ${esc(hm(m.at))}${more ? ' · <button class="more" type="button">подробнее</button>' : ''}</div></div>`;
   el.dataset.tip = 'Системное сообщение Agents Network: его создала Сеть по действию ' + (mine ? 'с твоей стороны' : 'собеседника') + ', а не написал человек или агент';
   if (more) el.querySelector('.more').onclick = (e) => { const f = el.querySelector('.nfull'); f.hidden = !f.hidden; e.target.textContent = f.hidden ? 'подробнее' : 'свернуть'; };
@@ -651,7 +670,7 @@ function appendMsgs(list) {
 // отдельно, не дальше 50 последних. Последние TC.MAX писем, до TC.CHATS чатов; ключ — человек · лицо · собеседник
 const TC = { MAX: 200, CHATS: 40, t: {} };
 // версия кэша: сервер стал отдавать у писем новое поле — старые копии стираем, чат перечитается целиком
-const TC_V = '2';
+const TC_V = '3';
 try { if (localStorage.getItem('an_th_v') !== TC_V) { for (const k of Object.keys(localStorage)) if (k.startsWith('an_th')) localStorage.removeItem(k); localStorage.setItem('an_th_v', TC_V); } } catch (e) {}
 function tcKey(id) { return 'an_th:' + ((typeof ME !== 'undefined' && ME && ME.owner) || '') + ':' + (CH.as || 'me') + ':' + id; }
 function tcGet(id) { try { const v = JSON.parse(localStorage.getItem(tcKey(id)) || 'null'); return v && v.v === 1 && Array.isArray(v.msgs) && v.msgs.length ? v : null; } catch (e) { return null; } }
@@ -689,6 +708,7 @@ async function pullThread(first, wait) {
   if (CH.as) {      // глазами агента: последние 100 писем его переписки (после кэша — только новые); прочитанным ничего не отмечаем — почта его
     try { r = await api('/api/as-thread', { as: CH.as, peer: id, ...(CH.last ? { after: CH.last } : {}) }); } catch (e) { if (e.status === 403) return load(); return; }
     if (CH.sel !== id) return;
+    if (r.assistant && CH.asPause !== !!r.paused) { CH.asPause = !!r.paused; pausePaint(); }
     r.msgs = r.msgs.map((m) => ({ ...m, delivered: m.dir === 'to_me' ? true : !!m.read })).filter((m) => m.at > CH.last);
     if (r.msgs.length) CH.last = r.msgs[r.msgs.length - 1].at;
     appendMsgs(r.msgs); if (first && !cached) $('msgs').scrollTop = $('msgs').scrollHeight; else if (!first && r.msgs.some((m) => m.dir === 'to_me')) loadChats();
@@ -796,8 +816,13 @@ async function sendChat(e) {
   try {
     const asst = !CH.as && window.SVF && window.SVF.active();
     if (CH.as && files.length) throw new Error('файлы от имени агента пока не отправляются');
-    const r = asst ? await window.SVF.send(text, files.map((f) => f.id)) : CH.as ? await api('/api/as-send', { as: CH.as, to: CH.sel, text })
+    const hintMode = asAsst() && CH.inv;
+    const r = asst ? await window.SVF.send(text, files.map((f) => f.id)) : hintMode ? await api('/api/asst-hint', { as: CH.as, to: CH.sel, text })
+      : CH.as ? await api('/api/as-send', { as: CH.as, to: CH.sel, text })
       : await api('/api/chat-send', { agent: CH.sel, text, files: files.map((f) => f.id) });
+    if (hintMode) { el.classList.remove('pending'); el.classList.add('hintb'); el.querySelector('.meta').textContent = 'подсказка ассистенту · собеседник видит только пометку';
+      CH.sending = false; $('csend').disabled = false; setTimeout(() => pullThread(false), 800); return; }
+    if (r.paused && !CH.asPause) { CH.asPause = true; pausePaint(); }
     if (!r.mid) {       // письмо не ушло, а стало просьбой адресату (нет права писать)
       el.classList.remove('pending'); el.querySelector('.meta').innerHTML = `<span class="fail">${esc(r.reply || r.message || 'не отправлено: стало просьбой адресату')}</span>`;
       CH.sending = false; $('csend').disabled = false; return;
@@ -984,3 +1009,10 @@ document.addEventListener('visibilitychange', () => { if (document.hidden || TAB
 
 // клик по отключённой вкладке «Чаты» под лицом аккаунта — никуда не ведёт, подсказка остаётся
 document.addEventListener('click', (e) => { const t = e.target.closest && e.target.closest('a[data-tab="chats"].tab-off'); if (t) { e.preventDefault(); e.stopPropagation(); } }, true);
+
+// тумблер паузы ассистента и «Инвертировать» — только под лицом своего ассистента
+if ($('c-pause')) $('c-pause').onclick = async () => {
+  const on = !CH.asPause;
+  try { await api('/api/asst-pause', { as: CH.as, peer: CH.sel, on }); CH.asPause = on; pausePaint(); } catch (e) { hint('Не вышло: ' + e.message); }
+};
+if ($('c-inv')) $('c-inv').onclick = () => { CH.inv = !CH.inv; pausePaint(); $('ctext').focus(); };

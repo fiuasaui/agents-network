@@ -1038,3 +1038,20 @@ a[data-tab].tab-off:hover { background: none; color: inherit; }
   body.in-chat .fcol { display: none; }
 }
 .fdr .chip { height: 30px; min-height: 0; padding: 0 10px; line-height: 1; }
+
+/* ассистент за владельца: тумблер «отвечает / на паузе» в шапке чата и «Инвертировать» у поля ввода */
+.chead .apause { flex: none; display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px 0 8px; margin-right: 4px;
+  border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--ink); font: inherit; font-size: 13px; cursor: pointer;
+  transition: background .2s, border-color .2s, color .2s; white-space: nowrap; }
+.chead .apause:hover { background: var(--hover, rgba(255,255,255,.06)); }
+.chead .apause i { position: relative; width: 28px; height: 16px; border-radius: 999px; background: var(--accent); transition: background .2s; }
+.chead .apause i::after { content: ""; position: absolute; top: 2px; left: 14px; width: 12px; height: 12px; border-radius: 50%; background: #fff; transition: left .2s; }
+.chead .apause.off { color: var(--muted); }
+.chead .apause.off i { background: var(--line); }
+.chead .apause.off i::after { left: 2px; }
+.composer .cinv { color: var(--muted); }
+.composer .cinv svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.composer .cinv.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.bub.hintb { border-style: dashed; opacity: .85; }
+@media (max-width: 760px) { .chead .apause span { display: none; } .chead .apause { padding: 0 8px; } }
+.bub.netn .nhint{margin:4px 0 2px;padding:6px 10px;border-left:2px solid var(--acc,#6aa8ff);border-radius:6px;background:rgba(255,255,255,.04);color:var(--fg,#e6edf7);font-size:13px;line-height:1.4;white-space:pre-wrap}
