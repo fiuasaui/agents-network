@@ -15,8 +15,12 @@
 Прецеденты — оперативные уточнения владельца, таблица precedents здесь же: блоком сразу после промпта всем
 ассистентам машины (или одному — scope), по приоритету «частный случай · обычное уточнение · частая ситуация». Пишет
 администратор или человек запросом к узлу (POST /precedent воркера или /v1/assistant/precedent через Сеть → __precedent__);
-чат, где блок поменялся, узнаёт об этом строкой на следующем ходе. Тулза узла node__admin — заявка (вопрос или готовый текст
-прецедента) в admin_calls и письмо администратору владельца через Сеть; ответ придёт в чат событием, ассистент не засыпает.
+чат, где блок поменялся, узнаёт об этом строкой на следующем ходе. Системный промпт — один объект из частей: в настройке
+"parts" — источники по порядку: text (свой текст, по умолчанию — "prompt") · precedents · file (файл на этой машине) · url (адрес в
+сети, перечитывается раз в ttl минут, отказ — последняя удачная копия и строка в журнал); по умолчанию [text, precedents].
+Тулза узла node__escalate — обёртка над «позвать в чат» с зашитым адресатом из настройки "escalate": {"on", "to": admin · owner ·
+@адрес}: заявка (вопрос или готовый текст прецедента) в admin_calls и письмо адресату через Сеть; его ответы приходят в чат
+событием, пока у него есть доступ к чату (сутки); ассистент не засыпает.
 Журнал записей — precedents.jsonl (потолок 20 МБ × 2). Только stdlib.
 """
 import json, re, sqlite3, threading, time, unicodedata, urllib.request, urllib.error
@@ -31,13 +35,19 @@ PRIORITIES = ("specific", "medium", "frequent")      # порядок в бло�
 PREC_TITLE = {"specific": "ЧАСТНЫЕ СЛУЧАИ — применяй только если ситуация совпала точно, не притягивай к похожим",
               "medium": "ОБЫЧНЫЕ УТОЧНЕНИЯ", "frequent": "ЧАСТЫЕ СИТУАЦИИ — касаются многих, держи в виду постоянно"}
 PREC_LOG_MAX = 20 * 2**20
-ADMIN_FN = "node__admin"
+ADMIN_FN = "node__escalate"
+ESC_TO = ("admin", "owner")      # адресат вызова: администратор аккаунта (нет его — владелец), владелец или агент по адресу @…
+PART_KINDS = ("text", "precedents", "file", "url")
+PART_MAX = 100_000              # знаков с одного источника — файла или адреса
+URL_TTL = 10                    # минут: адрес в сети перечитывается не чаще
+DEF_PARTS = [{"kind": "text"}, {"kind": "precedents"}]
+_URLC = {}
 ADMIN_TOOL = {"type": "function", "function": {"name": ADMIN_FN, "description": (
-    "Позвать администратора — агента владельца, который видит всю техническую сторону и может дописать тебе знание. Зови, когда "
+    "Позвать ответственного — того, кто отвечает за тебя у владельца и может дописать тебе знание. Зови, когда "
     "не знаешь ответа и его нет ни в промпте, ни в прецедентах; когда собеседник спорит с правилом или просит исключения; когда "
     "видишь, что правило противоречит жизни. question — что неясно и что нужно, коротко, с сутью ситуации; precedent — если уже "
     "понимаешь, какое общее правило помогло бы впредь, — его текст (обобщённо, без имён). Собеседнику скажи, что уточняешь, ответа "
-    "не выдумывай; ответ администратора придёт в этот чат событием. Не засыпай и продолжай отвечать на остальное."),
+    "не выдумывай; ответ придёт в этот чат событием. Не засыпай и продолжай отвечать на остальное."),
     "parameters": {"type": "object", "properties": {"question": {"type": "string", "description": "что неясно и почему — коротко"},
                                                    "precedent": {"type": "string", "description": "предлагаемое общее правило, если есть"}},
                    "required": ["question"]}}}
@@ -221,7 +231,75 @@ def cfg(home, aid):
     v["model"] = v.get("model") if isinstance(v.get("model"), dict) else dict(DEF_MODEL)
     v["window"] = max(MIN_WINDOW, int(v.get("window") or DEF_WINDOW))
     v.setdefault("autocompact", True)
+    v["parts"] = v.get("parts") if isinstance(v.get("parts"), list) and v["parts"] else [dict(x) for x in DEF_PARTS]
+    esc = v.get("escalate") if isinstance(v.get("escalate"), dict) else {}
+    v["escalate"] = {"on": bool(esc.get("on", v.get("admin_tool", True))), "to": str(esc.get("to") or "admin")}
     return v
+
+
+def parts_clean(parts):
+    """Части системного промпта: проверка формы; порядок — как дал владелец (кэш: редко меняющееся — выше)."""
+    if not isinstance(parts, list) or not 1 <= len(parts) <= 20:
+        raise ValueError("parts — список от 1 до 20 частей: text · precedents · file · url")
+    out = []
+    for x in parts:
+        x = x if isinstance(x, dict) else {}
+        k = x.get("kind")
+        if k not in PART_KINDS:
+            raise ValueError("часть промпта: kind — text (свой текст) · precedents · file (path) · url (url, ttl минут)")
+        if k == "file" and not str(x.get("path") or "").startswith("/"):
+            raise ValueError("часть file: path — абсолютный путь к файлу на машине узла")
+        if k == "url" and not re.match(r"https?://", str(x.get("url") or "")):
+            raise ValueError("часть url: url — http(s)://… (страница или эндпоинт, отдающий текст)")
+        if k == "text" and x.get("text") is not None and len(str(x["text"])) > 30_000:
+            raise ValueError("часть text — до 30 000 знаков")
+        y = {"kind": k, **{f: x[f] for f in ("text", "path", "url", "title") if x.get(f) is not None}}
+        if k == "url":
+            y["ttl"] = max(1, int(x.get("ttl") or URL_TTL))
+        out.append(y)
+    return out
+
+
+def part_text(home, x):
+    """Текст файла или адреса для промпта. Адрес — кэш на ttl минут; не ответил — последняя удачная копия и запись в журнал."""
+    if x["kind"] == "file":
+        try:
+            return Path(x["path"]).read_text(errors="replace")[:PART_MAX]
+        except OSError as e:
+            prec_log(home, {"ev": "part_error", "kind": "file", "path": x["path"], "err": str(e)[:200]})
+            return ""
+    u = x["url"]
+    got = _URLC.get(u)
+    if got and time.time() - got[0] < x.get("ttl", URL_TTL) * 60:
+        return got[1]
+    try:
+        with urllib.request.urlopen(urllib.request.Request(u, headers={"User-Agent": "agentnet-node"}), timeout=10) as r:
+            t = r.read(PART_MAX * 4).decode("utf-8", "replace")[:PART_MAX]
+        _URLC[u] = (time.time(), t)
+        return t
+    except (OSError, ValueError) as e:
+        prec_log(home, {"ev": "part_error", "kind": "url", "url": u, "err": str(e)[:200]})
+        if got:
+            _URLC[u] = (time.time() - (x.get("ttl", URL_TTL) - 1) * 60, got[1])     # повторить через минуту, пока — старая копия
+            return got[1]
+        return ""
+
+
+def build_prompt(home, conf, sect):
+    """Системный промпт ассистента из частей по порядку. Возвращает (текст, есть ли в нём прецеденты)."""
+    out, has_prec = [], False
+    for x in conf["parts"]:
+        if x["kind"] == "text":
+            t = x.get("text") if x.get("text") is not None else conf["prompt"]
+        elif x["kind"] == "precedents":
+            t, has_prec = sect, has_prec or bool(sect)
+        else:
+            t = part_text(home, x)
+            if t and x.get("title"):
+                t = f"--- {x['title']} ---\n{t}"
+        if t and t.strip():
+            out.append(t.strip())
+    return "\n\n".join(out), has_prec
 
 
 def cfg_save(home, aid, upd):
@@ -252,8 +330,18 @@ def cfg_save(home, aid, upd):
         v["window"] = w
     if upd.get("autocompact") is not None:
         v["autocompact"] = bool(upd["autocompact"])
-    if upd.get("admin_tool") is not None:      # тулза «позвать администратора» — по умолчанию есть
-        v["admin_tool"] = bool(upd["admin_tool"])
+    if upd.get("parts") is not None:
+        v["parts"] = parts_clean(upd["parts"])
+    esc = upd.get("escalate") if isinstance(upd.get("escalate"), dict) else {}
+    if upd.get("admin_tool") is not None:      # прежнее имя выключателя
+        esc = {**esc, "on": bool(upd["admin_tool"])}
+    if esc:     # тулза «позвать ответственного»: включена ли и кого зовёт
+        cur = cfg(home, aid)["escalate"] if cfg_path(home, aid).exists() else {"on": True, "to": "admin"}
+        to = str(esc.get("to") or cur["to"]).strip()
+        if to not in ESC_TO and not to.startswith("@") and not to.startswith("an-"):
+            raise ValueError("escalate.to — admin (администратор аккаунта, нет его — владелец) · owner · адрес агента @ник/агент")
+        v["escalate"] = {"on": bool(esc.get("on", cur["on"])), "to": to}
+        v.pop("admin_tool", None)
     if upd.get("summarizer") in ("cheap", "same"):      # кто пишет сводку при сжатии: дешёвая модель Сети или модель ассистента
         v["summarizer"] = upd["summarizer"]
     f = cfg_path(home, aid)
@@ -267,7 +355,7 @@ def public_cfg(v):
     if m.pop("key", None):
         m["key_set"] = True
     return {"prompt": v["prompt"], "model": m, "window": v["window"], "autocompact": v["autocompact"], "summarizer": v.get("summarizer") or "cheap",
-            "admin_tool": v.get("admin_tool", True)}
+            "parts": v.get("parts") or DEF_PARTS, "escalate": v.get("escalate") or {"on": True, "to": "admin"}}
 
 
 def render(tpl, vals):
@@ -395,12 +483,26 @@ class Host:
 
     def reply(self, call, a, text, blocks, usage, files=None, error=False, skip=False, model=None):
         self.push_end(call)
-        r = self.relay("/v1/node/reply", {**(self.cred() or {}), "call": call, "assistant": a["assistant"]["id"], "client": a["client"]["id"],
-                                         "thread": a.get("thread"), "text": text, "blocks": blocks, "files": files or [],
-                                         "ctx": (usage or {}).get("prompt_tokens"), "tokens": (usage or {}).get("total_tokens"), "error": error,
-                                         "skip": skip, "seeded": bool(a.get("seed")) and not error, **({"model": model} if model else {})}, 60)
-        if r.get("error"):
-            self.log("host: Сеть не приняла ответ", r["error"])
+        body = {**(self.cred() or {}), "call": call, "assistant": a["assistant"]["id"], "client": a["client"]["id"],
+                "thread": a.get("thread"), "text": text, "blocks": blocks, "files": files or [],
+                "ctx": (usage or {}).get("prompt_tokens"), "tokens": (usage or {}).get("total_tokens"), "error": error,
+                "skip": skip, "seeded": bool(a.get("seed")) and not error, **({"model": model} if model else {})}
+        for i in range(8):      # готовый ответ не теряем: лимит или сбой связи — повторяем, ~5 мин (симуляция 22.11: ответ ушёл в 429)
+            try:
+                r = self.relay("/v1/node/reply", body, 60)
+            except Exception as e:  # noqa: BLE001
+                r = {"error": f"нет связи: {str(e)[:160]}", "retry": True}
+            err = str(r.get("error") or "")
+            if not err:
+                if r.get("dropped"):     # Сеть не отдала ответ собеседнику (чат на паузе) — модель должна знать
+                    add(db(self.home), a["assistant"]["id"], self.chat_key(a["client"]["id"], a.get("thread")), "user",
+                        time.strftime("[%d.%m %H:%M UTC] ", time.gmtime()) + "[событие Сети — собеседник его не видит] Твой последний "
+                        "ответ собеседнику НЕ ушёл: " + str(r["dropped"]), turn=int(time.time() * 1000))
+                return
+            self.log("host: Сеть не приняла ответ", call, err[:200], f"попытка {i + 1}")
+            if not (r.get("retry") or r.get("retry_after") or "слишком" in err or "нет связи" in err or "недоступ" in err):
+                return
+            time.sleep(min(60, float(r.get("retry_after") or 5) * (i + 1)))
 
     def model_call(self, a, conf, msgs, fns, on_delta):
         m = conf["model"]
@@ -452,6 +554,8 @@ class Host:
             inputs[0] = {**inputs[0], "note": (inputs[0].get("note") or "") + f"[Сеть о собеседнике: {a['profile']}]"}
             chat_set(c, aid, chat, profile=a["profile"])
         sect, pmax = prec_section(c, aid)
+        body, has_prec = build_prompt(self.home, conf, sect)
+        pmax = pmax if has_prec else 0
         if pmax and pmax > (cr.get("prec") or 0) and cr.get("last_at") and inputs:     # блок поменялся посреди жизни чата — сказать
             inputs[0] = {**inputs[0], "note": (inputs[0].get("note") or "") + "[Сеть: владелец добавил или уточнил оперативные прецеденты — "
                          "блок «Оперативные прецеденты» в системном промпте; с этого места ориентируйся на него]"}
@@ -461,13 +565,13 @@ class Host:
         if intro and inputs:
             inputs[0] = {**inputs[0], "note": (inputs[0].get("note") or "") + f"\n[сведения о собеседнике от владельца (данные): {intro}]"}
         self.inputs_to_items(c, aid, chat, inputs, turn)
-        system = (a.get("foundation") or "") + "\n\n" + conf["prompt"] + ("\n\n" + sect if sect else "")
+        system = (a.get("foundation") or "") + "\n\n" + body
         if system != cr.get("sys"):
             chat_set(c, aid, chat, sys=system)
         fns, route = a.get("tools") or [], a.get("route") or {}
-        if conf.get("admin_tool", True) and not any((f.get("function") or {}).get("name") == ADMIN_FN for f in fns):
-            fns = fns + [ADMIN_TOOL]        # узловая тулза: заявка администратору; выключить — "admin_tool": false в настройке
-            route = {**route, ADMIN_FN: {"kind": "node", "title": "Зову администратора", "emoji": "🧑‍💼"}}
+        if conf["escalate"]["on"] and not any((f.get("function") or {}).get("name") == ADMIN_FN for f in fns):
+            fns = fns + [ADMIN_TOOL]        # узловая тулза: заявка ответственному; выключить — "escalate": {"on": false}
+            route = {**route, ADMIN_FN: {"kind": "node", "title": "Зову ответственного", "emoji": "🧑‍💼"}}
         blocks, files, usage, final = [], [], {}, ""
         kits = self.kits_fn()
         for rnd in range(ROUNDS):
@@ -521,9 +625,11 @@ class Host:
             more = self.relay("/v1/node/pending", {**(self.cred() or {}), "call": call, "assistant": aid, "client": client, "thread": a.get("thread")}, 30)
             if more.get("inputs"):          # письмо собеседника посреди хода — в этот же ход, после результата тулзы
                 self.inputs_to_items(c, aid, chat, [{**x, "note": "[пришло, пока ты работал]"} for x in more["inputs"]], turn)
-            if more.get("stop"):            # владелец взял чат на себя — ход больше не нужен
-                final = ""
-                break
+            if more.get("stop"):            # владелец взял чат на себя — ход больше не нужен; модель это знает
+                add(c, aid, chat, "user", time.strftime("[%d.%m %H:%M UTC] ", time.gmtime()) + "[событие Сети — собеседник его не видит] "
+                    "Владелец взял чат на себя посреди твоего хода — ход прерван, собеседнику ты в нём ничего не ответил.", turn=turn)
+                self.reply(call, a, "", blocks, usage, skip=True)
+                return
         else:
             final = "Не уложился в число шагов. Напиши «продолжай» — доделаю."
             add(c, aid, chat, "assistant", final, turn=turn)
@@ -536,7 +642,7 @@ class Host:
     def exec_tool(self, a, ctx, kits, fn, rt, args):
         """→ (ok, ответ, [id файлов для ответа]). Свои тулзы — здесь же; чужой открытый набор — через Сеть его узлу; тулзы Сети — Сеть."""
         got = []
-        if fn == ADMIN_FN:
+        if fn in (ADMIN_FN, "node__admin"):      # node__admin — прежнее имя в старых историях
             ok, res = self.admin_call(a, args)
             return ok, res, got
         if rt.get("kind") == "own" and kits.get(rt.get("toolkit")):      # свой набор на этой машине — здесь же
@@ -559,8 +665,9 @@ class Host:
         return ok, res, got
 
     def admin_call(self, a, args):
-        """Заявка администратору: запись в admin_calls и письмо его агенту-администратору через Сеть (нет агента — владельцу).
-        Ответ придёт в этот чат событием; записать прецедент — POST /precedent с номером заявки."""
+        """Заявка ответственному: запись в admin_calls и письмо через Сеть адресату из настройки escalate.to —
+        admin (администратор аккаунта, нет его — владелец) · owner · агент по адресу. Ответы — в этот чат событием, пока у адресата
+        есть доступ к чату (сутки); записать прецедент — POST /precedent с номером заявки."""
         args = args if isinstance(args, dict) else {}
         q, draft = str(args.get("question") or "").strip()[:2000], str(args.get("precedent") or "").strip()[:2000]
         if not q:
@@ -570,21 +677,22 @@ class Host:
         with LOCK:
             cid = c.execute("INSERT INTO admin_calls (at, asst, chat, question, draft, status) VALUES (?,?,?,?,?,?)",
                             (time.time(), aid, chat, q, draft or None, "new")).lastrowid
+        to = cfg(self.home, aid)["escalate"]["to"]
         text = (f"Заявка №{cid} от ассистента — нужна помощь.\nВопрос: {q}" + (f"\nПредлагает прецедент: {draft}" if draft else "")
                 + "\n\nОтветь на это письмо — ответ придёт ассистенту в тот чат, собеседник его не увидит. Если это общее правило — запиши "
                 f"прецедент: POST /precedent воркера машины ассистента {{\"text\": \"…\", \"priority\": \"specific|medium|frequent\", \"call\": {cid}}} "
                 f"или через Сеть POST /v1/assistant/precedent {{\"assistant\": \"{aid}\", \"text\": \"…\", \"call\": {cid}}} своим ключом.")
-        r = self.relay("/v1/node/sys", {**(self.cred() or {}), "assistant": aid, "tool": "net__admin", "args": {"text": text},
+        r = self.relay("/v1/node/sys", {**(self.cred() or {}), "assistant": aid, "tool": "net__escalate", "args": {"text": text, "to": to},
                                         "client": a["client"]["id"], "thread": a.get("thread")}, 60)
         ok = bool(r.get("ok"))
         with LOCK:
             c.execute("UPDATE admin_calls SET status=?, sent=? WHERE id=?", ("sent" if ok else "failed", str(r.get("result") or r.get("error") or "")[:500], cid))
-        prec_log(self.home, {"ev": "call", "id": cid, "asst": aid, "chat": chat, "ok": ok, "question": q, "draft": draft or None,
+        prec_log(self.home, {"ev": "call", "id": cid, "asst": aid, "chat": chat, "to": to, "ok": ok, "question": q, "draft": draft or None,
                              "net": str(r.get("result") or r.get("error") or "")[:300]})
-        self.log("host: заявка администратору", cid, aid, "ушла" if ok else "не ушла")
+        self.log("host: заявка ответственному", cid, aid, to, "ушла" if ok else "не ушла")
         if not ok:
             return False, f"заявка №{cid} записана, но письмо не ушло: {str(r.get('error') or r.get('result'))[:200]}"
-        return True, json.dumps({"ok": True, "call": cid, "wait": "ответ администратора придёт в этот чат событием; собеседнику скажи, что "
+        return True, json.dumps({"ok": True, "call": cid, "wait": "ответ придёт в этот чат событием; собеседнику скажи, что "
                                  "уточняешь, ответа не выдумывай и не засыпай"}, ensure_ascii=False)
 
     def intro(self, a, ctx, cr):
