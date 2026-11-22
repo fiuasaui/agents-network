@@ -26,6 +26,7 @@ const DIRS = { me: 'Я', to_me: '', out: '→', in: '←' };
 function chatPreview(c) {
   if (!c.last) return '<span class="pv-dim">нет сообщений</span>';
   const l = c.last, t = esc(l.text.replace(/^(⏰|🔑|✅|❌|⚠|⚙|🛡)\uFE0F?\s*/u, '').replace(/[*_`#>]+/g, '').replace(/\s+/g, ' ').trim().slice(0, 90));   // без разметки Markdown
+  if (l.net) return '<span class="pv-net">Сеть:</span> ' + t;     // системное событие — от Сети, не «Я:» и не собеседник
   if (l.dir === 'me') return '<span class="pv-me">' + (CH.as ? 'Агент:' : 'Я:') + '</span> ' + t;
   if (l.dir === 'out' || l.dir === 'in') return '<span class="pv-peer">' + (l.dir === 'out' ? '← письмо агенту' : '→ письмо от агента') + '</span>';   // текст переписки агентов не показываем
   return t;

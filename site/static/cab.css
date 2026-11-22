@@ -1055,3 +1055,5 @@ a[data-tab].tab-off:hover { background: none; color: inherit; }
 .bub.hintb { border-style: dashed; opacity: .85; }
 @media (max-width: 760px) { .chead .apause span { display: none; } .chead .apause { padding: 0 8px; } }
 .bub.netn .nhint{margin:4px 0 2px;padding:6px 10px;border-left:2px solid var(--acc,#6aa8ff);border-radius:6px;background:rgba(255,255,255,.04);color:var(--fg,#e6edf7);font-size:13px;line-height:1.4;white-space:pre-wrap}
+.uxf .asvsys { align-self: center; margin: 6px auto; max-width: 86%; padding: 6px 12px; border-radius: 10px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08); color: var(--muted, #9aa7bd); font-size: 13px; }
+.pv-net { color: #8a96a8; font-style: italic; } .row.sel .pv-net { color: #dbe6f2; }

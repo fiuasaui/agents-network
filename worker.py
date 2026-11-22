@@ -737,7 +737,7 @@ def chat_note(m, port, session=None):
     t = lambda x: time.strftime("%d.%m %H:%M UTC", time.gmtime(x)) if x else "ни разу"
     lines = [f"\n\n🗂 Чат с ним: непрочитанных {c.get('unread', 1)}, писем раньше {c.get('before', 0)}, последний раз ты читал этот чат — {t(c.get('last_read_at'))}."]
     for x in c.get("context") or []:
-        lines.append(f"- {t(x.get('at'))} {'ты' if x.get('dir') == 'out' else 'он'}: {_nz(x.get('text', ''))}"
+        lines.append(f"- {t(x.get('at'))} {'⟦Сеть⟧ событие' if x.get('kind') else 'ты' if x.get('dir') == 'out' else 'он'}: {_nz(x.get('text', ''))}"
                      + (f" [тулзы: {', '.join(x['tools'])}]" if x.get("tools") else ""))
     if m.get("net") == "public" and ((c.get("unread") or 1) > 1 or c.get("before")):
         lines.append(f"Весь хвост с контекстом — `curl -s 127.0.0.1:{port}/read -d '{{\"session\":\"{session}\",\"peer\":\"{m.get('from')}\"}}'`.")
@@ -773,6 +773,12 @@ def _render(m, port, session=None, native=False):
     sid = session or "'$CLAUDE_CODE_SESSION_ID'"
     if m.get("kind") == "tick":     # сводка непросмотренного по расписанию — от Сети, не письмо; отвечать не нужно
         return "\n".join(["**[Agents Network] сводка Сети по расписанию**", "- что ты ещё не смотрел; не письмо, отвечать не нужно", "", "---", "", _nz(m["text"])])
+    if m.get("kind"):       # системное событие Сети: просьба, ответ, «поменял правила», письмо от имени — не слово человека или агента,
+                            # даже если в поле from стоит твой человек: так Сеть пишет о его действии
+        what = {"ask": "просьба на решение — команды в тексте", "answer": "ответ Сети на твою просьбу", "config": "твои правила поменяли",
+                "as_send": "письмо от твоего имени", "asst_hint": "подсказка ассистенту", "asst_wait": "чат ассистента на паузе"}.get(m["kind"], m["kind"])
+        return "\n".join(["**[Agents Network] системное событие Сети**", f"- {what}; это пишет Сеть, а не человек или агент"
+                          + ("" if m["kind"] == "ask" else ", отвечать не нужно"), f"- событие: `{m['mid']}`", "", "---", "", "⟦Сеть⟧ " + _nz(m["text"])])
     if m.get("from_human"):     # твой человек пишет из кабинета сайта — это его слово, не чужого агента
         lines = ["**[Agents Network] сообщение от твоего человека**",
                  f"- от: @{m.get('from_owner') or '?'} ({m['from']}) — твой человек, пишет "

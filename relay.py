@@ -1655,12 +1655,12 @@ class Relay:
         if first[0] is None:
             return None
         n_before = self.db.execute("SELECT COUNT(*) FROM msgs WHERE " + ch + " AND at<?", (*a, first[0])).fetchone()[0]
-        prev = self.db.execute("SELECT mid, src, text, at FROM msgs WHERE " + ch + " AND at<? ORDER BY at DESC LIMIT ?", (*a, first[0], n)).fetchall()[::-1]
+        prev = self.db.execute("SELECT mid, src, text, at, kind FROM msgs WHERE " + ch + " AND at<? ORDER BY at DESC LIMIT ?", (*a, first[0], n)).fetchall()[::-1]
         tl = self.tools_of([x[0] for x in prev])
         last_read = self.db.execute("SELECT MAX(acked) FROM msgs WHERE " + ch + " AND dst=?", (*a, me)).fetchone()[0]
         return {"unread": first[1], "before": n_before, "last_read_at": last_read,
                 "context": [{"dir": "out" if s_ == me else "in", "at": at, "text": " ".join(TAGS.sub(" ", t or "").split())[:400],
-                             **({"tools": tl[m]} if m in tl else {})} for m, s_, t, at in prev]}
+                             **({"tools": tl[m]} if m in tl else {}), **({"kind": kd} if kd else {})} for m, s_, t, at, kd in prev]}
 
     def tools_of(self, mids):
         """Какие тулзы ассистент вызывал, готовя письмо: {mid: [имена]}. Таблица шагов есть
@@ -1780,7 +1780,7 @@ class Relay:
             "GROUP BY peer ORDER BY MAX(at) DESC LIMIT ? OFFSET ?", (me, me, me, limit, offset)).fetchall()
         out = []
         for peer, at, n in rows:
-            last = self.db.execute("SELECT src, text, fmt, thread FROM msgs WHERE (src=? AND dst=?) OR (src=? AND dst=?) ORDER BY at DESC LIMIT 1",
+            last = self.db.execute("SELECT src, text, fmt, thread, kind FROM msgs WHERE (src=? AND dst=?) OR (src=? AND dst=?) ORDER BY at DESC LIMIT 1",
                                    (me, peer, peer, me)).fetchone()
             unread, = self.db.execute("SELECT COUNT(*) FROM msgs WHERE src=? AND dst=? AND acked IS NULL", (peer, me)).fetchone()
             th = [t for t, in self.db.execute("SELECT DISTINCT thread FROM msgs WHERE ((src=? AND dst=?) OR (src=? AND dst=?)) AND thread IS NOT NULL LIMIT 20",
@@ -1789,7 +1789,7 @@ class Relay:
             text = " ".join((TAGS.sub(" ", last[1]) if last[2] == "html" else last[1]).split())
             out.append({"peer": self.addr_of(peer), "id": peer, "type": self.peer_kind(me, peer), "name": nm[0] if nm else None,
                         "human": self.human_nick(peer),
-                        "msgs": n, "unread": unread, "at": at, "last": {"dir": "out" if last[0] == me else "in", "text": text[:160]},
+                        "msgs": n, "unread": unread, "at": at, "last": {"dir": "out" if last[0] == me else "in", "text": text[:160], **({"net": last[4]} if last[4] else {})},
                         **({"threads": th} if th else {}), "may_write": bool(self.may_write(me, peer)) or self.peer_kind(me, peer) == "owner"})
         return out
 
@@ -1956,32 +1956,32 @@ class Relay:
                 "SELECT o.id, o.nick, o.created, o.name FROM owners o WHERE o.id<>? AND o.id IN "
                 "(SELECT dst FROM msgs WHERE src=? AND dst LIKE 'hu-%' UNION SELECT src FROM msgs WHERE dst=? AND src LIKE 'hu-%')",
                 (owner, owner, owner)).fetchall():
-            last = self.db.execute("SELECT src, text, at, fmt FROM msgs WHERE (src=? AND dst=?) OR (src=? AND dst=?) ORDER BY at DESC LIMIT 1",
+            last = self.db.execute("SELECT src, text, at, fmt, kind FROM msgs WHERE (src=? AND dst=?) OR (src=? AND dst=?) ORDER BY at DESC LIMIT 1",
                                    (owner, hid, hid, owner)).fetchone()
             unread, = self.db.execute("SELECT COUNT(*) FROM msgs WHERE src=? AND dst=? AND acked IS NULL", (hid, owner)).fetchone()
             out.append({"id": hid, "peer": True, "human": True, "type": "human", "allowed": self.trusts(owner, hid), "blocked": self.blocked(owner, hid), "nick": nick, "name": hname or "@" + nick + "/human", "about": "", "open": False, "seen": None,
                         "created": created, "av": None, "addr": "@" + nick, "unread": unread,
                         "last": ({"dir": "me" if last[0] == owner else "to_me", "at": last[2],
-                                  "text": (" ".join(TAGS.sub(" ", last[1]).split()) if last[3] == "html" else last[1])[:200]} if last else None)})
+                                  "text": (" ".join(TAGS.sub(" ", last[1]).split()) if last[3] == "html" else last[1])[:200], **({"net": last[4]} if last[4] else {})} if last else None)})
         rows = self.db.execute(
             "SELECT a.id, a.nick, a.name, a.about, a.open, a.seen, a.created, a.av FROM agents a "
             "WHERE (a.owner IS NULL OR a.owner<>?) AND a.id IN (SELECT dst FROM msgs WHERE src=? UNION SELECT src FROM msgs WHERE dst=?)",
             (owner, owner, owner)).fetchall()
         for aid, nick, name, about, op, seen, created, av in rows:
-            last = self.db.execute("SELECT src, text, at, fmt FROM msgs WHERE (src=? AND dst=?) OR (src=? AND dst=?) ORDER BY at DESC LIMIT 1",
+            last = self.db.execute("SELECT src, text, at, fmt, kind FROM msgs WHERE (src=? AND dst=?) OR (src=? AND dst=?) ORDER BY at DESC LIMIT 1",
                                    (owner, aid, aid, owner)).fetchone()
             unread, = self.db.execute("SELECT COUNT(*) FROM msgs WHERE src=? AND dst=? AND acked IS NULL", (aid, owner)).fetchone()
             out.append({"id": aid, "peer": True, "type": "assistant" if self.is_assistant(aid) else "agent", "allowed": self.trusts(owner, aid), "nick": nick, "name": name, "about": about, "open": bool(op), "seen": seen,
                         "created": created, "av": av, "addr": self.addr_of(aid), "unread": unread,
                         "can_write": bool(self.may_write(owner, aid)), "wakes": self.wakes(aid, owner) == "from", "blocked": self.blocked(owner, aid),
                         "last": ({"dir": "me" if last[0] == owner else "to_me", "at": last[2],
-                                  "text": (" ".join(TAGS.sub(" ", last[1]).split()) if last[3] == "html" else last[1])[:200]} if last else None)})
+                                  "text": (" ".join(TAGS.sub(" ", last[1]).split()) if last[3] == "html" else last[1])[:200], **({"net": last[4]} if last[4] else {})} if last else None)})
         # собеседник исчез: переписка осталась — чат «Удалённый пользователь», без имени, ника и сведений
         for gid, first in self.db.execute(
                 "SELECT x, MIN(at) FROM (SELECT dst x, at FROM msgs WHERE src=? UNION ALL SELECT src, at FROM msgs WHERE dst=?) "
                 "WHERE (x LIKE 'an-%' OR x LIKE 'as-%' OR x LIKE 'hu-%') AND x NOT IN (SELECT id FROM agents) AND x NOT IN (SELECT id FROM owners) GROUP BY x",
                 (owner, owner)).fetchall():
-            last = self.db.execute("SELECT src, text, at, fmt FROM msgs WHERE (src=? AND dst=?) OR (src=? AND dst=?) ORDER BY at DESC LIMIT 1",
+            last = self.db.execute("SELECT src, text, at, fmt, kind FROM msgs WHERE (src=? AND dst=?) OR (src=? AND dst=?) ORDER BY at DESC LIMIT 1",
                                    (owner, gid, gid, owner)).fetchone()
             unread, = self.db.execute("SELECT COUNT(*) FROM msgs WHERE src=? AND dst=? AND acked IS NULL", (gid, owner)).fetchone()
             hum = gid.startswith("hu-")
@@ -1989,7 +1989,7 @@ class Relay:
                         "allowed": False, "blocked": False, "can_write": False, "nick": None, "name": self.GONE, "about": "", "open": False,
                         "seen": None, "created": first, "av": None, "addr": "", "unread": unread,
                         "last": ({"dir": "me" if last[0] == owner else "to_me", "at": last[2],
-                                  "text": (" ".join(TAGS.sub(" ", last[1]).split()) if last[3] == "html" else last[1])[:200]} if last else None)})
+                                  "text": (" ".join(TAGS.sub(" ", last[1]).split()) if last[3] == "html" else last[1])[:200], **({"net": last[4]} if last[4] else {})} if last else None)})
         return out
 
     def human_chats(self, owner):
@@ -1998,12 +1998,12 @@ class Relay:
         with LOCK:
             ags = self.db.execute("SELECT id, nick, name, about, open, seen, created, av, COALESCE(polls, 0) FROM agents WHERE owner=? ORDER BY created", (owner,)).fetchall()
             for aid, nick, name, about, op, seen, created, av, polls in ags:
-                last = self.db.execute("SELECT mid, src, dst, CASE WHEN fmt='html' THEN TRIM(REPLACE(REPLACE(text, char(10), ' '), '  ', ' ')) ELSE text END, at, fmt "
+                last = self.db.execute("SELECT mid, src, dst, CASE WHEN fmt='html' THEN TRIM(REPLACE(REPLACE(text, char(10), ' '), '  ', ' ')) ELSE text END, at, fmt, kind "
                                       "FROM msgs WHERE src=? OR dst=? ORDER BY at DESC LIMIT 1", (aid, aid)).fetchone()
                 unread, = self.db.execute("SELECT COUNT(*) FROM msgs WHERE src=? AND dst=? AND acked IS NULL", (aid, owner)).fetchone()
                 out.append({"id": aid, "nick": nick, "name": name, "about": about, "open": bool(op), "seen": seen, "created": created, "av": av, "polls": bool(polls),
                             "unread": unread, "last": ({"mid": last[0], "dir": self._dir(last[1], last[2], aid, owner), "at": last[4],
-                                                        "text": (" ".join(TAGS.sub(" ", last[3]).split()) if last[5] == "html" else last[3])[:200]}
+                                                        "text": (" ".join(TAGS.sub(" ", last[3]).split()) if last[5] == "html" else last[3])[:200], **({"net": last[6]} if last[6] else {})}
                                                        if last else None)})
             out += self.peer_chats(owner)
         return {"chats": out}
