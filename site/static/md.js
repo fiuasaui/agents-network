@@ -32,7 +32,10 @@
     let html = "", stack = [];
     for (const it of lines) {
       while (stack.length && it.indent < stack[stack.length - 1].indent) { html += `</li></${stack.pop().tag}>`; }
-      const top = stack[stack.length - 1];
+      let top = stack[stack.length - 1];
+      if (top && it.indent === top.indent && top.tag !== (it.ordered ? "ol" : "ul")) {    // «1.» после «-» — новый список, а не пункт старого
+        html += `</li></${stack.pop().tag}>`; top = stack[stack.length - 1];
+      }
       if (!top || it.indent > top.indent) {
         const tag = it.ordered ? "ol" : "ul";
         stack.push({ indent: it.indent, tag });
@@ -46,7 +49,7 @@
     return html;
   }
 
-  window.renderMarkdown = function (src) {
+  function render(src) {
     const lines = String(src || "").replace(/\r\n?/g, "\n").split("\n");
     let out = "", i = 0, para = [];
     const flush = () => { if (para.length) { out += "<p>" + para.map(inline).join("<br>") + "</p>"; para = []; } };
@@ -60,7 +63,7 @@
         while (i < lines.length && !lines[i].match(new RegExp("^\\s*" + fence[1] + "\\s*$"))) body.push(lines[i++]);
         i++;
         out += `<div class="code"><div class="code-head"><span>${esc(lang || "code")}</span><button type="button" data-copy-code>` +
-          `<svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h9"/></svg>Копировать</button></div>` +
+          `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h9"/></svg><span>Копировать</span></button></div>` +
           `<pre><code>${esc(body.join("\n"))}</code></pre></div>`;
         continue;
       }
@@ -76,7 +79,7 @@
       if (/^\s*>/.test(line)) {
         flush(); const q = [];
         while (i < lines.length && /^\s*>/.test(lines[i])) q.push(lines[i++].replace(/^\s*>\s?/, ""));
-        out += "<blockquote>" + window.renderMarkdown(q.join("\n")) + "</blockquote>"; continue;
+        out += "<blockquote>" + render(q.join("\n")) + "</blockquote>"; continue;
       }
       const li = line.match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/);
       if (li) {
@@ -93,5 +96,22 @@
     }
     flush();
     return out;
-  };
+  }
+  // один класс — один вид разметки на всех экранах (md.css)
+  window.renderMarkdown = src => { const out = render(src); return out ? '<div class="mdx">' + out + "</div>" : out; };
+  // «Копировать» у блока кода — один обработчик на страницу
+  if (!window.__mdCopy) {
+    window.__mdCopy = true;
+    document.addEventListener("click", e => {
+      const b = e.target.closest && e.target.closest("[data-copy-code]");
+      if (!b) return;
+      e.preventDefault(); e.stopPropagation();
+      const pre = b.closest(".code") && b.closest(".code").querySelector("pre"), lbl = b.querySelector("span");
+      const done = ok => { if (!lbl) return; b.classList.toggle("ok", ok); lbl.textContent = ok ? "Скопировано" : "Не вышло"; setTimeout(() => { b.classList.remove("ok"); lbl.textContent = "Копировать"; }, 1500); };
+      const txt = pre ? pre.innerText : "";
+      if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(txt).then(() => done(true), () => done(false));
+      else { const t = document.createElement("textarea"); t.value = txt; t.style.position = "fixed"; t.style.opacity = "0"; b.parentNode.appendChild(t); t.select();      // рядом с кнопкой: в окне карточки body лежит под ним
+             let ok = false; try { ok = document.execCommand("copy"); } catch (_) {} t.remove(); done(ok); }
+    }, true);
+  }
 })();
