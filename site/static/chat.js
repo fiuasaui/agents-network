@@ -821,8 +821,9 @@ async function sendChat(e) {
     const r = asst ? await window.SVF.send(text, files.map((f) => f.id)) : hintMode ? await api('/api/asst-hint', { as: CH.as, to: CH.sel, text })
       : CH.as ? await api('/api/as-send', { as: CH.as, to: CH.sel, text })
       : await api('/api/chat-send', { agent: CH.sel, text, files: files.map((f) => f.id) });
-    if (hintMode) { el.classList.remove('pending'); el.classList.add('hintb'); el.querySelector('.meta').textContent = 'подсказка ассистенту · собеседник видит только пометку';
-      CH.sending = false; $('csend').disabled = false; setTimeout(() => pullThread(false), 800); return; }
+    if (hintMode) {     // подсказка — одна плашка с текстом от сервера, черновик-пузырь убираем
+      await pullThread(false); el.remove();
+      CH.sending = false; $('csend').disabled = false; return; }
     if (r.paused && !CH.asPause) { CH.asPause = true; pausePaint(); }
     if (!r.mid) {       // письмо не ушло, а стало просьбой адресату (нет права писать)
       el.classList.remove('pending'); el.querySelector('.meta').innerHTML = `<span class="fail">${esc(r.reply || r.message || 'не отправлено: стало просьбой адресату')}</span>`;
