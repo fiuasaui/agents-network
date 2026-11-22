@@ -154,7 +154,7 @@ def loop(home, relay, cred, log, relay_url=""):
             ST["last_error"], ST["last_ok_at"] = None, time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())   # связь с Сетью есть (симуляция 16.11)
             for call in r.get("calls", []):
                 def go(call=call):
-                    if call["tool"] in ("__turn__", "__config__", "__compact__"):
+                    if call["tool"] in ("__turn__", "__config__", "__compact__", "__precedent__"):
                         got = H.handle(call)
                         ST["calls"] += 1
                         log("node: ассистент", call["tool"], call["ctx"].get("assistant") or (call["args"] or {}).get("assistant"))

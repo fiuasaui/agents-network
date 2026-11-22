@@ -101,7 +101,10 @@ def loop(home: Path, relay, owner_cred, log):
         ST["after"] = time.time()
     ST["running"] = True
     while True:
-        bridges = {b["assistant"]: b for b in load(home).values() if b.get("webhook")}
+        live = [b for b in load(home).values() if b.get("webhook")]
+        # у одного ассистента бывает несколько мостов (веб-чат, бот, тест) — письмо уходит мосту своего источника
+        bridges = {(b["assistant"], b.get("source")): b for b in live}
+        bridges.update({(b["assistant"], None): b for b in live if (b["assistant"], None) not in bridges})
         o = owner_cred()
         if not bridges or not o:
             time.sleep(15)
@@ -111,8 +114,14 @@ def loop(home: Path, relay, owner_cred, log):
             ST["last_error"] = str(r["error"])[:200]
             time.sleep(10)
             continue
+        # мосты — заново после опроса: мост, заведённый или поправленный за эти 25 с, иначе терял свои первые ответы (симуляция 22.11)
+        live = [b for b in load(home).values() if b.get("webhook")]
+        bridges = {(b["assistant"], b.get("source")): b for b in live}
+        bridges.update({(b["assistant"], None): b for b in live if (b["assistant"], None) not in bridges})
         for m in r.get("msgs") or []:
-            b = bridges.get(m.get("assistant_id"))
+            b = bridges.get((m.get("assistant_id"), m.get("source")))
+            if not b and not any(x.get("assistant") == m.get("assistant_id") and x.get("source") == m.get("source") for x in load(home).values()):
+                b = bridges.get((m.get("assistant_id"), None))     # источник без своего моста (переименовали) — первому мосту ассистента
             if b:
                 payload = {"type": "reply", "bridge": b["name"], "assistant": m["assistant"], "user": m["user"],
                            **{k: m[k] for k in ("text", "blocks", "files", "by_human", "system", "thread", "at", "mid") if k in m}}

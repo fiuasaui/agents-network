@@ -12,9 +12,14 @@
 История только дописывается: вызов тулзы и её результат остаются как были. Когда окно хода (prompt_tokens из usage)
 подошло к порогу (окно минус 15%), узел сжимает: сводка всего, кроме последних 5 пар ходов, — следующий контекст
 = системный промпт + сводка + эти пары. Сжать вручную — вызов __compact__ (кнопка в кабинете).
-Только stdlib.
+Прецеденты — оперативные уточнения владельца, таблица precedents здесь же: блоком сразу после промпта всем
+ассистентам машины (или одному — scope), по приоритету «частный случай · обычное уточнение · частая ситуация». Пишет
+администратор или человек запросом к узлу (POST /precedent воркера или /v1/assistant/precedent через Сеть → __precedent__);
+чат, где блок поменялся, узнаёт об этом строкой на следующем ходе. Тулза узла node__admin — заявка (вопрос или готовый текст
+прецедента) в admin_calls и письмо администратору владельца через Сеть; ответ придёт в чат событием, ассистент не засыпает.
+Журнал записей — precedents.jsonl (потолок 20 МБ × 2). Только stdlib.
 """
-import json, re, sqlite3, threading, time, urllib.request, urllib.error
+import json, re, sqlite3, threading, time, unicodedata, urllib.request, urllib.error
 from pathlib import Path
 
 DEF_WINDOW, MIN_WINDOW = 200_000, 40_000
@@ -22,9 +27,30 @@ SUMMARIZER = "gpt-6-luna"     # дешёвая модель Сети для св
 KEEP_PAIRS = 5          # сколько последних пар «собеседник → ответ» остаётся дословно после сжатия
 ROUNDS = 30             # шагов «модель → тулзы» на один ответ
 MAX_OUT = 4000
+PRIORITIES = ("specific", "medium", "frequent")      # порядок в блоке: редкие меняются реже — стабильнее для кэша
+PREC_TITLE = {"specific": "ЧАСТНЫЕ СЛУЧАИ — применяй только если ситуация совпала точно, не притягивай к похожим",
+              "medium": "ОБЫЧНЫЕ УТОЧНЕНИЯ", "frequent": "ЧАСТЫЕ СИТУАЦИИ — касаются многих, держи в виду постоянно"}
+PREC_LOG_MAX = 20 * 2**20
+ADMIN_FN = "node__admin"
+ADMIN_TOOL = {"type": "function", "function": {"name": ADMIN_FN, "description": (
+    "Позвать администратора — агента владельца, который видит всю техническую сторону и может дописать тебе знание. Зови, когда "
+    "не знаешь ответа и его нет ни в промпте, ни в прецедентах; когда собеседник спорит с правилом или просит исключения; когда "
+    "видишь, что правило противоречит жизни. question — что неясно и что нужно, коротко, с сутью ситуации; precedent — если уже "
+    "понимаешь, какое общее правило помогло бы впредь, — его текст (обобщённо, без имён). Собеседнику скажи, что уточняешь, ответа "
+    "не выдумывай; ответ администратора придёт в этот чат событием. Не засыпай и продолжай отвечать на остальное."),
+    "parameters": {"type": "object", "properties": {"question": {"type": "string", "description": "что неясно и почему — коротко"},
+                                                   "precedent": {"type": "string", "description": "предлагаемое общее правило, если есть"}},
+                   "required": ["question"]}}}
 DEF_MODEL = {"provider": "network", "model": "gpt-6.2-sol"}
 LOCK = threading.Lock()
 _DB = {}
+
+
+def shown_think(think):
+    """Мышление для ленты: без невидимых знаков. Шлюз отдаёт у части моделей шифр мышления невидимыми U+200B…U+2060 —
+    его не показываем вовсе (лента и вебхук моста); в историю узла мышление идёт целиком."""
+    vis = "".join(ch for ch in (think or "") if unicodedata.category(ch) != "Cf")
+    return vis if len(vis.strip()) >= 3 else ""
 
 
 # ---------- хранилище: SQLite узла ----------
@@ -40,7 +66,13 @@ def db(home: Path):
           CREATE TABLE IF NOT EXISTS compactions (id INTEGER PRIMARY KEY AUTOINCREMENT, asst TEXT, chat TEXT, at REAL, summary TEXT,
                                                   keep_from INTEGER, before INTEGER, auto INTEGER);
           CREATE TABLE IF NOT EXISTS chats (asst TEXT, chat TEXT, last_prompt INTEGER, last_at REAL, profile TEXT, intro_at REAL, sys TEXT,
-                                            PRIMARY KEY (asst, chat));""")
+                                            PRIMARY KEY (asst, chat));
+          CREATE TABLE IF NOT EXISTS precedents (id INTEGER PRIMARY KEY AUTOINCREMENT, at REAL, upd REAL, text TEXT, priority TEXT,
+                                                 scope TEXT, status TEXT, by TEXT, call INTEGER);
+          CREATE TABLE IF NOT EXISTS admin_calls (id INTEGER PRIMARY KEY AUTOINCREMENT, at REAL, asst TEXT, chat TEXT, question TEXT,
+                                                  draft TEXT, status TEXT, sent TEXT, precedent INTEGER);""")
+        if "prec" not in [r[1] for r in c.execute("PRAGMA table_info(chats)")]:
+            c.execute("ALTER TABLE chats ADD COLUMN prec INTEGER")     # последний прецедент, который этот чат уже видел
         try:
             (home / "assistants.db").chmod(0o600)
         except OSError:
@@ -58,8 +90,95 @@ def add(c, aid, chat, role, content=None, tool_calls=None, tool_call_id=None, re
 
 
 def chat_row(c, aid, chat):
-    r = c.execute("SELECT last_prompt, last_at, profile, intro_at, sys FROM chats WHERE asst=? AND chat=?", (aid, chat)).fetchone()
-    return dict(zip(("last_prompt", "last_at", "profile", "intro_at", "sys"), r)) if r else {}
+    r = c.execute("SELECT last_prompt, last_at, profile, intro_at, sys, prec FROM chats WHERE asst=? AND chat=?", (aid, chat)).fetchone()
+    return dict(zip(("last_prompt", "last_at", "profile", "intro_at", "sys", "prec"), r)) if r else {}
+
+
+# ---------- прецеденты ----------
+def prec_log(home, rec):
+    """Журнал прецедентов и заявок: JSON-строка на событие, 20 МБ × 2."""
+    f = home / "precedents.jsonl"
+    try:
+        if f.exists() and f.stat().st_size > PREC_LOG_MAX:
+            f.replace(home / "precedents.jsonl.1")
+        with open(f, "a") as fh:
+            fh.write(json.dumps({"at": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), **rec}, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+def prec_rows(c, aid=None, active=True):
+    q = "SELECT id, text, priority, scope, status, by, call, at, upd FROM precedents WHERE 1=1"
+    a = []
+    if active:
+        q += " AND status='active'"
+    if aid:
+        q += " AND scope IN ('*', ?)"; a.append(aid)
+    keys = ("id", "text", "priority", "scope", "status", "by", "call", "at", "upd")
+    return [dict(zip(keys, r)) for r in c.execute(q + " ORDER BY id", a)]
+
+
+def prec_section(c, aid):
+    """Блок прецедентов для системного промпта: группы от частных к частым, номер — id (на него ссылаются заявки и строки чата)."""
+    rows = prec_rows(c, aid)
+    if not rows:
+        return "", 0
+    parts = []
+    for pr in PRIORITIES:
+        g = [r for r in rows if r["priority"] == pr]
+        if g:
+            parts.append(f"--- {PREC_TITLE[pr]} ---")
+            parts += [f"П{r['id']}. {r['text']}" for r in g]
+    return ("========== ОПЕРАТИВНЫЕ ПРЕЦЕДЕНТЫ — уточнения владельца, приоритетнее промпта выше ==========\n" + "\n".join(parts)
+            + "\n========== КОНЕЦ ПРЕЦЕДЕНТОВ =========="), max(r["id"] for r in rows)
+
+
+def prec_op(home, q):
+    """Прецеденты одним входом (воркер /precedent и вызов __precedent__ из Сети): op = add · list · set (text, priority, status) · calls."""
+    c = db(home)
+    if q.get("pid") is not None:        # номер прецедента: pid (в запросе через Сеть id занят ключом агента), на узле можно и id
+        q = {**q, "id": q["pid"]}
+    op = q.get("op") or ("add" if q.get("text") and not q.get("id") else "set" if q.get("id") else "list")
+    if op == "list":
+        return {"precedents": prec_rows(c, q.get("assistant") or None, active=not q.get("all"))}
+    if op == "calls":
+        keys = ("id", "at", "asst", "chat", "question", "draft", "status", "precedent")
+        return {"calls": [dict(zip(keys, r)) for r in c.execute(
+            "SELECT id, at, asst, chat, question, draft, status, precedent FROM admin_calls ORDER BY id DESC LIMIT ?", (min(int(q.get("limit") or 50), 500),))]}
+    pr = q.get("priority") or "medium"
+    if pr not in PRIORITIES:
+        raise ValueError("priority — specific (частный случай) · medium (обычное уточнение) · frequent (частая ситуация)")
+    scope = str(q.get("assistant") or q.get("scope") or "*")
+    if scope != "*" and not scope.startswith("as-"):
+        raise ValueError("assistant — id ассистента (as-…) или «*» — всем ассистентам этой машины")
+    by = str(q.get("by") or "")[:120]
+    if op == "add":
+        text = str(q.get("text") or "").strip()
+        if not 10 <= len(text) <= 2000:
+            raise ValueError("text прецедента — от 10 до 2000 знаков: обобщённое правило, без имён собеседников")
+        call = int(q["call"]) if str(q.get("call") or "").isdigit() else None
+        with LOCK:
+            pid = c.execute("INSERT INTO precedents (at, upd, text, priority, scope, status, by, call) VALUES (?,?,?,?,?,?,?,?)",
+                            (time.time(), time.time(), text, pr, scope, "active", by, call)).lastrowid
+            if call:
+                c.execute("UPDATE admin_calls SET status='precedent', precedent=? WHERE id=?", (pid, call))
+        prec_log(home, {"ev": "add", "id": pid, "priority": pr, "scope": scope, "by": by, "call": call, "text": text})
+        return {"ok": True, "id": pid, "note": "блок прецедентов поменялся: каждый чат увидит его со следующего хода, и ему скажут об этом строкой"}
+    if op == "set":
+        pid = int(q.get("id") or 0)
+        old = c.execute("SELECT text, priority, status FROM precedents WHERE id=?", (pid,)).fetchone()
+        if not old:
+            raise LookupError(f"нет прецедента {pid}")
+        st = q.get("status") or old[2]
+        if st not in ("active", "off"):
+            raise ValueError("status — active или off")
+        text = str(q["text"]).strip() if q.get("text") else old[0]
+        with LOCK:
+            c.execute("UPDATE precedents SET text=?, priority=?, status=?, upd=? WHERE id=?",
+                      (text, q.get("priority") or old[1], st, time.time(), pid))
+        prec_log(home, {"ev": "set", "id": pid, "by": by, "status": st, "text": text if q.get("text") else None, "priority": q.get("priority")})
+        return {"ok": True, "id": pid, "status": st}
+    raise ValueError("op — add · list · set · calls")
 
 
 def chat_set(c, aid, chat, **kw):
@@ -133,6 +252,8 @@ def cfg_save(home, aid, upd):
         v["window"] = w
     if upd.get("autocompact") is not None:
         v["autocompact"] = bool(upd["autocompact"])
+    if upd.get("admin_tool") is not None:      # тулза «позвать администратора» — по умолчанию есть
+        v["admin_tool"] = bool(upd["admin_tool"])
     if upd.get("summarizer") in ("cheap", "same"):      # кто пишет сводку при сжатии: дешёвая модель Сети или модель ассистента
         v["summarizer"] = upd["summarizer"]
     f = cfg_path(home, aid)
@@ -145,7 +266,8 @@ def public_cfg(v):
     m = dict(v["model"])
     if m.pop("key", None):
         m["key_set"] = True
-    return {"prompt": v["prompt"], "model": m, "window": v["window"], "autocompact": v["autocompact"], "summarizer": v.get("summarizer") or "cheap"}
+    return {"prompt": v["prompt"], "model": m, "window": v["window"], "autocompact": v["autocompact"], "summarizer": v.get("summarizer") or "cheap",
+            "admin_tool": v.get("admin_tool", True)}
 
 
 def render(tpl, vals):
@@ -222,6 +344,11 @@ class Host:
             aid, chat = str(a.get("assistant") or ""), self.chat_key(a.get("client"), a.get("thread"))
             r = self.compact(aid, chat, chat_row(db(self.home), aid, chat).get("sys") or "", auto=False)
             return True, json.dumps(r, ensure_ascii=False)
+        if call["tool"] == "__precedent__":     # прецедент из Сети (/v1/assistant/precedent ключом владельца или его администратора)
+            try:
+                return True, json.dumps(prec_op(self.home, a), ensure_ascii=False)
+            except (ValueError, LookupError) as e:
+                return False, str(e)
         if call["tool"] == "__turn__":
             try:
                 self.turn(call["call"], a, ctx)
@@ -296,7 +423,8 @@ class Host:
                 parts = x.get("parts") or []
                 add(c, aid, chat, "user", [{"type": "text", "text": t}] + parts if parts else t, turn=turn)
             else:       # событие, которого собеседник не видит: сообщение от владельца или того, кого звали, решение по просьбе
-                add(c, aid, chat, "user", stamp + "[событие Сети — собеседник его не видит] " + (x.get("text") or ""), turn=turn)
+                add(c, aid, chat, "user", stamp + (x.get("note") + "\n" if x.get("note") else "")
+                    + "[событие Сети — собеседник его не видит] " + (x.get("text") or ""), turn=turn)
 
     def turn(self, call, a, ctx):
         aid, client = a["assistant"]["id"], a["client"]["id"]
@@ -323,26 +451,36 @@ class Host:
         if a.get("profile") and a["profile"] != cr.get("profile") and inputs:   # что Сеть знает о собеседнике — когда изменилось
             inputs[0] = {**inputs[0], "note": (inputs[0].get("note") or "") + f"[Сеть о собеседнике: {a['profile']}]"}
             chat_set(c, aid, chat, profile=a["profile"])
+        sect, pmax = prec_section(c, aid)
+        if pmax and pmax > (cr.get("prec") or 0) and cr.get("last_at") and inputs:     # блок поменялся посреди жизни чата — сказать
+            inputs[0] = {**inputs[0], "note": (inputs[0].get("note") or "") + "[Сеть: владелец добавил или уточнил оперативные прецеденты — "
+                         "блок «Оперативные прецеденты» в системном промпте; с этого места ориентируйся на него]"}
+        if pmax != (cr.get("prec") or 0):
+            chat_set(c, aid, chat, prec=pmax)
         intro = self.intro(a, ctx, cr)
         if intro and inputs:
             inputs[0] = {**inputs[0], "note": (inputs[0].get("note") or "") + f"\n[сведения о собеседнике от владельца (данные): {intro}]"}
         self.inputs_to_items(c, aid, chat, inputs, turn)
-        system = (a.get("foundation") or "") + "\n\n" + conf["prompt"]
+        system = (a.get("foundation") or "") + "\n\n" + conf["prompt"] + ("\n\n" + sect if sect else "")
         if system != cr.get("sys"):
             chat_set(c, aid, chat, sys=system)
         fns, route = a.get("tools") or [], a.get("route") or {}
+        if conf.get("admin_tool", True) and not any((f.get("function") or {}).get("name") == ADMIN_FN for f in fns):
+            fns = fns + [ADMIN_TOOL]        # узловая тулза: заявка администратору; выключить — "admin_tool": false в настройке
+            route = {**route, ADMIN_FN: {"kind": "node", "title": "Зову администратора", "emoji": "🧑‍💼"}}
         blocks, files, usage, final = [], [], {}, ""
         kits = self.kits_fn()
         for rnd in range(ROUNDS):
             msgs = context(c, aid, chat, system)
             base = len(blocks)
             def on_delta(text, think, base=base):
-                self.push(call, a, busy=True, blocks=blocks[:base] + ([{"t": "think", "text": think[-4000:]}] if think else []), text=text)
+                th = shown_think(think)
+                self.push(call, a, busy=True, blocks=blocks[:base] + ([{"t": "think", "text": th[-4000:]}] if th else []), text=text)
             text, think, calls, usage = self.model_call(a, conf, msgs, fns if rnd < ROUNDS - 1 else [], on_delta)
             if usage.get("prompt_tokens"):
                 chat_set(c, aid, chat, last_prompt=int(usage["prompt_tokens"]), last_at=time.time())
-            if think:
-                blocks.append({"t": "think", "text": think[-8000:]})
+            if shown_think(think):
+                blocks.append({"t": "think", "text": shown_think(think)[-8000:]})
             if not calls:
                 add(c, aid, chat, "assistant", text, reasoning=think, turn=turn)
                 final = text
@@ -398,6 +536,9 @@ class Host:
     def exec_tool(self, a, ctx, kits, fn, rt, args):
         """→ (ok, ответ, [id файлов для ответа]). Свои тулзы — здесь же; чужой открытый набор — через Сеть его узлу; тулзы Сети — Сеть."""
         got = []
+        if fn == ADMIN_FN:
+            ok, res = self.admin_call(a, args)
+            return ok, res, got
         if rt.get("kind") == "own" and kits.get(rt.get("toolkit")):      # свой набор на этой машине — здесь же
             ok, res = self.run_tool(kits[rt["toolkit"]], rt.get("tool"), args, ctx)
             if ok:
@@ -416,6 +557,35 @@ class Host:
         except ValueError:
             pass
         return ok, res, got
+
+    def admin_call(self, a, args):
+        """Заявка администратору: запись в admin_calls и письмо его агенту-администратору через Сеть (нет агента — владельцу).
+        Ответ придёт в этот чат событием; записать прецедент — POST /precedent с номером заявки."""
+        args = args if isinstance(args, dict) else {}
+        q, draft = str(args.get("question") or "").strip()[:2000], str(args.get("precedent") or "").strip()[:2000]
+        if not q:
+            return False, "нужен question: что неясно и почему"
+        aid, chat = a["assistant"]["id"], self.chat_key(a["client"]["id"], a.get("thread"))
+        c = db(self.home)
+        with LOCK:
+            cid = c.execute("INSERT INTO admin_calls (at, asst, chat, question, draft, status) VALUES (?,?,?,?,?,?)",
+                            (time.time(), aid, chat, q, draft or None, "new")).lastrowid
+        text = (f"Заявка №{cid} от ассистента — нужна помощь.\nВопрос: {q}" + (f"\nПредлагает прецедент: {draft}" if draft else "")
+                + "\n\nОтветь на это письмо — ответ придёт ассистенту в тот чат, собеседник его не увидит. Если это общее правило — запиши "
+                f"прецедент: POST /precedent воркера машины ассистента {{\"text\": \"…\", \"priority\": \"specific|medium|frequent\", \"call\": {cid}}} "
+                f"или через Сеть POST /v1/assistant/precedent {{\"assistant\": \"{aid}\", \"text\": \"…\", \"call\": {cid}}} своим ключом.")
+        r = self.relay("/v1/node/sys", {**(self.cred() or {}), "assistant": aid, "tool": "net__admin", "args": {"text": text},
+                                        "client": a["client"]["id"], "thread": a.get("thread")}, 60)
+        ok = bool(r.get("ok"))
+        with LOCK:
+            c.execute("UPDATE admin_calls SET status=?, sent=? WHERE id=?", ("sent" if ok else "failed", str(r.get("result") or r.get("error") or "")[:500], cid))
+        prec_log(self.home, {"ev": "call", "id": cid, "asst": aid, "chat": chat, "ok": ok, "question": q, "draft": draft or None,
+                             "net": str(r.get("result") or r.get("error") or "")[:300]})
+        self.log("host: заявка администратору", cid, aid, "ушла" if ok else "не ушла")
+        if not ok:
+            return False, f"заявка №{cid} записана, но письмо не ушло: {str(r.get('error') or r.get('result'))[:200]}"
+        return True, json.dumps({"ok": True, "call": cid, "wait": "ответ администратора придёт в этот чат событием; собеседнику скажи, что "
+                                 "уточняешь, ответа не выдумывай и не засыпай"}, ensure_ascii=False)
 
     def intro(self, a, ctx, cr):
         """Хук-подсказка владельца (тулза с "intro": true): в начале чата и после 6 ч простоя — сведения о собеседнике."""
