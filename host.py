@@ -634,7 +634,12 @@ class Host:
             final = "Не уложился в число шагов. Напиши «продолжай» — доделаю."
             add(c, aid, chat, "assistant", final, turn=turn)
         m = conf["model"]
-        self.reply(call, a, final or "(пустой ответ модели)", blocks, usage, files,
+        if not (final or "").strip() and not files:     # модель решила промолчать — собеседнику ничего, а не заглушка
+            self.reply(call, a, "", blocks, usage, skip=True)
+            if conf["autocompact"] and int(usage.get("prompt_tokens") or 0) >= conf["window"]:
+                self.compact(aid, chat, system, auto=True, a=a)
+            return
+        self.reply(call, a, final, blocks, usage, files,
                    model=("своя: " if m.get("provider") == "own" else "") + str(m.get("model") or ""))
         if conf["autocompact"] and int(usage.get("prompt_tokens") or 0) >= conf["window"]:     # ровно на пороге, без запаса
             self.compact(aid, chat, system, auto=True, a=a)
