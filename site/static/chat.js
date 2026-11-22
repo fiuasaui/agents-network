@@ -370,7 +370,7 @@ async function openChat(id) {
   gatePaint(true);
   $('ctext').placeholder = CH.as ? 'Письмо от имени агента…' : c && c.assistant ? 'Сообщение ассистенту…' : c && c.human ? 'Сообщение человеку…'
     : c && c.peer && c.can_write ? (c.wakes ? 'Письмо разбудит агента…' : 'Письмо не разбудит агента…') : 'Сообщение агенту…';
-  if (CH.sel !== id || !asAsst()) CH.inv = false;
+  CH.inv = asAsst() && lsGet(invKey()) === true;     // режим «Инвертировать» помнится на чат ассистента
   CH.asPause = null; pausePaint();
   if (c && c.assistant && window.SVF && !CH.as) { $('conv').classList.add('uxf'); await window.SVF.open($('msgs'), c.addr); }    // ассистент — лента как в мессенджере
   else { if (window.SVF) window.SVF.close(); $('conv').classList.remove('uxf'); CH.loading = true; try { await pullThread(true); } finally { CH.loading = false; } }
@@ -670,8 +670,9 @@ function appendMsgs(list) {
 // последнего письма; что могло поменяться задним числом (просьба ждёт решения, письмо мне не прочитано) — перечитываем
 // отдельно, не дальше 50 последних. Последние TC.MAX писем, до TC.CHATS чатов; ключ — человек · лицо · собеседник
 const TC = { MAX: 200, CHATS: 40, t: {} };
-// версия кэша: сервер стал отдавать у писем новое поле — старые копии стираем, чат перечитается целиком
-const TC_V = '3';
+// версия кэша: поменялся код сервера, собирающий письма, — старые копии стираем, чат перечитается целиком.
+// Отпечаток кода ставит сервер в <meta name="an-tv">; панель воркера без него — ручная версия
+const TC_V = ((document.querySelector('meta[name="an-tv"]') || {}).content) || '3';
 try { if (localStorage.getItem('an_th_v') !== TC_V) { for (const k of Object.keys(localStorage)) if (k.startsWith('an_th')) localStorage.removeItem(k); localStorage.setItem('an_th_v', TC_V); } } catch (e) {}
 function tcKey(id) { return 'an_th:' + ((typeof ME !== 'undefined' && ME && ME.owner) || '') + ':' + (CH.as || 'me') + ':' + id; }
 function tcGet(id) { try { const v = JSON.parse(localStorage.getItem(tcKey(id)) || 'null'); return v && v.v === 1 && Array.isArray(v.msgs) && v.msgs.length ? v : null; } catch (e) { return null; } }
@@ -1017,4 +1018,5 @@ if ($('c-pause')) $('c-pause').onclick = async () => {
   const on = !CH.asPause;
   try { await api('/api/asst-pause', { as: CH.as, peer: CH.sel, on }); CH.asPause = on; pausePaint(); } catch (e) { hint('Не вышло: ' + e.message); }
 };
-if ($('c-inv')) $('c-inv').onclick = () => { CH.inv = !CH.inv; pausePaint(); $('ctext').focus(); };
+function invKey() { return 'an_inv:' + CH.as + ':' + CH.sel; }     // объявление поднимается: open() зовёт до этой строки
+if ($('c-inv')) $('c-inv').onclick = () => { CH.inv = !CH.inv; try { if (CH.inv) localStorage.setItem(invKey(), 'true'); else localStorage.removeItem(invKey()); } catch (e) {} pausePaint(); $('ctext').focus(); };
