@@ -399,3 +399,30 @@ function askBox(o) {
     w.querySelector(o.danger && !o.info ? '[data-no]' : '[data-ok]').focus({ preventScroll: true });
   });
 }
+
+// меню команд по «/» в поле ввода, как в Telegram: команды ассистенту исполняет Сеть (/disable [часы], /enable).
+// slashMenu(textarea, () => [{cmd, args, about}] | null) — список зовётся на каждый ввод: null — меню в этом чате нет.
+const ASST_CMDS = [{ cmd: '/disable', args: '[часы]', about: 'выключить ассистента в этом чате — по умолчанию на 3 ч, не больше 48' },
+  { cmd: '/enable', args: '', about: 'включить ассистента снова' }];
+function slashMenu(ta, cmds) {
+  const box = document.createElement('div'); box.className = 'slm'; box.hidden = true; box.setAttribute('role', 'listbox');
+  ta.parentElement.style.position = ta.parentElement.style.position || 'relative'; ta.parentElement.appendChild(box);
+  let items = [], at = 0;
+  const pick = (c) => { ta.value = c.cmd + (c.args ? ' ' : ''); box.hidden = true; ta.focus(); ta.dispatchEvent(new Event('input')); };
+  const paint = () => {
+    box.innerHTML = items.map((c, i) => `<button type="button" role="option" class="slm-i${i === at ? ' on' : ''}" data-i="${i}"><b>${esc(c.cmd)}</b>${c.args ? ` <i>${esc(c.args)}</i>` : ''}<span>${esc(c.about)}</span></button>`).join('');
+    box.querySelectorAll('[data-i]').forEach((b) => { b.onmousedown = (e) => { e.preventDefault(); pick(items[+b.dataset.i]); }; });
+  };
+  ta.addEventListener('input', () => {
+    const v = ta.value, all = /^\/\S*$/.test(v) ? cmds() : null;
+    items = all ? all.filter((c) => c.cmd.startsWith(v.toLowerCase()) && c.cmd !== v.trim()) : [];
+    box.hidden = !items.length; at = 0; if (items.length) paint();
+  });
+  ta.addEventListener('keydown', (e) => {
+    if (box.hidden) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); at = (at + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length; paint(); }
+    else if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) { e.preventDefault(); e.stopImmediatePropagation(); pick(items[at]); }
+    else if (e.key === 'Escape') box.hidden = true;
+  }, true);
+  ta.addEventListener('blur', () => setTimeout(() => { box.hidden = true; }, 120));
+}

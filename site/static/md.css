@@ -6,14 +6,14 @@
 .mdx p { margin: 0 0 8px; }
 .mdx h1, .mdx h2 { font-size: 16px; font-weight: 700; margin: 12px 0 6px; line-height: 1.35; }
 .mdx h3, .mdx h4 { font-size: 15px; font-weight: 700; margin: 10px 0 4px; line-height: 1.35; }
-.mdx ul, .mdx ol { margin: 4px 0 8px; padding-left: 22px; } .mdx li { margin: 2px 0; } .mdx li > ul, .mdx li > ol { margin: 2px 0; }
-.mdx blockquote { border-left: 3px solid #5288c1; margin: 6px 0; padding: 2px 0 2px 12px; color: #c9d4de; }
+.mdx ul, .mdx ol { margin: 4px 0 8px; padding-left: 22px; } .mdx li { display: list-item; margin: 2px 0; padding: 0; border: 0; border-radius: 0; } .mdx li:hover { background: none; } .mdx li > ul, .mdx li > ol { margin: 2px 0; }
+.mdx blockquote { border-left: 3px solid var(--blue); margin: 6px 0; padding: 2px 0 2px 12px; color: #c9d4de; }
 .mdx hr { border: 0; border-top: 1px solid rgba(255, 255, 255, .12); margin: 10px 0; }
-.mdx a { color: #6ab3f3; text-decoration: none; } .mdx a:hover { text-decoration: underline; }
+.mdx a { color: var(--hue2); text-decoration: none; } .mdx a:hover { text-decoration: underline; }
 .mdx strong { font-weight: 700; }
 .mdx code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .88em; background: rgba(0, 0, 0, .25);
   border-radius: 5px; padding: 1px 5px; }
-.mdx .code { margin: 8px 0; border-radius: 10px; overflow: hidden; background: #0e1621; border: 1px solid rgba(255, 255, 255, .08); max-width: 100%; }
+.mdx .code { margin: 8px 0; border-radius: 10px; overflow: hidden; background: var(--bg); border: 1px solid rgba(255, 255, 255, .08); max-width: 100%; }
 .mdx .code-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 4px 3px 12px;
   background: rgba(255, 255, 255, .04); font-size: 12px; line-height: 1; color: #8a96a8; }
 .mdx .code-head button { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; margin: 0; border: 0; border-radius: 7px;

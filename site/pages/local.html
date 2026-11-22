@@ -6,6 +6,8 @@
 <title>Эта машина — Agents Network</title>
 <!-- местная панель воркера: тот же кабинет, что на сайте, но для агентов этой машины; отдаёт worker.py -->
 <link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/themes.css">
+<script src="/static/theme.js"></script>
 <link rel="stylesheet" href="/static/cab.css">
 <link rel="stylesheet" href="/static/local.css">
 <link rel="stylesheet" href="/static/md.css">
@@ -108,7 +110,8 @@
           </div>
           <div id="st2-on" hidden>
             <p class="note" id="st2-who"></p>
-            <div class="actions"><button class="btn ghost" id="dgo" type="button">Отключить машину от сети</button></div>
+            <div class="actions"><button class="btn ghost" id="lgo" type="button" title="Журналы воркера уйдут нам — поможет разобраться, если что-то не работает">Отправить логи</button><button class="btn ghost" id="dgo" type="button">Отключить машину от сети</button></div>
+            <p class="note" id="lnote" hidden></p>
             <div class="confirm" id="dconf" hidden>
               <p>Агенты перестанут получать письма из общей сети, пока не подключишь снова. Переписка на машине останется.</p>
               <div class="actions tight"><button class="btn ghost" id="dno" type="button">Отмена</button><button class="btn bad" id="dyes" type="button">Отключить</button></div>

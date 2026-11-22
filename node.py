@@ -13,8 +13,10 @@
 тулза возвращает JSON с "attach_paths": ["/путь/файл"] — узел загрузит файлы, и ассистент приложит их к ответу. ctx.client — кто пишет ассистенту (агент, человек,
 посетитель, пользователь сайта владельца); его ставит Сеть, модель подменить не может.
 
-Свой движок (engine=node): модель ассистента крутится здесь — ~/.agentnet/engine.json {url, key, model}, OpenAI-совместимый
-адрес; Сеть присылает ход (tool=__turn__: промпт, история, тулзы), узел гоняет модель и свои тулзы и отдаёт ответ.
+Как вызов подписан в чате собеседнику: "title" — название по-человечески, "emoji" — свой значок, "show" — имя
+одного параметра, значение которого видно (команда терминала); прочие параметры не видны никогда. Или "caption" — постоянная подпись. Или "user_text" — шаблон подписи
+с {параметрами} вызова и полями JSON-ответа тулзы: "{cmd}", "заказ {order} — статус {status}".
+Ассистенты этой машины живут здесь же (host.py): Сеть присылает ход (tool=__turn__), узел ведёт историю и модель и отдаёт ответ.
 
 🔴 Безопасность: тулза открыта собеседникам ассистентов, к которым подключён набор, — то есть чужим людям и агентам.
 Делай тулзы узкими (читают данные одного собеседника по ctx.client), опасные помечай "danger": true. Только stdlib.
@@ -22,7 +24,7 @@
 import json, os, subprocess, threading, time, urllib.request
 from pathlib import Path
 
-ST = {"declared": {}, "running": False, "last_error": None, "last_error_at": None, "last_ok_at": None, "calls": 0}
+ST = {"wake": threading.Event(), "declared": {}, "running": False, "last_error": None, "last_error_at": None, "last_ok_at": None, "calls": 0}
 
 
 def kits_dir(home: Path) -> Path:
@@ -44,7 +46,7 @@ def load(home: Path):
 
 def public_view(k):
     return {"name": k["name"], "about": k.get("about", ""), "public": bool(k.get("public")),
-            "tools": [{x: t[x] for x in ("name", "description", "parameters", "mutates", "danger", "intro", "public_note") if x in t} for t in k.get("tools", [])]}
+            "tools": [{x: t[x] for x in ("name", "description", "parameters", "mutates", "danger", "intro", "public_note", "title", "emoji", "show", "caption", "user_text") if x in t} for t in k.get("tools", [])]}
 
 
 def save(home: Path, k):
@@ -131,66 +133,19 @@ def run_tool(k, tool, args, ctx):
         return False, f"тулза не выполнилась: {type(e).__name__}: {e}"
 
 
-def run_turn(home, kits, args, ctx, relay_url, cred, relay=None):
-    """Ход ассистента со своим движком: модель владельца (~/.agentnet/engine.json — OpenAI-совместимый адрес, ключ,
-    модель) и его тулзы — здесь, на машине; Сеть прислала промпт, историю и список тулз, ждёт {text, steps, attach}."""
-    try:
-        eng = json.loads((home / "engine.json").read_text())
-    except (OSError, ValueError):
-        return False, "на узле нет ~/.agentnet/engine.json — {\"url\": \"…/v1/chat/completions\", \"key\": \"…\", \"model\": \"…\"}"
-    route = {r["fn"]: r for r in args.get("route") or []}
-    msgs = [{"role": "system", "content": args.get("system") or ""}] + list(args.get("messages") or [])
-    steps, attach_ids = [], []
-    for _ in range(8):
-        body = {"model": eng["model"], "messages": msgs, "max_tokens": 4000, **({"tools": args["tools"]} if args.get("tools") else {})}
-        req = urllib.request.Request(eng["url"], data=json.dumps(body).encode(), headers={"Content-Type": "application/json", "Authorization": "Bearer " + eng["key"]})
-        try:
-            with urllib.request.urlopen(req, timeout=170) as r:
-                m = json.loads(r.read())["choices"][0]["message"]
-        except Exception as e:  # noqa: BLE001
-            return False, f"модель владельца не ответила: {e}"
-        calls = m.get("tool_calls") or []
-        if not calls:
-            return True, json.dumps({"text": m.get("content") or "", "steps": steps, "attach": attach_ids}, ensure_ascii=False)
-        msgs.append({"role": "assistant", "content": m.get("content"), "tool_calls": calls})
-        for c in calls:
-            fn = c["function"]["name"]
-            try:
-                a = json.loads(c["function"].get("arguments") or "{}")
-            except ValueError:
-                a = {}
-            if fn.startswith("net__") and relay:   # тулза Сети: написать, приложить, найти — исполняет Сеть от имени ассистента
-                r = relay("/v1/node/sys", {**(cred() or {}), "assistant": args.get("assistant"), "tool": fn, "args": a,     # чат — куда вернётся ответ адресата
-                                           "client": (ctx.get("client") or {}).get("id"), "thread": ctx.get("thread")})
-                ok, res = bool(r.get("ok")), str(r.get("result") or r.get("error") or "")
-                attach_ids += [i for i in r.get("attach") or [] if i not in attach_ids]
-                steps.append({"tool": fn, "ok": ok})
-                msgs.append({"role": "tool", "tool_call_id": c.get("id") or fn, "content": res[:20_000]})
-                continue
-            r_ = route.get(fn)
-            k = kits.get(r_["toolkit"]) if r_ else None
-            ok, res = run_tool(k, r_["tool"], a, ctx) if k else (False, "нет такой тулзы")
-            if ok and relay_url:
-                res = attach(res, relay_url, cred)
-                try:
-                    attach_ids += json.loads(res).get("attach") or []
-                except (ValueError, AttributeError):
-                    pass
-            steps.append({"tool": fn, "ok": ok})
-            msgs.append({"role": "tool", "tool_call_id": c.get("id") or fn, "content": res[:20_000]})
-    return True, json.dumps({"text": "Не уложился в число шагов.", "steps": steps, "attach": attach_ids}, ensure_ascii=False)
-
-
 def loop(home, relay, cred, log, relay_url=""):
     """Забирать вызовы Сети и исполнять. Без наборов или без подключения — спит и проверяет снова."""
     ST["running"] = True
     last_decl = 0
+    import host as hs       # ассистенты этой машины: история, модель и цикл тулз живут здесь
+    H = hs.Host(home, relay, cred, relay_url, log, lambda: load(home), run_tool, attach)
+    ST["host"] = H
     while True:
         try:
             kits = load(home)
             c = cred()
-            if not c or (not kits and not (home / "engine.json").exists()):
-                time.sleep(20); continue
+            if not c:
+                ST["wake"].wait(20); ST["wake"].clear(); continue     # ключ из /owner будит сразу
             if time.time() - last_decl > 600:
                 declare(home, relay, cred); last_decl = time.time()
             r = relay("/v1/node/calls", {**c, "wait": 50}, 70)
@@ -199,11 +154,12 @@ def loop(home, relay, cred, log, relay_url=""):
             ST["last_error"], ST["last_ok_at"] = None, time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())   # связь с Сетью есть (симуляция 16.11)
             for call in r.get("calls", []):
                 def go(call=call):
-                    if call["tool"] == "__turn__":
-                        ok, res = run_turn(home, kits, call["args"], call["ctx"], relay_url, cred, relay)
+                    if call["tool"] in ("__turn__", "__config__", "__compact__"):
+                        got = H.handle(call)
                         ST["calls"] += 1
-                        log("node: ход ассистента", call["ctx"].get("assistant"), "ok" if ok else "ошибка")
-                        relay("/v1/node/result", {**c, "call": call["call"], "ok": ok, "result": res[:50_000]})
+                        log("node: ассистент", call["tool"], call["ctx"].get("assistant") or (call["args"] or {}).get("assistant"))
+                        if got is not None:
+                            relay("/v1/node/result", {**c, "call": call["call"], "ok": got[0], "result": str(got[1])[:50_000]})
                         return
                     k = kits.get(call["toolkit"])
                     ok, res = run_tool(k, call["tool"], call["args"], call["ctx"]) if k else (False, f"набора {call['toolkit']} на этой машине нет")

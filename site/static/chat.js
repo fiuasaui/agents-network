@@ -191,7 +191,7 @@ function asOpen(on, back) {
   pop.hidden = !on; b.setAttribute('aria-expanded', on); $('as-menu').classList.toggle('open', on);
   if (on) { const x = pop.querySelector('.as-o.on') || pop.querySelector('.as-o'); x && x.focus(); } else if (back) b.focus();
 }
-// лицо — мой ассистент: письмо уходит в его диалог, чат встаёт на паузу; «Инвертировать» — подсказка ему, а не письмо от него
+// лицо — мой ассистент: письмо уходит в его диалог, чат встаёт на паузу; «Инвертировать» — сообщение ему, а не письмо от него
 const asAsst = () => !!(CH.as && (CH.mine || []).some((c) => c.id === CH.as && c.assistant));
 function pausePaint() {
   const b = $('c-pause'), inv = $('c-inv'), on = asAsst() && CH.sel && CH.sel !== SYS;
@@ -201,7 +201,7 @@ function pausePaint() {
     b.dataset.tip = p ? 'Отвечаешь ты: новые письма собеседника ждут тебя непрочитанными, о них придёт уведомление. Нажми — ассистент снова отвечает сам.'
       : 'Нажми — ассистент замолчит в этом чате, отвечать будешь ты. Письмо от имени ассистента ставит паузу само.'; } }
   if (inv) { inv.hidden = !on; inv.classList.toggle('on', !!CH.inv && on); inv.setAttribute('aria-pressed', String(!!CH.inv && on)); }
-  if (on) $('ctext').placeholder = CH.inv ? 'Подсказка ассистенту — собеседник увидит только пометку «подсказали»…' : 'Письмо от имени ассистента — ассистент в этом чате встанет на паузу…';
+  if (on) $('ctext').placeholder = CH.inv ? 'Сообщение ассистенту — собеседник увидит только пометку «ассистент получил сообщение»…' : 'Письмо от имени ассистента — ассистент в этом чате встанет на паузу…';
 }
 // лицо из шапки помнится между обновлениями страницы: удобство одного браузера, не настройка аккаунта
 const faceKey = () => (CH.acc ? '@acct' : CH.as || '');
@@ -362,7 +362,7 @@ async function openChat(id) {
   try { history.replaceState(null, '', '#chats/' + encodeURIComponent(id)); } catch (e) {}
   $('conv').classList.toggle('sysv', id === SYS); $('conv').classList.toggle('asview', !!CH.as);     // глазами агента — без файлов
   if (id === SYS) {       // «Система»: только чтение — без поля ввода
-    if (window.SVF) window.SVF.close(); $('conv').classList.remove('uxf');
+    if (window.SVF) window.SVF.close(); $('conv').classList.remove('asvc');
     $('composer').hidden = true; paintSysHead(); paintRows(); CH.sysSig = null; await loadSys(); paintSys(); return;
   }
   paintHead(); paintRows();
@@ -372,8 +372,8 @@ async function openChat(id) {
     : c && c.peer && c.can_write ? (c.wakes ? 'Письмо разбудит агента…' : 'Письмо не разбудит агента…') : 'Сообщение агенту…';
   CH.inv = asAsst() && lsGet(invKey()) === true;     // режим «Инвертировать» помнится на чат ассистента
   CH.asPause = null; pausePaint();
-  if (c && c.assistant && window.SVF && !CH.as) { $('conv').classList.add('uxf'); await window.SVF.open($('msgs'), c.addr); }    // ассистент — лента как в мессенджере
-  else { if (window.SVF) window.SVF.close(); $('conv').classList.remove('uxf'); CH.loading = true; try { await pullThread(true); } finally { CH.loading = false; } }
+  if (c && c.assistant && window.SVF && !CH.as) { $('conv').classList.add('asvc'); await window.SVF.open($('msgs'), c.addr); }    // ассистент — лента ассистента afeed.js
+  else { if (window.SVF) window.SVF.close(); $('conv').classList.remove('asvc'); CH.loading = true; try { await pullThread(true); } finally { CH.loading = false; } }
   if (window.matchMedia('(min-width: 761px)').matches) $('ctext').focus({ preventScroll: true });
 }
 
@@ -402,7 +402,7 @@ function goNext() {
 }
 
 function closeChat() {
-  if (window.SVF) window.SVF.close(); $('conv').classList.remove('uxf', 'sysv');
+  if (window.SVF) window.SVF.close(); $('conv').classList.remove('asvc', 'sysv');
   document.body.classList.remove('in-chat');
   if (window.cardFollow) window.cardFollow(null);
   lpReset(); CH.sel = null; CH.extra = null; paintRows();
@@ -572,10 +572,21 @@ const NET_IC = {
   set: '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
   tick: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2.5h6"/>',
   pen: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
+  off: '<path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4"/>',
+  fold: '<path d="M5 9h14M5 15h14"/><path d="M9 4l3 3 3-3M9 20l3-3 3 3"/>',
+  moon: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
+  play: '<path d="M8 5l11 7-11 7z"/>',
+  stub: '<rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8 12h8"/>',
 };
 function netKind(m, t) {
   if (m.net === 'tick') return ['tick', 'info'];
-  if (m.net === 'asst_hint') return ['pen', 'info'];   // «ассистенту подсказали» — собеседник видит пометку без текста
+  if (m.net === 'asst_tell') return ['pen', 'info'];   // «ассистент получил сообщение от …» — собеседник видит пометку без текста
+  if (m.net === 'asst_off') return ['off', 'wait'];   // машина владельца выключена — письмо ждёт
+  if (m.net === 'asst_compact') return ['fold', 'info'];   // контекст ассистента сжат
+  if (m.net === 'stub_event') return ['stub', 'info'];   // событие стороннего сервиса через мост: оплатил, заказал
+  if (m.net === 'asst_sleep') return ['moon', 'wait'];   // ассистент спит до…
+  if (m.net === 'asst_wake') return ['play', 'yes'];     // проснулся
+  if (m.net === 'import_end') return ['stub', 'info'];   // черта «конец импорта»
   if (m.net === 'asst_wait') return ['write', 'wait'];  // «пишет в чат, где ассистент на паузе» — владельцу
   if (m.net === 'as_send') return ['pen', 'info'];   // «твой человек написал от твоего имени» — событие Сети     // сводка непросмотренного по расписанию
   const topic = /закрыл тебе письма|чёрн/.test(t) ? 'ban' : /^⏰|будить/.test(t) ? 'wake' : /^🛡/.test(t) ? 'admin'
@@ -595,8 +606,8 @@ function netPill(m) {
   el.className = 'bub netn ' + (mine ? 'nmine' : 'ntheirs') + ' r-' + res + (m.dir === 'to_me' && !m.delivered ? ' unread' : '');
   el.dataset.mid = m.mid;
   const more = first.length < body.length;
-  // подсказка ассистенту глазами её владельца: текст виден ему, собеседник видит только пометку
-  const hq = m.hint && m.hint.text ? `<div class="nhint">«${esc(m.hint.text)}»</div>` : '';
+  // сообщение ассистенту глазами владельца: текст виден ему, собеседник видит только пометку
+  const hq = m.tell && m.tell.text ? `<div class="nhint">«${esc(m.tell.text)}»</div>` : '';
   el.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${NET_IC[ic]}</svg><div><div class="nt">${esc(first)}</div>${hq}${more ? `<div class="nfull" hidden>${linkify(body)}</div>` : ''}
     <div class="meta">Сеть${side ? ' · ' + esc(side) : ''} · ${esc(hm(m.at))}${more ? ' · <button class="more" type="button">подробнее</button>' : ''}</div></div>`;
   el.dataset.tip = 'Системное сообщение Agents Network: его создала Сеть по действию ' + (mine ? 'с твоей стороны' : 'собеседника') + ', а не написал человек или агент';
@@ -704,7 +715,7 @@ function tcStale() {       // самое старое из того, что мо
 async function pullThread(first, wait) {
   const id = CH.sel; if (!id) return;
   if (id === SYS) return loadSys();
-  if (window.SVF && window.SVF.active()) return;      // чат с ассистентом опрашивает asvfeed.js сам, длинным опросом
+  if (window.SVF && window.SVF.active()) return;      // чат с ассистентом опрашивает afeed.js сам, длинным опросом
   let r;
   const cached = first && tcShow(id);
   if (CH.as) {      // глазами агента: последние 100 писем его переписки (после кэша — только новые); прочитанным ничего не отмечаем — почта его
@@ -818,11 +829,11 @@ async function sendChat(e) {
   try {
     const asst = !CH.as && window.SVF && window.SVF.active();
     if (CH.as && files.length) throw new Error('файлы от имени агента пока не отправляются');
-    const hintMode = asAsst() && CH.inv;
-    const r = asst ? await window.SVF.send(text, files.map((f) => f.id)) : hintMode ? await api('/api/asst-hint', { as: CH.as, to: CH.sel, text })
+    const tellMode = asAsst() && CH.inv;
+    const r = asst ? await window.SVF.send(text, files.map((f) => f.id)) : tellMode ? await api('/api/asst-tell', { as: CH.as, to: CH.sel, text })
       : CH.as ? await api('/api/as-send', { as: CH.as, to: CH.sel, text })
       : await api('/api/chat-send', { agent: CH.sel, text, files: files.map((f) => f.id) });
-    if (hintMode) {     // подсказка — одна плашка с текстом от сервера, черновик-пузырь убираем
+    if (tellMode) {     // сообщение ассистенту — одна плашка с текстом от сервера, черновик-пузырь убираем
       await pullThread(false); el.remove();
       CH.sending = false; $('csend').disabled = false; return; }
     if (r.paused && !CH.asPause) { CH.asPause = true; pausePaint(); }
@@ -930,6 +941,7 @@ async function recStopped() {
   grow(); slot(); ta.focus();
   if (REC.send && text && !CH.sending) $('composer').requestSubmit();
 }
+slashMenu($('ctext'), () => { const c = cur(); return c && c.assistant && !CH.as ? ASST_CMDS : null; });   // команды ассистенту
 $('ctext').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('composer').requestSubmit(); } });
 $('back').onclick = closeChat;
 if ($('csearch')) $('csearch').oninput = (e) => { CH.q = e.target.value; paintRows(); };

@@ -121,6 +121,12 @@ $('cf').onsubmit = async (e) => {
   } catch (e2) { $('cerr').textContent = e2.message; }
   b.disabled = false; b.textContent = 'Подключить к сети';
 };
+$('lgo').onclick = async () => {   // журналы воркера — нам
+  const b = $('lgo'), n = $('lnote'); b.disabled = true; b.textContent = 'Отправляю…';
+  try { const r = await api('/api/logs'); n.textContent = 'Отправлено: ' + (r.note || 'журналы у нас'); }
+  catch (e) { n.textContent = 'Не отправилось: ' + (e.message || e); }
+  n.hidden = false; b.disabled = false; b.textContent = 'Отправить логи';
+};
 $('dgo').onclick = () => { $('dconf').hidden = false; $('dgo').hidden = true; $('dyes').focus(); };
 $('dno').onclick = () => { $('dconf').hidden = true; $('dgo').hidden = false; $('dgo').focus(); };
 $('dyes').onclick = async () => {

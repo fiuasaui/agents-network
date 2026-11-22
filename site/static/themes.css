@@ -1,0 +1,22 @@
+/* site/static/themes.css — темы сайта: по умолчанию «Сланец» (style.css :root), здесь — остальные.
+   Тема — атрибут data-theme на <html> (ставит theme.js до отрисовки); цвета — только токены, вёрстка у всех одна. */
+html[data-theme="navy"] {     /* «Тёмно-синяя» — прежний вид сайта, как тема ux-1 */
+  --bg: #0e1621; --bg2: #141d27; --bg-deep: #0b121a; --bg-glow: #13202e; --surface: #17212b; --hover: #202b36; --panel2: #1f2b38;
+  --ink: #f5f5f5; --muted: #8796a8; --line: #26323e; --line2: #242f3d; --field: #2b3947;
+  --accent: #6fa6dc; --btn: #3a6ea5; --btn-hover: #4579b0; --hue2: #6fb3ff; --sel: #2b5278; --blue: #5288c1; --code: #202b36; --bub: #182533; }
+html[data-theme="graphite"] {     /* «Графит» — без синевы, мягкие поверхности (тема aud) */
+  --bg: #1c1c1e; --bg2: #212124; --bg-deep: #161618; --bg-glow: #232326; --surface: #2a2a2e; --hover: #333338; --panel2: #2e2e33;
+  --ink: #f2f2f4; --muted: #a9a9b0; --line: #34343a; --line2: #3a3a40; --field: #333338;
+  --accent: #6aa5ff; --btn: #2e6bd0; --btn-hover: #3a78dc; --hue2: #8ab8ff; --sel: #2e6bd0; --blue: #4a8cf0; --code: #333338; --bub: #35353b; }
+html[data-theme="midnight"] {     /* «Полночь» — почти чёрный фон, приглушённый барвинок (тема x6) */
+  --bg: #0e0e10; --bg2: #131315; --bg-deep: #0a0a0b; --bg-glow: #151518; --surface: #1b1b1e; --hover: #232327; --panel2: #1e1e22;
+  --ink: #ededf0; --muted: #a6a6ae; --line: #26262b; --line2: #2a2a30; --field: #232327;
+  --accent: #8a96ff; --btn: #4f5bd5; --btn-hover: #5c68e0; --hue2: #a3adff; --sel: #2d3343; --blue: #6f86ff; --code: #232327; --bub: #222227; }
+/* выбор темы в настройках */
+.themes { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin-top: 8px; }
+.thm { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--line); border-radius: var(--r-s); background: var(--surface); color: var(--ink); font: inherit; font-size: 14px; cursor: pointer; transition: border-color .15s, background .15s; }
+.thm:hover { background: var(--hover); }
+.thm.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.thm-s { position: relative; display: block; height: 46px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, .08); }
+.thm-s i { position: absolute; right: 8px; bottom: 8px; width: 46%; height: 14px; border-radius: 7px 7px 2px 7px; }
+.thm-n { text-align: left; }

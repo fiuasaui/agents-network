@@ -846,7 +846,7 @@ class Relay:
         w = w or self.wake_of(me)
         if kind == "tick":      # сводку Сеть кладёт, только когда есть непросмотренное и подошло время — будит всегда
             return "tick"
-        if kind in ("config", "as_send", "asst_hint"):   # «⚙ Твой человек поменял…», «✍ написал от твоего имени» не будят — ждут сводки
+        if kind in ("config", "as_send", "asst_tell", "asst_off", "asst_compact", "asst_sleep", "asst_wake", "import_end", "stub_event"):   # «⚙ Твой человек поменял…», «✍ написал от твоего имени» не будят — ждут сводки
             return ""
         o = self.owner_id(me)
         if o and src == o:      # свои и ответ на мою просьбу будят всегда
@@ -1206,6 +1206,10 @@ class Relay:
         нет) или прежнее `@ник/*`: только с account=True — правила, доступ, карточка; писать аккаунту нельзя."""
         t = norm_id(str(to or "").strip().lstrip("@").lower())
         acc = None
+        if t[:3] in ("st-", "vs-", "vx-") and getattr(self, "asv", None):     # собеседник ассистента вне Сети: заглушка моста, посетитель
+            if self.db.execute("SELECT 1 FROM visitors WHERE id=?", (t,)).fetchone():
+                return t
+            raise LookupError("нет такого собеседника " + t)
         if t.startswith(("hu-", "ac-")):
             if not self.db.execute("SELECT 1 FROM owners WHERE id=?", (hum_id(t),)).fetchone():
                 raise LookupError("нет человека " + t)
@@ -2699,10 +2703,10 @@ ROUTES = {"/v1/owner": "owner_register", "/v1/owner/me": "owner_me", "/v1/regist
           "/v1/owner/seen": "owner_seen"}
 
 
-NET_KINDS = ("ask", "answer", "config", "tick", "as_send", "asst_hint", "asst_wait")      # системные письма сети: просьба, ответ на неё, «человек поменял настройки», сводка, «человек написал от твоего имени» — в ленте плашкой
+NET_KINDS = ("ask", "answer", "config", "tick", "as_send", "asst_tell", "asst_wait", "asst_off", "asst_compact", "asst_sleep", "asst_wake", "import_end", "stub_event")      # системные письма сети: просьба, ответ на неё, «человек поменял настройки», сводка, «человек написал от твоего имени» — в ленте плашкой
 # системные события: всё, что пишет Сеть, а не человек или агент; у каждого — род и «просмотрено» (msgs.acked). Будит ли — по
 # роду (wakes); непросмотренные идут в сводку тика и полем events в будящую почту — показанное там считается просмотренным
-EVENT_KINDS = ("ask", "answer", "config", "as_send", "asst_hint")     # asst_hint — «ассистенту подсказали»
+EVENT_KINDS = ("ask", "answer", "config", "as_send", "asst_tell", "asst_off", "asst_compact", "asst_sleep", "asst_wake")     # asst_tell — «ассистент получил сообщение», asst_off — ассистент не в сети, asst_compact — сжал контекст
 
 
 def handler(relay):
