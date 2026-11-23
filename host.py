@@ -367,6 +367,27 @@ def public_cfg(v):
             "parts": v.get("parts") or DEF_PARTS, "escalate": v.get("escalate") or {"on": True, "to": "admin"}}
 
 
+CAP_RE = re.compile(r'"caption"\s*:\s*"((?:[^"\\]|\\.)*)')
+
+
+def gen_item(tc, route):
+    """Строка ленты для вызова, который модель ещё пишет: подпись — из начала аргументов, когда caption уже есть."""
+    fn = tc["function"]["name"]
+    rt = route.get(fn) or {}
+    item = {"fn": fn, "title": rt.get("title") or fn, "emoji": rt.get("emoji") or "", "run": True, "gen": True}
+    m = CAP_RE.search(tc["function"].get("arguments") or "")
+    if m:
+        try:
+            cap = json.loads('"' + m.group(1) + '"')
+        except ValueError:
+            cap = m.group(1)
+        if rt.get("user_text") and "{caption}" in rt["user_text"]:
+            item["param"] = render(rt["user_text"], {"caption": cap})
+    elif rt.get("caption"):
+        item["param"] = rt["caption"]
+    return item
+
+
 def render(tpl, vals):
     """Шаблон подписи тулзы: {имя} → значение параметра вызова или поля ответа; неизвестное — пусто. Только плоские значения."""
     def one(m):
@@ -379,7 +400,7 @@ def render(tpl, vals):
 def llm_stream(url, headers, body, on_delta, timeout=180):
     """Один вызов модели со стримингом (OpenAI-совместимый): (текст, мышление, вызовы тулз, usage)."""
     req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={"Content-Type": "application/json", **headers})
-    text, think, calls, usage, last = "", "", {}, {}, 0.0
+    text, think, calls, usage, last, partial = "", "", {}, {}, 0.0, []
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             for raw in r:
@@ -397,8 +418,10 @@ def llm_stream(url, headers, body, on_delta, timeout=180):
                     raise RuntimeError(str(ch["error"])[:300])
                 if ch.get("usage"):
                     usage = ch["usage"]
+                newtc = False
                 for c in ch.get("choices") or []:
                     d = c.get("delta") or {}
+                    newtc = newtc or bool(d.get("tool_calls"))
                     think += d.get("reasoning_content") or d.get("reasoning") or ""
                     text += d.get("content") or ""
                     for tc in d.get("tool_calls") or []:
@@ -407,16 +430,18 @@ def llm_stream(url, headers, body, on_delta, timeout=180):
                         f = tc.get("function") or {}
                         x["function"]["name"] += f.get("name") or ""
                         x["function"]["arguments"] += f.get("arguments") or ""
-                if time.time() - last > 0.25:
-                    on_delta(text, think); last = time.time()
+                # вызов тулзы начался — лента рисует его сразу: подпись caption модель пишет первой
+                if time.time() - last > 0.25 or (newtc and not partial):
+                    partial = [calls[i] for i in sorted(calls)]
+                    on_delta(text, think, partial); last = time.time()
     except urllib.error.HTTPError as e:
         try:
             msg = json.loads(e.read()).get("error")
         except Exception:  # noqa: BLE001
             msg = e.reason
         raise RuntimeError(f"модель ответила {e.code}: {str(msg)[:200]}")
-    on_delta(text, think)
     out = [calls[i] for i in sorted(calls)]
+    on_delta(text, think, out)
     for i, c in enumerate(out):
         c["id"] = c["id"] or f"call_{int(time.time())}_{i}"
     return text, think, out, usage
@@ -586,14 +611,20 @@ class Host:
         for rnd in range(ROUNDS):
             msgs = context(c, aid, chat, system, think=conf["model"].get("provider") != "own")
             base = len(blocks)
-            def on_delta(text, think, base=base):
+            def on_delta(text, think, partial=(), base=base):
                 th = shown_think(think)
-                self.push(call, a, busy=True, blocks=blocks[:base] + ([{"t": "think", "text": th[-4000:]}] if th else []), text=text)
+                live = blocks[:base] + ([{"t": "think", "text": th[:4000]}] if th else [])
+                if partial:     # модель пишет вызов тулзы: текст до него — фраза шага, а не ответ; вызов — строкой с подписью, как только она есть
+                    if (text or "").strip():
+                        live.append({"t": "say", "text": text[:4000]})
+                    live.append({"t": "tools", "items": [gen_item(x, route) for x in partial if x["function"]["name"]]})
+                    text = ""
+                self.push(call, a, busy=True, blocks=live, text=text)
             text, think, calls, usage = self.model_call(a, conf, msgs, fns if rnd < ROUNDS - 1 else [], on_delta)
             if usage.get("prompt_tokens"):
                 chat_set(c, aid, chat, last_prompt=int(usage["prompt_tokens"]), last_at=time.time())
             if shown_think(think):
-                blocks.append({"t": "think", "text": shown_think(think)[-8000:]})
+                blocks.append({"t": "think", "text": shown_think(think)[:8000]})
             if not calls and not (text or "").strip() and not files and empty < EMPTY_RETRY and rnd < ROUNDS - 1:
                 empty += 1      # молчания нет: ход кончается текстом собеседнику — повтор, модель знает, почему
                 self.log("host: пустой ответ модели", aid, chat, f"повтор {empty}")
@@ -666,6 +697,8 @@ class Host:
     def exec_tool(self, a, ctx, kits, fn, rt, args):
         """→ (ok, ответ, [id файлов для ответа]). Свои тулзы — здесь же; чужой открытый набор — через Сеть его узлу; тулзы Сети — Сеть."""
         got = []
+        if rt.get("strip") and isinstance(args, dict):     # подпись, которую добавила Сеть, тулзе владельца не нужна
+            args = {k: v for k, v in args.items() if k not in rt["strip"]}
         if fn in (ADMIN_FN, "node__admin"):      # node__admin — прежнее имя в старых историях
             ok, res = self.admin_call(a, args)
             return ok, res, got
