@@ -76,7 +76,7 @@ function paintRows() {
   rows.sort((a, b) => (b.pinned || 0) - (a.pinned || 0) || when_(b) - when_(a));   // закреплённые сверху (последний закреплённый — первым), без писем — внизу
   const un = CH.list.filter((c) => !c.archived).reduce((s, c) => s + c.unread, 0);
   $('tb-unread').hidden = !un; $('tb-unread').textContent = un;
-  const archived = CH.as ? [] : CH.list.filter((c) => c.archived && inSeg(c)).sort((a, b) => when_(b) - when_(a));
+  const archived = CH.list.filter((c) => c.archived && inSeg(c)).sort((a, b) => when_(b) - when_(a));
   if (!arch && !q && !fttl && archived.length) {          // строка «Архив»: имена по свежести, у кого непрочитанное — белым
     const li = document.createElement('li'); li.className = 'row arch-row'; li.tabIndex = 0; li.setAttribute('role', 'button');
     const n = archived.filter((c) => c.unread).length;
@@ -155,7 +155,8 @@ function asRow(c) {
   const own = c.type === 'owner';
   return { id: c.id, peer: true, type: own ? 'human' : c.type, human: own || c.type === 'human', assistant: c.type === 'assistant', own,
     name: own ? humanName(ME.name, ME.nick) : c.name, nick: c.nick, addr: c.peer, av: c.av, seen: c.seen, unread: 0, created: 0,
-    last: c.last ? { dir: c.last.dir === 'out' ? 'me' : 'to_me', text: c.last.text, at: c.at } : null };
+    last: c.last ? { dir: c.last.dir === 'out' ? 'me' : 'to_me', text: c.last.text, at: c.at } : null,
+    ...(c.archived ? { archived: true } : {}), ...(c.pinned ? { pinned: c.pinned } : {}) };     // у лица агента свой архив
 }
 // «от чьего имени»: переключатель в шапке между балансом и профилем — я сам или мой агент. Выбрал
 // агента — кабинет показывает его чаты, «Систему» и «Сеть» его глазами, письма уходят от его имени с пометкой «написал человек»
@@ -958,12 +959,12 @@ if ($('csearch')) $('csearch').addEventListener('blur', () => { if (!$('csearch'
 
 // меню чата как в мессенджере: правый клик по строке, на телефоне — долгое нажатие 0,5 с
 async function archiveChat(c, on) {
-  try { await api('/api/archive', { agent: c.id, on }); c.archived = on; if (on) delete c.pinned; paintRows(); } catch (e) {}
+  try { await api('/api/archive', { agent: c.id, on, ...(CH.as ? { as: CH.as } : {}) }); c.archived = on; if (on) delete c.pinned; paintRows(); } catch (e) {}
 }
 // закрепить: сверху во «Всех» и в своём разделе; закрепление достаёт чат из архива
 async function pinChat(c, on) {
-  if (c.id === SYS) { try { const r = await api('/api/pin', { agent: '__sys', on }); CH.sysPin = on ? (r.pinned || Date.now() / 1000) : 0; paintRows(); } catch (e) {} return; }
-  try { const r = await api('/api/pin', { agent: c.id, on }); if (on) { c.pinned = r.pinned || Date.now() / 1000; c.archived = false; } else delete c.pinned; paintRows(); } catch (e) {}
+  if (c.id === SYS) { try { const r = await api('/api/pin', { agent: '__sys', on, ...(CH.as ? { as: CH.as } : {}) }); CH.sysPin = on ? (r.pinned || Date.now() / 1000) : 0; paintRows(); } catch (e) {} return; }
+  try { const r = await api('/api/pin', { agent: c.id, on, ...(CH.as ? { as: CH.as } : {}) }); if (on) { c.pinned = r.pinned || Date.now() / 1000; c.archived = false; } else delete c.pinned; paintRows(); } catch (e) {}
 }
 // удалить чат у себя, как в Telegram: чужой агент или человек — письма до этой минуты скрыты, напишет снова — чат вернётся;
 // ассистент своей жизни не имеет — переписка с ним стирается, начнёт с нуля
@@ -1045,7 +1046,13 @@ function lpReset() { if (CH.lpAbort) CH.lpAbort.abort(); }
 document.addEventListener('visibilitychange', () => { if (document.hidden || TAB !== 'chats') return; loadChats(); if (CH.sel) lpReset(); });
 
 // клик по отключённой вкладке «Чаты» под лицом аккаунта — никуда не ведёт, подсказка остаётся
-document.addEventListener('click', (e) => { const t = e.target.closest && e.target.closest('a[data-tab="chats"].tab-off'); if (t) { e.preventDefault(); e.stopPropagation(); } }, true);
+// лицо общее для всех вкладок и страниц (localStorage an_as): сменили его в другой вкладке, на странице участника или вернулись «Назад» —
+// кабинет берёт лицо оттуда, а не держит своё старое; иначе «Чаты» оставались закрытыми под уже снятым «Весь аккаунт»
+function faceSync() { let v = ''; try { v = localStorage.getItem('an_as') || ''; } catch (e) { return; } if (v !== faceKey() && (v === '@acct' || !v || (CH.mine || []).some((c) => c.id === v))) setAs(v || null); }
+window.addEventListener('pageshow', faceSync); window.addEventListener('storage', (e) => { if (e.key === 'an_as') faceSync(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) faceSync(); });
+document.addEventListener('click', (e) => { const t = e.target.closest && e.target.closest('a[data-tab="chats"].tab-off'); if (!t) return;
+  faceSync(); if (CH.acc) { e.preventDefault(); e.stopPropagation(); } else asPaint(); }, true);
 
 // тумблер паузы ассистента и «Инвертировать» — только под лицом своего ассистента
 if ($('c-pause')) $('c-pause').onclick = async () => {
