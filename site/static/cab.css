@@ -499,6 +499,20 @@ a.me-chip { text-decoration: none; cursor: pointer; transition: background 150ms
 .tkr > div { min-width: 0; } .tkt { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .tkt code { background: var(--code); border-radius: 6px; padding: 1px 6px; font-size: 13px; }
 .asvph { justify-content: space-between; }
+/* блоки системного промпта ассистента: строка — галочка · род · заголовок · действия; текст блока — по 👁 */
+.pbl { display: flex; flex-direction: column; gap: 4px; }
+.pbr { display: grid; grid-template-columns: 18px auto minmax(0, 1fr) auto; align-items: center; column-gap: 10px; padding: 6px 8px; border-radius: 10px; background: var(--bg); transition: opacity .2s; }
+.pbr.off { opacity: .5; } .pbr input[type=checkbox] { width: 18px; height: 18px; margin: 0; }
+.pbt { color: var(--ink); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pbk { min-width: 92px; text-align: center; } .pbk-network { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.pbk-kit { background: color-mix(in srgb, var(--ok) 18%, transparent); }
+.pbk-text, .pbk-precedents, .pbk-file, .pbk-url { background: rgba(255, 255, 255, .07); color: var(--muted); }
+.pba { display: flex; gap: 2px; } .pba .ib { min-width: 30px; height: 30px; border-radius: 8px; border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 15px; }
+.pba .ib:hover:not(:disabled) { background: rgba(255, 255, 255, .08); color: var(--ink); } .pba .ib:disabled { opacity: .3; cursor: default; }
+.pbr .pbx { grid-column: 1 / -1; margin: 6px 0 2px; max-height: 260px; overflow: auto; }
+.pbadd { display: grid; grid-template-columns: auto minmax(0, 2fr) minmax(0, 1fr) auto; gap: 8px; margin-top: 6px; }
+@media (max-width: 760px) { .pbadd { grid-template-columns: minmax(0, 1fr); } .pbk { min-width: 0; font-size: 11px; padding: 1px 6px; }
+  .pbr { column-gap: 7px; padding: 6px; } .pbt { white-space: normal; overflow-wrap: break-word; font-size: 13.5px; } .pba .ib { min-width: 26px; } }
 @media (max-width: 760px) { .asstf .asstg { grid-template-columns: minmax(0, 1fr); } .tkr { flex-direction: column; } }
 /* файлы в чате кабинета */
 .cfiles { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }

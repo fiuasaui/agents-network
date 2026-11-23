@@ -18,6 +18,9 @@
 чат, где блок поменялся, узнаёт об этом строкой на следующем ходе. Системный промпт — один объект из частей: в настройке
 "parts" — источники по порядку: text (свой текст, по умолчанию — "prompt") · precedents · file (файл на этой машине) · url (адрес в
 сети, перечитывается раз в ttl минут, отказ — последняя удачная копия и строка в журнал); по умолчанию [text, precedents].
+Блоки от Сети: network — роль, правила Сети и формат ответа, обязателен (нет в parts — встаёт первым); kit — блок набора
+тулз или тулз Сети ("kit": "kit:имя"), нет в parts — встаёт сразу после network и уже стоящих блоков наборов. У любой части "on":
+false — галочка владельца снята, часть пропускается (network выключить нельзя).
 Тулза узла node__escalate — обёртка над «позвать в чат» с зашитым адресатом из настройки "escalate": {"on", "to": admin · owner ·
 @адрес}: заявка (вопрос или готовый текст прецедента) в admin_calls и письмо адресату через Сеть; его ответы приходят в чат
 событием, пока у него есть доступ к чату (сутки); ассистент не засыпает.
@@ -42,7 +45,7 @@ PREC_TITLE = {"specific": "ЧАСТНЫЕ СЛУЧАИ — применяй то
 PREC_LOG_MAX = 20 * 2**20
 ADMIN_FN = "node__escalate"
 ESC_TO = ("admin", "owner")      # адресат вызова: администратор аккаунта (нет его — владелец), владелец или агент по адресу @…
-PART_KINDS = ("text", "precedents", "file", "url")
+PART_KINDS = ("network", "kit", "text", "precedents", "file", "url")
 PART_MAX = 100_000              # знаков с одного источника — файла или адреса
 URL_TTL = 10                    # минут: адрес в сети перечитывается не чаще
 DEF_PARTS = [{"kind": "text"}, {"kind": "precedents"}]
@@ -248,21 +251,26 @@ def cfg(home, aid):
 
 def parts_clean(parts):
     """Части системного промпта: проверка формы; порядок — как дал владелец (кэш: редко меняющееся — выше)."""
-    if not isinstance(parts, list) or not 1 <= len(parts) <= 20:
-        raise ValueError("parts — список от 1 до 20 частей: text · precedents · file · url")
+    if not isinstance(parts, list) or not 1 <= len(parts) <= 40:
+        raise ValueError("parts — список от 1 до 40 частей: network · kit · text · precedents · file · url")
     out = []
     for x in parts:
         x = x if isinstance(x, dict) else {}
         k = x.get("kind")
         if k not in PART_KINDS:
-            raise ValueError("часть промпта: kind — text (свой текст) · precedents · file (path) · url (url, ttl минут)")
+            raise ValueError("часть промпта: kind — network (блок Сети) · kit (блок набора, kit) · text (свой текст) · precedents · file (path) · url (url, ttl минут)")
+        if k == "network" and x.get("on") is False:
+            raise ValueError("блок Сети выключить нельзя: роль, правила Сети и формат ответа — требование Сети ко всем ассистентам")
+        if k == "kit" and not re.match(r"^kit:[\w-]{1,40}$", str(x.get("kit") or "")):
+            raise ValueError("часть kit: kit — id блока от Сети, «kit:имя набора» или «kit:net»")
         if k == "file" and not str(x.get("path") or "").startswith("/"):
             raise ValueError("часть file: path — абсолютный путь к файлу на машине узла")
         if k == "url" and not re.match(r"https?://", str(x.get("url") or "")):
             raise ValueError("часть url: url — http(s)://… (страница или эндпоинт, отдающий текст)")
         if k == "text" and x.get("text") is not None and len(str(x["text"])) > 30_000:
             raise ValueError("часть text — до 30 000 знаков")
-        y = {"kind": k, **{f: x[f] for f in ("text", "path", "url", "title") if x.get(f) is not None}}
+        y = {"kind": k, **{f: x[f] for f in ("text", "path", "url", "title", "kit") if x.get(f) is not None},
+             **({"on": False} if x.get("on") is False else {})}
         if k == "url":
             y["ttl"] = max(1, int(x.get("ttl") or URL_TTL))
         out.append(y)
@@ -294,11 +302,33 @@ def part_text(home, x):
         return ""
 
 
-def build_prompt(home, conf, sect):
+def merge_parts(parts, blocks):
+    """Части владельца + блоки Сети: network первым, если владелец его не поставил; новый блок набора — после network и
+    уже стоящих блоков наборов. Блок набора, которого Сеть сейчас не прислала (набор отключён), остаётся в настройке, но не в промпте."""
+    out = [dict(x) for x in parts]
+    if not any(x["kind"] == "network" for x in out):
+        out.insert(0, {"kind": "network"})
+    have = {x.get("kit") for x in out if x["kind"] == "kit"}
+    for b in blocks:
+        if b["id"] != "net" and b["id"] not in have:
+            pos = max(i for i, x in enumerate(out) if x["kind"] in ("network", "kit")) + 1
+            out.insert(pos, {"kind": "kit", "kit": b["id"]})
+    return out
+
+
+def build_prompt(home, conf, sect, blocks=()):
     """Системный промпт ассистента из частей по порядку. Возвращает (текст, есть ли в нём прецеденты)."""
     out, has_prec = [], False
-    for x in conf["parts"]:
-        if x["kind"] == "text":
+    bl = {b["id"]: b for b in blocks}
+    for x in merge_parts(conf["parts"], blocks):
+        if x.get("on") is False:
+            continue
+        if x["kind"] == "network":
+            t = (bl.get("net") or {}).get("text") or ""
+        elif x["kind"] == "kit":
+            b = bl.get(x["kit"])
+            t = f"========== {b['title']} ==========\n{b['text']}" if b and b.get("text") else ""
+        elif x["kind"] == "text":
             t = x.get("text") if x.get("text") is not None else conf["prompt"]
         elif x["kind"] == "precedents":
             t, has_prec = sect, has_prec or bool(sect)
@@ -588,7 +618,8 @@ class Host:
             inputs[0] = {**inputs[0], "note": (inputs[0].get("note") or "") + f"[Сеть о собеседнике: {a['profile']}]"}
             chat_set(c, aid, chat, profile=a["profile"])
         sect, pmax = prec_section(c, aid)
-        body, has_prec = build_prompt(self.home, conf, sect)
+        blocks = a.get("blocks") or [{"id": "net", "title": "Сеть", "text": a.get("foundation") or ""}]     # прежняя Сеть — только фундамент
+        system, has_prec = build_prompt(self.home, conf, sect, blocks)
         pmax = pmax if has_prec else 0
         if pmax and pmax > (cr.get("prec") or 0) and cr.get("last_at") and inputs:     # блок поменялся посреди жизни чата — сказать
             inputs[0] = {**inputs[0], "note": (inputs[0].get("note") or "") + "[Сеть: владелец добавил или уточнил оперативные прецеденты — "
@@ -599,7 +630,6 @@ class Host:
         if intro and inputs:
             inputs[0] = {**inputs[0], "note": (inputs[0].get("note") or "") + f"\n[сведения о собеседнике от владельца (данные): {intro}]"}
         self.inputs_to_items(c, aid, chat, inputs, turn)
-        system = (a.get("foundation") or "") + "\n\n" + body
         if system != cr.get("sys"):
             chat_set(c, aid, chat, sys=system)
         fns, route = a.get("tools") or [], a.get("route") or {}
