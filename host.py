@@ -31,6 +31,10 @@ SUMMARIZER = "gpt-6-luna"     # дешёвая модель Сети для св
 TOOL_MAX = 50_000         # потолок ответа тулзы в истории; больше — с пометкой модели
 KEEP_PAIRS = 5          # сколько последних пар «собеседник → ответ» остаётся дословно после сжатия
 ROUNDS = 30             # шагов «модель → тулзы» на один ответ
+EMPTY_RETRY = 2         # пустой ответ модели — сбой: столько повторов с пометкой модели, потом честная строка собеседнику
+EMPTY_NOTE = ("[событие Сети — собеседник его не видит] Твой ход кончился пустым ответом — собеседнику ничего не ушло. Каждый ход "
+              "кончается твоим текстом собеседнику, он его ждёт. Ответь ему сейчас.")
+EMPTY_TEXT = "Ассистент не смог ответить — напиши ещё раз чуть позже."
 MAX_OUT = 4000
 PRIORITIES = ("specific", "medium", "frequent")      # порядок в блоке: редкие меняются реже — стабильнее для кэша
 PREC_TITLE = {"specific": "ЧАСТНЫЕ СЛУЧАИ — применяй только если ситуация совпала точно, не притягивай к похожим",
@@ -577,7 +581,7 @@ class Host:
         if conf["escalate"]["on"] and not any((f.get("function") or {}).get("name") == ADMIN_FN for f in fns):
             fns = fns + [ADMIN_TOOL]        # узловая тулза: заявка ответственному; выключить — "escalate": {"on": false}
             route = {**route, ADMIN_FN: {"kind": "node", "title": "Зову ответственного", "emoji": "🧑‍💼"}}
-        blocks, files, usage, final = [], [], {}, ""
+        blocks, files, usage, final, empty = [], [], {}, "", 0
         kits = self.kits_fn()
         for rnd in range(ROUNDS):
             msgs = context(c, aid, chat, system, think=conf["model"].get("provider") != "own")
@@ -590,8 +594,14 @@ class Host:
                 chat_set(c, aid, chat, last_prompt=int(usage["prompt_tokens"]), last_at=time.time())
             if shown_think(think):
                 blocks.append({"t": "think", "text": shown_think(think)[-8000:]})
+            if not calls and not (text or "").strip() and not files and empty < EMPTY_RETRY and rnd < ROUNDS - 1:
+                empty += 1      # молчания нет: ход кончается текстом собеседнику — повтор, модель знает, почему
+                self.log("host: пустой ответ модели", aid, chat, f"повтор {empty}")
+                add(c, aid, chat, "user", time.strftime("[%d.%m %H:%M UTC] ", time.gmtime()) + EMPTY_NOTE, turn=turn)
+                continue
             if not calls:
-                add(c, aid, chat, "assistant", text, reasoning=think, turn=turn)
+                if (text or "").strip() or files:      # пустую реплику в историю не кладём — вместо неё событие ниже
+                    add(c, aid, chat, "assistant", text, reasoning=think, turn=turn)
                 final = text
                 break
             add(c, aid, chat, "assistant", text or None, tool_calls=calls, reasoning=think, turn=turn)
@@ -642,10 +652,11 @@ class Host:
             final = "Не уложился в число шагов. Напиши «продолжай» — доделаю."
             add(c, aid, chat, "assistant", final, turn=turn)
         m = conf["model"]
-        if not (final or "").strip() and not files:     # модель решила промолчать — собеседнику ничего, а не заглушка
-            self.reply(call, a, "", blocks, usage, skip=True)
-            if conf["autocompact"] and int(usage.get("prompt_tokens") or 0) >= conf["window"]:
-                self.compact(aid, chat, system, auto=True, a=a)
+        if not (final or "").strip() and not files:     # и после повторов пусто — сбой: собеседнику честная строка, модели — событие, владельцу — журнал
+            self.log("host: ассистент не ответил собеседнику", aid, chat, f"пусто {empty + 1} раз")
+            add(c, aid, chat, "user", time.strftime("[%d.%m %H:%M UTC] ", time.gmtime()) + "[событие Сети — собеседник его не видит] "
+                f"Ты {empty + 1} раза подряд кончил ход пустым ответом; собеседнику Сеть написала от себя: «{EMPTY_TEXT}»", turn=turn)
+            self.reply(call, a, EMPTY_TEXT, blocks, usage, error=True)
             return
         self.reply(call, a, final, blocks, usage, files,
                    model=("своя: " if m.get("provider") == "own" else "") + str(m.get("model") or ""))
