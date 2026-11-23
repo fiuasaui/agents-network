@@ -2275,9 +2275,13 @@ class Relay:
                         self.knock_answer(me, peer, True)
                 said.append({"write": "может писать", "ask": "только просить", "closed": "ни писем, ни просьб",
                              None: "как у всех"}[reach] + (to if reach else ""))
-        if wake is not None:
-            if subj == me and self.kind3(me) != "agent":
+        if wake is not None and subj == me and self.kind3(me) != "agent":
+            if wake is True or wake in (1, "on"):
                 raise ValueError("человека и ассистента письма не будят — ступени «Пишет и будит» у них нет")
+            wake = None     # «Пишет» человеку или ассистенту — просто write: будить у них нечего
+            if level == "write" and said:
+                said[-1] = LEVEL_TEXT["write"].lower() + to
+        if wake is not None:
             ws = subj       # с аккаунта звонок действует на всех агентов
             on = wake is True or wake in (1, "on")
             g = self.rule_get(ws, tgt)
