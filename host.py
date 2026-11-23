@@ -28,6 +28,7 @@ from pathlib import Path
 
 DEF_WINDOW, MIN_WINDOW = 200_000, 40_000
 SUMMARIZER = "gpt-6-luna"     # дешёвая модель Сети для сводки при сжатии
+TOOL_MAX = 50_000         # потолок ответа тулзы в истории; больше — с пометкой модели
 KEEP_PAIRS = 5          # сколько последних пар «собеседник → ответ» остаётся дословно после сжатия
 ROUNDS = 30             # шагов «модель → тулзы» на один ответ
 MAX_OUT = 4000
@@ -624,7 +625,10 @@ class Host:
                     except ValueError:
                         rj = None
                     item["param"] = render(rt["user_text"], {**(args if isinstance(args, dict) else {}), **(rj if isinstance(rj, dict) else {})})
-                add(c, aid, chat, "tool", res[:50_000], tool_call_id=tc["id"], turn=turn)
+                if len(res) > TOOL_MAX + 300:     # (+300 — пометка Сети, если она уже обрезала) большой ответ — проблема тулзы: модели пометка, владельцу — запись в журнал узла
+                    self.log("host: тулза вернула слишком много", fn, len(res))
+                    res = res[:TOOL_MAX] + f"\n[обрезано узлом: ответ тулзы — показано {TOOL_MAX:,} из {len(res):,} знаков]".replace(",", " ")
+                add(c, aid, chat, "tool", res, tool_call_id=tc["id"], turn=turn)
             self.push(call, a, busy=True, blocks=blocks, text="")
             more = self.relay("/v1/node/pending", {**(self.cred() or {}), "call": call, "assistant": aid, "client": client, "thread": a.get("thread")}, 30)
             if more.get("inputs"):          # письмо собеседника посреди хода — в этот же ход, после результата тулзы
