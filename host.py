@@ -198,16 +198,20 @@ def chat_set(c, aid, chat, **kw):
             c.execute(f"UPDATE chats SET {k}=? WHERE asst=? AND chat=?", (v, aid, chat))
 
 
-def context(c, aid, chat, system):
-    """Системный промпт + сводка последнего сжатия (если было) + история после его границы — как есть, без переписывания."""
+def context(c, aid, chat, system, think=False):
+    """Системный промпт + сводка последнего сжатия (если было) + история после его границы — как есть, без переписывания.
+    think — вернуть модели её мышление (`reasoning_content`): шлюз Сети несёт в нём зашифрованное мышление модели и отдаёт его
+    обратно провайдеру; без него модель между шагами и ходами теряет собственные рассуждения."""
     comp = c.execute("SELECT summary, keep_from FROM compactions WHERE asst=? AND chat=? ORDER BY id DESC LIMIT 1", (aid, chat)).fetchone()
-    rows = c.execute("SELECT role, content, tool_calls, tool_call_id FROM items WHERE asst=? AND chat=? AND id>=? ORDER BY id",
+    rows = c.execute("SELECT role, content, tool_calls, tool_call_id, reasoning FROM items WHERE asst=? AND chat=? AND id>=? ORDER BY id",
                      (aid, chat, comp[1] if comp else 0)).fetchall()
     msgs = [{"role": "system", "content": system}]
     if comp:
         msgs.append({"role": "user", "content": "[Сводка разговора до этого места — прежние сообщения сжаты, чтобы уместиться в окно]\n" + comp[0]})
-    for role, content, calls, tcid in rows:
+    for role, content, calls, tcid, reasoning in rows:
         m = {"role": role, "content": json.loads(content) if content is not None else None}
+        if think and role == "assistant" and reasoning:
+            m["reasoning_content"] = reasoning
         if calls:
             m["tool_calls"] = json.loads(calls)
         if tcid:
@@ -575,7 +579,7 @@ class Host:
         blocks, files, usage, final = [], [], {}, ""
         kits = self.kits_fn()
         for rnd in range(ROUNDS):
-            msgs = context(c, aid, chat, system)
+            msgs = context(c, aid, chat, system, think=conf["model"].get("provider") != "own")
             base = len(blocks)
             def on_delta(text, think, base=base):
                 th = shown_think(think)
