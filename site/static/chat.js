@@ -1005,10 +1005,32 @@ $('rows').addEventListener('contextmenu', (e) => { const r = e.target.closest('.
 
 function chatsStart() {
   clearInterval(CH.timer); clearInterval(CH.ltimer);
-  CH.ltimer = setInterval(() => { if (!document.hidden && TAB === 'chats') loadChats(); }, 8000);
+  CH.ltimer = setInterval(() => { if (!document.hidden && TAB === 'chats') loadChats(); }, 30000);    // запасной ход; главное — pulseLoop
   // открытый чат — длинным опросом; «глазами агента» — по-прежнему раз в 4 с; галочки «получил» — раз в 4 с
   CH.timer = setInterval(() => { if (document.hidden || TAB !== 'chats' || !CH.sel) return; if (CH.as) pullThread(false); else refreshTicks(CH.sel); }, 4000);
   if (!CH.lpRun) threadLoop();
+  if (!CH.pulseRun) pulseLoop();
+}
+// список чатов, галочки и чат «глазами агента» — по длинному опросу /api/pulse: изменилось — перечитать сразу
+async function pulseLoop() {
+  CH.pulseRun = true; let v = null, errs = 0;
+  for (;;) {
+    if (document.hidden || TAB !== 'chats') { await new Promise((ok) => setTimeout(ok, 500)); continue; }
+    let r;
+    try { r = await api('/api/pulse', { since: v === null ? 0 : v, wait: v === null ? 0 : 25 }); } catch (e) { r = null; }
+    if (!r || r.v === undefined) {     // пути нет (панель воркера) или сбой: три раза подряд — назад к опросу раз в 8 с
+      if (++errs >= 3) { clearInterval(CH.ltimer); CH.ltimer = setInterval(() => { if (!document.hidden && TAB === 'chats') loadChats(); }, 8000); return; }
+      await new Promise((ok) => setTimeout(ok, 4000)); continue;
+    }
+    errs = 0;
+    if (v !== null && r.v !== v) {
+      await new Promise((ok) => setTimeout(ok, 250));     // пачка изменений (письмо + галочка) — одним перечитыванием
+      loadChats();
+      if (CH.sel && CH.as) pullThread(false);
+      else if (CH.sel) { TICKS_AT = 0; refreshTicks(CH.sel); }
+    }
+    v = r.v;
+  }
 }
 async function threadLoop() {
   CH.lpRun = true;

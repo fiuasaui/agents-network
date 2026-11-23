@@ -471,7 +471,7 @@ def poller(session, net):
             if not r.get("msgs"):
                 continue
             # старый ретранслятор без skip отдаёт те же неподтверждённые сразу — тогда не чаще раза в 15 с
-            time.sleep(1 if new else 15)
+            time.sleep(0.1 if new else 15)     # было 1 с: письмо, пришедшее в эту секунду, ждало следующего опроса
     finally:
         with LOCK:
             STATE["pollers"].discard((session, net))
