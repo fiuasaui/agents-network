@@ -496,6 +496,8 @@ class Host:
             aid, chat = str(a.get("assistant") or ""), self.chat_key(a.get("client"), a.get("thread"))
             r = self.compact(aid, chat, chat_row(db(self.home), aid, chat).get("sys") or "", auto=False)
             return True, json.dumps(r, ensure_ascii=False)
+        if call["tool"] == "__forget__":        # чат удалён в Сети: история, сжатия, вызовы и уборка наборов этого чата
+            return True, json.dumps(self.forget(a, call.get("toolkit") or ""), ensure_ascii=False)
         if call["tool"] == "__precedent__":     # прецедент из Сети (/v1/assistant/precedent ключом владельца или его администратора)
             try:
                 return True, json.dumps(prec_op(self.home, a), ensure_ascii=False)
@@ -509,6 +511,31 @@ class Host:
                 self.reply(call["call"], a, f"Ассистент не смог ответить: {str(e)[:160]}", [], None, error=True)
             return None
         return False, "неизвестный вызов"
+
+    def forget(self, a, only_kit=""):
+        """Стереть чат собеседника: один (thread) или все (all). Наборы с полем `forget` ({url|cmd}) получают ту же ctx, что и
+        тулзы, — {assistant, client, thread, all} — и стирают свои файлы этого чата."""
+        aid, client = str(a.get("assistant") or ""), str(a.get("client") or "")
+        if not client:
+            return {"error": "нет собеседника"}
+        n = 0
+        if not only_kit and aid:
+            c = db(self.home)
+            with c:
+                if a.get("all"):
+                    w, args = "asst=? AND (chat=? OR chat LIKE ?)", (aid, client, client.replace("%", "") + "#%")
+                else:
+                    w, args = "asst=? AND chat=?", (aid, self.chat_key(client, a.get("thread")))
+                for t in ("items", "compactions", "chats", "admin_calls"):
+                    n += c.execute(f"DELETE FROM {t} WHERE {w}", args).rowcount
+        kits = []
+        for name, k in (self.kits_fn() or {}).items():
+            if k.get("forget") and (not only_kit or name == only_kit):
+                ok, res = self.run_tool({"name": name, "tools": [{"name": "__forget__", "run": k["forget"]}]}, "__forget__", {},
+                                        {"assistant": {"id": aid}, "client": {"id": client}, "thread": a.get("thread"), "all": bool(a.get("all"))})
+                kits.append({"kit": name, "ok": ok, "res": str(res)[:300]})
+        self.log("host: чат стёрт", aid, client, a.get("thread") or ("все" if a.get("all") else ""), "строк", n, "наборов", len(kits))
+        return {"rows": n, "kits": kits}
 
     @staticmethod
     def chat_key(client, thread):

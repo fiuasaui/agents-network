@@ -56,7 +56,7 @@ def save(home: Path, k):
     """Сохранить набор локально (с "run") — объявит его потом declare()."""
     if not isinstance(k, dict) or not k.get("name") or not isinstance(k.get("tools"), list):
         raise ValueError("набор: {name, about, public, tools: [{name, description, parameters, mutates, run: {url|cmd}}]}")
-    for t in k["tools"]:
+    for t in k["tools"] + ([{"name": "forget", "run": k["forget"]}] if k.get("forget") else []):     # forget — уборка чата
         run = t.get("run") or {}
         if not (run.get("url") or run.get("cmd")):
             raise ValueError(f"тулза {t.get('name')}: нужен run.url (HTTP на этой машине) или run.cmd (команда)")
@@ -161,7 +161,7 @@ def loop(home, relay, cred, log, relay_url=""):
             ST["last_error"], ST["last_ok_at"] = None, time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())   # связь с Сетью есть (симуляция 16.11)
             for call in r.get("calls", []):
                 def go(call=call):
-                    if call["tool"] in ("__turn__", "__config__", "__compact__", "__precedent__"):
+                    if call["tool"] in ("__turn__", "__config__", "__compact__", "__precedent__", "__forget__"):
                         got = H.handle(call)
                         ST["calls"] += 1
                         log("node: ассистент", call["tool"], call["ctx"].get("assistant") or (call["args"] or {}).get("assistant"))
