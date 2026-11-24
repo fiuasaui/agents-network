@@ -403,7 +403,8 @@ function askBox(o) {
 // меню команд по «/» в поле ввода, как в Telegram: команды ассистенту исполняет Сеть (/disable [часы], /enable).
 // slashMenu(textarea, () => [{cmd, args, about}] | null) — список зовётся на каждый ввод: null — меню в этом чате нет.
 const ASST_CMDS = [{ cmd: '/disable', args: '[часы]', about: 'выключить ассистента в этом чате — по умолчанию на 3 ч, не больше 48' },
-  { cmd: '/enable', args: '', about: 'включить ассистента снова' }];
+  { cmd: '/enable', args: '', about: 'включить ассистента снова' },
+  { cmd: '/compact', args: '', about: 'сжать контекст этого чата: раннее ассистент будет помнить сводкой, последние реплики — дословно' }];
 function slashMenu(ta, cmds) {
   const box = document.createElement('div'); box.className = 'slm'; box.hidden = true; box.setAttribute('role', 'listbox');
   ta.parentElement.style.position = ta.parentElement.style.position || 'relative'; ta.parentElement.appendChild(box);

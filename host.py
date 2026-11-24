@@ -582,6 +582,7 @@ class Host:
         body = {**(self.cred() or {}), "call": call, "assistant": a["assistant"]["id"], "client": a["client"]["id"],
                 "thread": a.get("thread"), "text": text, "blocks": blocks, "files": files or [],
                 "ctx": (usage or {}).get("prompt_tokens"), "tokens": (usage or {}).get("total_tokens"), "error": error,
+                "window": cfg(self.home, a["assistant"]["id"]).get("window"),       # потолок окна к ctx — собеседнику «N из M»
                 "skip": skip, "seeded": bool(a.get("seed")) and not error, **({"model": model} if model else {})}
         for i in range(8):      # готовый ответ не теряем: лимит или сбой связи — повторяем, ~5 мин (симуляция 22.11: ответ ушёл в 429)
             try:
@@ -861,7 +862,7 @@ class Host:
         conf = cfg(self.home, aid)
         starts = [i for (i,) in c.execute("SELECT MIN(id) FROM items WHERE asst=? AND chat=? AND role='user' GROUP BY turn ORDER BY 1", (aid, chat))]
         if len(starts) <= KEEP_PAIRS:
-            return {"ok": False, "why": f"в чате {len(starts)} пар ходов — сжимать нечего (остаются последние {KEEP_PAIRS})"}
+            return {"ok": False, "why": f"разговор ещё короткий (обменов репликами: {len(starts)}) — последние {KEEP_PAIRS} и так остаются дословно, сжимать нечего"}
         keep = starts[-KEEP_PAIRS]
         msgs = [m for m in context(c, aid, chat, system)]
         cut = c.execute("SELECT COUNT(*) FROM items WHERE asst=? AND chat=? AND id>=?", (aid, chat, keep)).fetchone()[0]
