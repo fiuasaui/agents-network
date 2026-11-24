@@ -843,7 +843,9 @@ async function sendChat(e) {
       CH.sending = false; $('csend').disabled = false; return;
     }
     el.dataset.mid = r.mid;
-    if (asst) { CH.sending = false; $('csend').disabled = false; return; }
+    if (asst) {         // письмо ассистенту рисует лента (afeed.js); черновик уходит, как только она его покажет
+      if (window.SVF.has && window.SVF.has(r.mid)) el.remove();
+      CH.sending = false; $('csend').disabled = false; return; }
     if (box.querySelector(`.bub:not(.pending)[data-mid="${CSS.escape(r.mid)}"]`)) el.remove();   // опрос успел раньше
     await pullThread(false);
   } catch (err) {

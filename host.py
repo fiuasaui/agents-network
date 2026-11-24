@@ -688,8 +688,10 @@ class Host:
                 group["items"].append(item)
                 self.push(call, a, busy=True, blocks=blocks, text="")
                 ok, res, got = self.exec_tool(a, ctx, kits, fn, rt, args)
-                files += [f for f in got if f not in files]
+                files += [f["id"] for f in got if f["id"] not in files]
                 item.update(run=False, ok=ok, te=round(time.time(), 2))
+                if got:         # файлы этого вызова — собеседнику сразу, в рамке вызова
+                    item["files"] = [{k: f.get(k) for k in ("id", "name", "size") if f.get(k) is not None} for f in got]
                 if rt.get("user_text") and ok:
                     try:
                         rj = json.loads(res)
@@ -725,7 +727,8 @@ class Host:
             self.compact(aid, chat, system, auto=True, a=a)
 
     def exec_tool(self, a, ctx, kits, fn, rt, args):
-        """→ (ok, ответ, [id файлов для ответа]). Свои тулзы — здесь же; чужой открытый набор — через Сеть его узлу; тулзы Сети — Сеть."""
+        """→ (ok, ответ, [{id, name, size} — файлы, ушедшие собеседнику этим вызовом]). Тулзы узла (свой набор на этой машине) —
+        здесь же; чужой открытый набор — через Сеть его узлу; сетевые тулзы — Сеть. Файл уходит только явным вызовом."""
         got = []
         if rt.get("strip") and isinstance(args, dict):     # подпись, которую добавила Сеть, тулзе владельца не нужна
             args = {k: v for k, v in args.items() if k not in rt["strip"]}
@@ -736,17 +739,20 @@ class Host:
             ok, res = self.run_tool(kits[rt["toolkit"]], rt.get("tool"), args, ctx)
             if ok:
                 res = self.attach(res, self.relay_url, self.cred)
-        else:       # чужой открытый набор или свой на другой машине — через Сеть его узлу; тулзы Сети — Сеть
+        else:       # чужой открытый набор или свой на другой машине — через Сеть его узлу; сетевые тулзы — Сеть
             r = self.relay("/v1/node/sys" if rt.get("kind") == "net" else "/v1/node/tool",
                            {**(self.cred() or {}), "assistant": a["assistant"]["id"], "tool": fn, "args": args,
                             "client": a["client"]["id"], "thread": a.get("thread")}, 90)
             ok, res = bool(r.get("ok")), str(r.get("result") if r.get("result") is not None else r.get("error") or "")
-            got += [i for i in r.get("attach") or []]
+            got += [x if isinstance(x, dict) else {"id": str(x)} for x in (r.get("sent") or r.get("attach") or [])]
         try:
             d = json.loads(res) if ok and res.lstrip().startswith("{") else None
             if isinstance(d, dict) and d.get("attach"):
-                got += d["attach"]
-                res += "\n[эти файлы будут приложены к твоему ответу собеседнику сами — прикладывать их ещё раз не нужно]"
+                meta = {x.get("id"): x for x in d.get("sent") or [] if isinstance(x, dict)}
+                got += [meta.get(i) or {"id": i} for i in d["attach"] if i not in {g["id"] for g in got}]
+            if got:
+                res += "\n[Сеть: собеседник уже видит в чате файлы: " + ", ".join(str(g.get("name") or g["id"]) for g in got) + \
+                       " — отправлять их ещё раз не нужно]"
         except ValueError:
             pass
         return ok, res, got

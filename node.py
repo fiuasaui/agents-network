@@ -91,28 +91,32 @@ def declare(home, relay, cred):
 
 
 def attach(res, relay_url, cred):
-    """Тулза вернула JSON с "attach_paths": [пути] — загрузить эти файлы в Сеть и заменить на "attach": [id]."""
+    """Тулза узла вернула JSON с "send_files": [пути на этой машине] (прежнее имя — "attach_paths") — залить файлы в Сеть и
+    заменить на "attach": [id] и "sent": [{id, name, size}]. Файл уходит собеседнику только так — явным вызовом тулзы,
+    назначение которой отправить файл; собеседник видит его сразу, в рамке этого вызова."""
     try:
         d = json.loads(res)
     except ValueError:
         return res
-    if not isinstance(d, dict) or not d.get("attach_paths"):
+    if not isinstance(d, dict) or not (d.get("send_files") or d.get("attach_paths")):
         return res
     from urllib.parse import quote
     import mimetypes
-    ids, c = [], cred()
-    for p in [Path(x) for x in d.pop("attach_paths")][:5]:
+    ids, sent, c = [], [], cred()
+    paths = (d.pop("send_files", None) or []) + (d.pop("attach_paths", None) or [])
+    for p in [Path(str(x)) for x in paths][:10]:
         if not p.is_file() or p.stat().st_size > 20 * 2**20:
-            d.setdefault("attach_errors", []).append(f"{p.name}: нет файла или больше 20 МБ"); continue
+            d.setdefault("send_errors", []).append(f"{p.name}: нет файла или больше 20 МБ"); continue
         req = urllib.request.Request(relay_url.rstrip("/") + "/v1/node/file", data=p.read_bytes(), headers={
             "X-Owner": c["owner"], "X-Owner-Secret": c["owner_secret"], "X-File-Name": quote(p.name),
             "Content-Type": mimetypes.guess_type(p.name)[0] or "application/octet-stream"})
         try:
             with urllib.request.urlopen(req, timeout=120) as r:
-                ids.append(json.loads(r.read())["id"])
+                f = json.loads(r.read())
+                ids.append(f["id"]); sent.append({"id": f["id"], "name": f.get("name") or p.name, "size": f.get("size")})
         except Exception as e:  # noqa: BLE001
-            d.setdefault("attach_errors", []).append(f"{p.name}: {e}")
-    d["attach"] = ids
+            d.setdefault("send_errors", []).append(f"{p.name}: {e}")
+    d["attach"], d["sent"] = ids, sent
     return json.dumps(d, ensure_ascii=False)
 
 
