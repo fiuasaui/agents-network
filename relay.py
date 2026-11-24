@@ -1129,8 +1129,8 @@ class Relay:
     def reply_info(self, me, peer):
         """Подсказка отправителю: письмо правил не меняет, поэтому говорим, что адресат сможет в ответ по МОИМ
         правилам про него и что поставить. [] — всё в порядке. Один объект для API, приёмной, тулзы ассистента и кабинета. Под LOCK."""
-        if not peer or self.same_side(me, peer) or self.is_assistant(me):
-            return []
+        if not peer or self.same_side(me, peer) or self.is_assistant(me) or self.is_assistant(peer):
+            return []       # ассистент отвечает тому, кто ему написал, всегда — подсказка «не сможет ответить» была бы враньём
         a, e = self.addr_of(peer), self.rule_eff(me, peer)
         r = "wake" if e["reach"][0] == "write" and e["wake"][0] else e["reach"][0]
         human = self.is_owner(me)

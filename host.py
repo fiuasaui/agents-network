@@ -757,7 +757,7 @@ class Host:
             self.push(call, a, busy=True, blocks=blocks, text="")
             more = self.relay("/v1/node/pending", {**(self.cred() or {}), "call": call, "assistant": aid, "client": client, "thread": a.get("thread")}, 30)
             if more.get("inputs"):          # письмо собеседника посреди хода — в этот же ход, после результата тулзы
-                self.inputs_to_items(c, aid, chat, [{**x, "note": "[пришло, пока ты работал]"} for x in more["inputs"]], turn)
+                self.inputs_to_items(c, aid, chat, [{**x, "note": "[пришло, пока ты работал: это дополнение, а не замена — начатое доведи до конца и ответь на всё, если собеседник прямо не отменил прежнее]"} for x in more["inputs"]], turn)
             if more.get("stop"):            # владелец взял чат на себя — ход больше не нужен; модель это знает
                 add(c, aid, chat, "user", time.strftime("[%d.%m %H:%M UTC] ", time.gmtime()) + "[событие Сети — собеседник его не видит] "
                     "Владелец взял чат на себя посреди твоего хода — ход прерван, собеседнику ты в нём ничего не ответил.", turn=turn)
