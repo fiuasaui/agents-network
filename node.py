@@ -26,6 +26,7 @@
 import json, os, subprocess, threading, time, urllib.request
 from pathlib import Path
 
+TOOL_TIMEOUT, TOOL_TIMEOUT_MAX = 50, 600     # секунды на вызов тулзы; набор или тулза ставит своё поле timeout (замечание тестера 23.11)
 ST = {"wake": threading.Event(), "declared": {}, "running": False, "last_error": None, "last_error_at": None, "last_ok_at": None, "calls": 0}
 
 
@@ -49,7 +50,10 @@ def load(home: Path):
 def public_view(k):
     return {"name": k["name"], "about": k.get("about", ""), "public": bool(k.get("public")),
             **({"prompt": k["prompt"]} if k.get("prompt") else {}),     # блок набора в системном промпте ассистента
-            "tools": [{x: t[x] for x in ("name", "description", "parameters", "mutates", "danger", "intro", "public_note", "title", "emoji", "show", "caption", "user_text") if x in t} for t in k.get("tools", [])]}
+            **({"install": k["install"]} if k.get("install") else {}),  # шаблон: как поднять такой набор у себя
+            **({"forget": True} if k.get("forget") else {}),             # набор убирает за собой файлы удалённого чата
+            **({"timeout": k["timeout"]} if k.get("timeout") else {}),
+            "tools": [{x: t[x] for x in ("name", "description", "parameters", "mutates", "danger", "intro", "public_note", "title", "emoji", "show", "caption", "user_text", "timeout") if x in t} for t in k.get("tools", [])]}
 
 
 def save(home: Path, k):
@@ -62,6 +66,9 @@ def save(home: Path, k):
             raise ValueError(f"тулза {t.get('name')}: нужен run.url (HTTP на этой машине) или run.cmd (команда)")
         if run.get("url") and not str(run["url"]).startswith(("http://127.0.0.1", "http://localhost", "http://[::1]")):
             raise ValueError(f"тулза {t.get('name')}: run.url — только адрес этой машины (127.0.0.1)")
+    for t in [k] + k["tools"]:
+        if "timeout" in t and not (isinstance(t["timeout"], (int, float)) and 1 <= t["timeout"] <= TOOL_TIMEOUT_MAX):
+            raise ValueError(f"timeout {t.get('name') or 'набора'}: секунды от 1 до {TOOL_TIMEOUT_MAX}")
     f = kits_dir(home) / (k["name"] + ".json")
     f.write_text(json.dumps(k, ensure_ascii=False, indent=1))
     os.chmod(f, 0o600)
@@ -126,13 +133,14 @@ def run_tool(k, tool, args, ctx):
         return False, f"на этой машине в наборе {k['name']} нет тулзы {tool}"
     payload = json.dumps({"tool": tool, "args": args, "ctx": ctx}, ensure_ascii=False).encode()
     run = t.get("run") or {}
+    to = min(TOOL_TIMEOUT_MAX, float(t.get("timeout") or k.get("timeout") or TOOL_TIMEOUT))     # тулза → набор → 50 с
     try:
         if run.get("url"):
             req = urllib.request.Request(run["url"], data=payload, headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=50) as r:
+            with urllib.request.urlopen(req, timeout=to) as r:
                 return True, r.read().decode("utf-8", "replace")
         cmd = run["cmd"] if isinstance(run["cmd"], list) else ["/bin/sh", "-c", str(run["cmd"])]
-        p = subprocess.run(cmd, input=payload, capture_output=True, timeout=50)
+        p = subprocess.run(cmd, input=payload, capture_output=True, timeout=to)
         if p.returncode:
             return False, (p.stdout + p.stderr).decode("utf-8", "replace")[-4000:] or f"код {p.returncode}"
         return True, p.stdout.decode("utf-8", "replace")

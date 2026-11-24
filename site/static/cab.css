@@ -1078,3 +1078,25 @@ a[data-tab].tab-off:hover { background: none; color: inherit; }
 .stc-f { display: grid; gap: 1px; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); }
 .stc-r { display: grid; grid-template-columns: minmax(90px, 34%) 1fr; gap: 10px; padding: 8px 12px; background: rgba(255, 255, 255, .03); }
 .stc-r span { color: var(--muted); } .stc-r b { font-weight: 500; overflow-wrap: anywhere; }
+
+/* наборы тулз узла в настройках ассистента: набор целиком или по тулзе, группы «мои · открытые · шаблоны» */
+.kitsf { gap: 10px !important; }
+.kitg { display: flex; flex-direction: column; gap: 6px; } .kitg h4 { margin: 4px 2px 0; font-size: 13px; font-weight: 600; color: var(--muted); }
+.kitg > .meta { margin: 0 2px; font-size: 12.5px; }
+.kit { border-radius: 10px; background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); transition: box-shadow .15s; }
+.kit.on { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.kith { display: flex; align-items: center; gap: 8px; padding: 4px 6px 4px 10px; }
+.kith label.ck { flex: 1; min-width: 0; padding: 4px 0; } .kith b { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kith .meta { font-size: 12.5px; white-space: nowrap; }
+.kitx { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 6px 0 10px; border: 0; border-radius: 999px; background: rgba(255, 255, 255, .06);
+  color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; transition: background .15s, color .15s; }
+.kitx:hover { background: rgba(255, 255, 255, .1); color: var(--ink); }
+.kitx svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform .2s; }
+.kitx[aria-expanded="true"] svg { transform: rotate(180deg); }
+.kita { margin: -2px 12px 6px 36px; font-size: 12.5px; color: var(--muted); }
+.kitt { display: flex; flex-direction: column; gap: 2px; padding: 2px 8px 8px 30px; }
+.asstf .kitt label.ck { display: grid; grid-template-columns: 18px minmax(0, 1fr); column-gap: 8px; row-gap: 0; align-items: start; padding: 5px 4px; }
+.kitt label.ck input { margin-top: 1px; } .kitt .kittn { font-size: 13.5px; } .kitt .meta { grid-column: 2; font-size: 12px; overflow-wrap: anywhere; }
+.kitd { font-style: normal; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: 11px; color: var(--bad); background: color-mix(in srgb, var(--bad) 14%, transparent); }
+.kiti { margin: 6px 4px 0; } .kiti summary { cursor: pointer; font-size: 13px; color: var(--accent); }
+.kitim { margin-top: 6px; padding: 8px 10px; border-radius: 8px; background: var(--panel2); font-size: 13px; }

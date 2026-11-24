@@ -1442,7 +1442,7 @@ def handler():
                     if not any(k in q for k in ("nick", "id", "list", "delete")):   # GET /assistant без тела — список, а не «нужен ник» (симуляция 16.11)
                         q = {**q, "list": True}
                     if q.get("toolkits"):   # имена наборов этой машины → их id в Сети
-                        q["toolkits"] = [nd.ST["declared"].get(x, x) for x in q["toolkits"]]
+                        q["toolkits"] = [nd.ST["declared"].get(str(x).partition("/")[0], str(x).partition("/")[0]) + ("/" + str(x).partition("/")[2] if "/" in str(x) else "") for x in q["toolkits"]]   # «набор/тулза» — одна тулза
                     return self._out(relay("/v1/node/assistant", {**o, **q}))
                 if p in ("/assistant/config", "/assistant/compact"):
                     # настройка ассистента живёт на этой машине: промпт, модель Сети или своя (адрес и ключ — с машины не уходят),

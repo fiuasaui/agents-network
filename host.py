@@ -34,6 +34,7 @@ SUMMARIZER = "gpt-6-luna"     # дешёвая модель Сети для св
 TOOL_MAX = 50_000         # потолок ответа тулзы в истории; больше — с пометкой модели
 KEEP_PAIRS = 5          # сколько последних пар «собеседник → ответ» остаётся дословно после сжатия
 ROUNDS = 30             # шагов «модель → тулзы» на один ответ
+MODEL_RETRY = 3         # сбой шлюза до первого слова — повторов (3, 12, 27 с)
 EMPTY_RETRY = 2         # пустой ответ модели — сбой: столько повторов с пометкой модели, потом честная строка собеседнику
 EMPTY_NOTE = ("[событие Сети — собеседник его не видит] Твой ход кончился пустым ответом — собеседнику ничего не ушло. Каждый ход "
               "кончается твоим текстом собеседнику, он его ждёт. Ответь ему сейчас.")
@@ -550,14 +551,18 @@ class Host:
             base = {**(self.cred() or {}), "call": call, "assistant": a["assistant"]["id"], "client": a["client"]["id"], "thread": a.get("thread")}
 
             def run():
+                sent, t_sent = None, 0.0
                 while True:
                     p["ev"].wait(30); p["ev"].clear()
                     st, p["st"] = p["st"], None
+                    if st is None and sent is not None and not p["end"] and time.time() - t_sent > 90:
+                        st = sent       # долгая тулза молчит — повтор последнего кадра: Сеть видит, что узел жив (сторож хода — 10 мин)
                     if st is not None:
                         try:
                             self.relay("/v1/node/live", {**base, **st}, 15)
                         except Exception:  # noqa: BLE001
                             pass
+                        sent, t_sent = st, time.time()
                         time.sleep(0.4)
                     if p["end"] and p["st"] is None:
                         self.pushers.pop(call, None)
@@ -596,6 +601,26 @@ class Host:
             time.sleep(min(60, float(r.get("retry_after") or 5) * (i + 1)))
 
     def model_call(self, a, conf, msgs, fns, on_delta):
+        """Сбой шлюза до первого слова модели (502/503/504, обрыв связи) — повтор с паузой: собеседник не должен видеть
+        «модель ответила 502» из-за минутного сбоя (замечание тестера 23.11). Начатый ответ не повторяем — дубли в ленте."""
+        got = []
+
+        def d(*x):
+            if any(x):
+                got.append(1)
+            on_delta(*x)
+        for i in range(MODEL_RETRY + 1):
+            try:
+                return self.model_call1(a, conf, msgs, fns, d)
+            except Exception as e:  # noqa: BLE001
+                err = str(e)
+                transient = isinstance(e, (urllib.error.URLError, TimeoutError, ConnectionError)) or re.search(r"ответила (429|50[0234])\b", err)
+                if got or not transient or i == MODEL_RETRY:
+                    raise
+                self.log("host: сбой модели, повтор", i + 1, err[:120])
+                time.sleep(3 * (i + 1) ** 2)
+
+    def model_call1(self, a, conf, msgs, fns, on_delta):
         m = conf["model"]
         body = {"model": m.get("model"), "messages": msgs, "stream": True, "stream_options": {"include_usage": True}, "max_tokens": MAX_OUT,
                 **({"tools": fns} if fns else {})}
@@ -769,7 +794,7 @@ class Host:
         else:       # чужой открытый набор или свой на другой машине — через Сеть его узлу; сетевые тулзы — Сеть
             r = self.relay("/v1/node/sys" if rt.get("kind") == "net" else "/v1/node/tool",
                            {**(self.cred() or {}), "assistant": a["assistant"]["id"], "tool": fn, "args": args,
-                            "client": a["client"]["id"], "thread": a.get("thread")}, 90)
+                            "client": a["client"]["id"], "thread": a.get("thread")}, 90 if rt.get("kind") == "net" else 660)
             ok, res = bool(r.get("ok")), str(r.get("result") if r.get("result") is not None else r.get("error") or "")
             got += [x if isinstance(x, dict) else {"id": str(x)} for x in (r.get("sent") or r.get("attach") or [])]
         try:
