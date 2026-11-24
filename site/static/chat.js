@@ -277,7 +277,7 @@ async function gatePaint(fresh) {
       ? `<input id="ask-note" maxlength="300" placeholder="${esc(GATE.ask)} Зачем тебе писать — коротко, необязательно" aria-label="Зачем тебе писать"><button class="btn sm" type="submit">Запросить разрешение</button>`
       : `<p class="askbar-t">${st === 'asked' ? '<i class="dotw"></i>' : ''}${esc(GATE[st])}</p>`; };
   // от лица ассистента в его диалоге: собеседник сам написал ассистенту и согласился на ответ — просить нечего
-  if (!c || !c.peer || c.deleted || c.assistant && !CH.as || asAsst() && (c.msgs || c.last)) { if (bar) { bar.hidden = true; } CH.gate = null; return; }
+  if (!c || !c.peer || c.deleted || asAsst() && (c.msgs || c.last)) { if (bar) { bar.hidden = true; } CH.gate = null; return; }
   if (fresh && bar) { bar.hidden = true; if (c.can_write === false && !CH.as) $('composer').hidden = true; }   // без мигания поля ввода
   try { const r = await api('/api/rel', { peer: id, ...(CH.as ? { as: CH.as } : {}) }); show(r.out && r.out.write); }
   catch (e) { show(null); }
