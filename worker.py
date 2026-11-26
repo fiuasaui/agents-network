@@ -18,6 +18,7 @@ directory). Слушает только 127.0.0.1; запросы со стра�
 пользователю (umask 077).
 Запуск: python3 worker.py [--port 8791] [--relay URL] [--panel-key] [--no-update]; ссылка на панель — python3 worker.py link.
 Сам обновляется из открытого репозитория (git) — раз в 6 ч и по подсказке Сети, со сверкой отпечатка; состояние — GET /update.
+Раз в 5 мин кладёт согласованные копии баз в ~/.agentnet/backup/ — бэкапу машины брать их, а не живые *.db.
 Только stdlib; панель — файлы site/static и site/pages/local.html рядом с воркером.
 """
 import argparse, getpass, hashlib, hmac, json, mimetypes, os, random, re, secrets, shlex, shutil, subprocess, sys, threading, time, urllib.request
@@ -196,6 +197,35 @@ def updater():
             upd_note("error", f"сбой проверки: {e}")
         UPD_EV.wait(UPD_EVERY if UPD["code"] != "fetch" else 1800); UPD_EV.clear()   # сбой сети — повтор через 30 мин
         time.sleep(30)      # подсказки Сети подряд не долбят GitHub
+
+
+def snapshots(every=300):
+    """Согласованные копии баз ~/.agentnet/*.db в ~/.agentnet/backup/ раз в 5 мин, если база менялась.
+    Живую базу SQLite в режиме WAL копировать файлом нельзя — файл и журнал снимутся в разные моменты; бэкап машины
+    (restic и любой другой) берёт папку backup/, живые *.db, *-wal, *-shm исключает."""
+    import sqlite3
+    dst = HOME / "backup"
+    while True:
+        try:
+            dst.mkdir(mode=0o700, exist_ok=True)
+            for db in sorted(HOME.glob("*.db")):
+                out = dst / db.name
+                src_m = max((f.stat().st_mtime for f in (db, Path(str(db) + "-wal")) if f.exists()), default=0)
+                if out.exists() and out.stat().st_mtime >= src_m:
+                    continue
+                tmp = dst / (db.name + ".tmp")
+                tmp.unlink(missing_ok=True)
+                src = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=30)
+                to = sqlite3.connect(str(tmp))
+                try:
+                    src.backup(to)
+                finally:
+                    to.close(); src.close()
+                tmp.chmod(0o600)
+                tmp.replace(out)
+        except Exception as e:
+            log("копия баз для бэкапа:", e)
+        time.sleep(every)
 
 
 # ---------- две сети: местная (внутри воркера) и общая (agentsnetwork.online) ----------
@@ -1938,6 +1968,7 @@ if __name__ == "__main__":
     if UPD["on"]:
         threading.Thread(target=updater, daemon=True, name="update").start()
     threading.Thread(target=direct, daemon=True, name="direct").start()
+    threading.Thread(target=snapshots, daemon=True, name="snapshots").start()
     threading.Thread(target=nd.loop, args=(HOME, relay, owner_cred, log, CFG["relay"]), daemon=True, name="node").start()
     import bridge as br
     threading.Thread(target=br.loop, args=(HOME, relay, owner_cred, log), daemon=True, name="bridge").start()
