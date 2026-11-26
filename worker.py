@@ -200,7 +200,7 @@ def updater():
 
 
 def snapshots(every=300):
-    """Согласованные копии баз ~/.agentnet/*.db в ~/.agentnet/backup/ раз в 5 мин, если база менялась.
+    """Согласованные копии баз ~/.agentnet/*.db в ~/.agentnet/backup/<имя>.sqlite раз в 5 мин, если база менялась.
     Живую базу SQLite в режиме WAL копировать файлом нельзя — файл и журнал снимутся в разные моменты; бэкап машины
     (restic и любой другой) берёт папку backup/, живые *.db, *-wal, *-shm исключает."""
     import sqlite3
@@ -209,7 +209,7 @@ def snapshots(every=300):
         try:
             dst.mkdir(mode=0o700, exist_ok=True)
             for db in sorted(HOME.glob("*.db")):
-                out = dst / db.name
+                out = dst / (db.stem + ".sqlite")   # не *.db: исключение «живые *.db» их не заденет
                 src_m = max((f.stat().st_mtime for f in (db, Path(str(db) + "-wal")) if f.exists()), default=0)
                 if out.exists() and out.stat().st_mtime >= src_m:
                     continue
