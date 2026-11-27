@@ -33,7 +33,7 @@ def db_open(path):
       PRAGMA journal_mode=WAL;
       CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, secret TEXT, name TEXT, about TEXT, open INTEGER DEFAULT 0, created REAL);
       CREATE TABLE IF NOT EXISTS trust (owner TEXT, peer TEXT, at REAL, PRIMARY KEY (owner, peer));
-      CREATE TABLE IF NOT EXISTS grants (owner TEXT, peer TEXT, until REAL, PRIMARY KEY (owner, peer));
+      DROP TABLE IF EXISTS grants;
       CREATE TABLE IF NOT EXISTS msgs (mid TEXT PRIMARY KEY, src TEXT, dst TEXT, text TEXT, reply_to TEXT, at REAL, acked REAL);
       CREATE INDEX IF NOT EXISTS msgs_dst ON msgs (dst, acked);""")
     cols = [r[1] for r in c.execute("PRAGMA table_info(agents)")]
@@ -1183,15 +1183,6 @@ class Relay:
         r, _s, o = self.rule_eff(dst, src)["reach"]
         return r == "write" and o != "*"
 
-    def unreply(self, q):
-        """Закрыть окно ответа раньше суток: тот, кому агент написал первым, больше не может ему ответить.
-        Сужать доступ безопасно — без одобрения человека."""
-        me = self.auth(q)
-        with LOCK:
-            peer = self.resolve(q.get("peer"))
-            n = self.db.execute("DELETE FROM grants WHERE owner=? AND peer=?", (me, peer)).rowcount
-        return {"ok": True, "closed": n, "peer": self.addr_of(peer)}
-
     def untrust(self, me, peer):
         """Снять разрешение писать, выданное me: к агенту peer — только ему; к человеку peer — ему, его
         аккаунту и всем его агентам. Чёрный список не трогает. Под LOCK."""
@@ -1314,16 +1305,16 @@ class Relay:
         rows = {(s, o): (r, w) for s, o, r, w in self.db.execute(
             f"SELECT subj, obj, reach, wake FROM rules WHERE subj IN ({','.join('?' * len(sc))}) AND obj IN ({','.join('?' * len(oc))})",
             (*sc, *oc))}
-        out = {}
-        for i, f in enumerate(("reach", "wake")):
-            lst = [{"from": self.level_name(s, o), "value": rows[(s, o)][i]} for o in oc for s in sc
-                   if rows.get((s, o), (None, None))[i] is not None]
-            lst.append({"from": "по умолчанию Сети", "value": NET_RULE[f]})
+        # одна ступень: будят ли — из той же клетки, что решила reach, поэтому оба списка идут по клеткам reach
+        cells = [(s, o, *rows[(s, o)]) for o in oc for s in sc if rows.get((s, o), (None, None))[0] is not None]
+        reach = [{"from": self.level_name(s, o), "value": r} for s, o, r, w in cells]
+        wake = [{"from": self.level_name(s, o), "value": r == "write" and bool(w)} for s, o, r, w in cells]
+        reach.append({"from": "по умолчанию Сети", "value": NET_RULE["reach"]})
+        wake.append({"from": "по умолчанию Сети", "value": bool(NET_RULE["wake"])})
+        for lst in (reach, wake):
             for j, x in enumerate(lst):
                 x["win"] = j == 0
-                x["value"] = x["value"] if f == "reach" else bool(x["value"])
-            out[f] = lst
-        return out
+        return {"reach": reach, "wake": wake}
 
     def ladder(self, subj, obj):
         """Лесенка правил subj про obj для карточки: ступени каскада в его порядке, сильная сверху — «про кого»
@@ -1345,8 +1336,7 @@ class Relay:
                             "about": "all" if o == "*" else "account" if o.startswith("ac-") else "self",
                             "level": lv, "win": bool(lv) and not won})
                 won = won or bool(lv)
-        e = self.rule_eff(subj, obj)
-        fin = "wake" if e["reach"][0] == "write" and e["wake"][0] and agent else e["reach"][0]
+        fin = next((x["level"] for x in out if x["win"]), NET_RULE["reach"])     # тот же порядок каскада, что в rule_eff
         return {"steps": out, "net": NET_RULE["reach"], "final": fin, "final_text": LEVEL_TEXT[fin]}
 
     def is_admin(self, aid):
@@ -1413,20 +1403,27 @@ class Relay:
         else:
             self.db.execute(f"INSERT OR REPLACE INTO rules (subj, obj, {', '.join(RULE_F)}, at) VALUES (?,?,{','.join('?' * len(RULE_F))},?)",
                             (subj, obj, *[cur[k] for k in RULE_F], time.time()))
-        self.rule_sync(subj)
+        self.rule_sync(subj, obj)
         WAKE.notify_all()
         return cur
 
-    def rule_sync(self, subj):
-        """Пересчитать витрину аккаунта subj: действующие «ко всем» его агентов и человека. Под LOCK."""
+    def rule_sync(self, subj, obj="*"):
+        """Пересчитать витрину: действующие «ко всем» тех, кого задевает правило subj. Правило про одного собеседника витрину
+        не меняет; агента — только его; человека — только режим человека; аккаунта — всех его агентов и человека. Под LOCK."""
+        if obj != "*":
+            return
         s = hum_id(subj)
         o = self.owner_id(s)
-        for a in ([x for x, in self.db.execute("SELECT id FROM agents WHERE owner=?", (o,))] if o else [s]):
+        if subj.startswith("ac-"):
+            ags = [x for x, in self.db.execute("SELECT id FROM agents WHERE owner=?", (o,))] if o else []
+        else:
+            ags = [] if o == s else [s]
+        for a in ags:
             e = self.rule_eff(a)
             r = e["reach"][0]
             self.db.execute("UPDATE agents SET open=?, asks=?, hidden=? WHERE id=?",
                             (int(r == "write"), int(r in ("ask", "write")), int(bool(e["hidden"][0])), a))
-        if o:
+        if o and (o == s or subj.startswith("ac-")):      # режим человека зависит только от правил человека и аккаунта
             e = self.rule_eff(o)
             self.db.execute("UPDATE owners SET mode=? WHERE id=?",
                             ("hidden" if e["hidden"][0] else {"write": "open", "ask": "ask"}.get(e["reach"][0], "closed"), o))
@@ -1638,9 +1635,14 @@ class Relay:
                 "SELECT m.mid, m.src, m.dst, m.text, m.reply_to, m.at, m.acked, m.fmt, m.files, m.thread, b.nick, m.info, m.kind, m.via FROM msgs m LEFT JOIN owners b ON b.id=m.by WHERE " + w + " ORDER BY m.at DESC LIMIT ?",
                 (*args, lim)).fetchall()
             hn, sd = {}, {}
-            snd = lambda src, kd: SENDER_NET if kd in NET_KINDS else sd.setdefault(src, self.sender_of(me, src))   # кто пишет — как в почте
+
+            def memo(d, k, f):      # setdefault считает значение и при попадании — здесь только при первом (аудит Э-02)
+                if k not in d:
+                    d[k] = f(k)
+                return d[k]
+            snd = lambda src, kd: SENDER_NET if kd in NET_KINDS else memo(sd, src, lambda x: self.sender_of(me, x))   # кто пишет — как в почте
             out = [{"mid": mid, "dir": "out" if src == me else "in", "from": src, "to": dst, "peer": self.addr_of(dst if src == me else src),
-                    "peer_human": hn.setdefault(dst if src == me else src, self.human_nick(dst if src == me else src)),
+                    "peer_human": memo(hn, dst if src == me else src, self.human_nick),
                     "text": t, "reply_to": r, "at": at, **({"read": True} if ak else {}), **({"format": f} if f else {}),
                     **({"files": self.files_out(fl)} if fl else {}), **({"thread": th} if th else {}), **({"by_human": "@" + bn} if bn else {}), **sys_notes(bn, via),
                     **({"sender": snd(src, kd)} if src != me else {}),
@@ -2701,7 +2703,7 @@ class Relay:
                         "sort=top|new|active|name, limit (до 100), offset, about=0"}
 
 ROUTES = {"/v1/owner": "owner_register", "/v1/owner/me": "owner_me", "/v1/register": "register", "/v1/profile": "profile", "/v1/trust": "trust", "/v1/send": "send",
-          "/v1/inbox": "inbox", "/v1/ack": "ack", "/v1/directory": "directory", "/v1/ask": "ask", "/v1/agent": "public", "/v1/unreply": "unreply",
+          "/v1/inbox": "inbox", "/v1/ack": "ack", "/v1/directory": "directory", "/v1/ask": "ask", "/v1/agent": "public",
           "/v1/history": "history", "/v1/chats": "chats", "/v1/wake": "wake", "/v1/block": "blocks", "/v1/rel": "rel_api", "/v1/unread": "unread", "/v1/tick": "tick_api", "/v1/read": "read",
           "/v1/owner/send": "owner_send", "/v1/owner/chats": "owner_chats", "/v1/owner/thread": "owner_thread",
           "/v1/owner/seen": "owner_seen"}

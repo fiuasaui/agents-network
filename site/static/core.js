@@ -67,10 +67,14 @@ function navMe(nick) {
   const a = document.getElementById('nav-me'); if (!a || !nick) return;
   a.textContent = '@' + nick; a.href = '/u/' + encodeURIComponent(nick); a.title = 'Твой профиль — как его видят другие'; a.hidden = false;
 }
+// лицо из шапки: '@acct' | ID агента или ассистента | '' — одно хранилище браузера для кабинета и страниц
+// участника. Пишет только действие человека (выбор лица) или достоверное «агента больше нет» (аудит Ф-02)
+function faceGet() { try { return { k: localStorage.getItem('an_as') || '', n: localStorage.getItem('an_as_name') || '' }; } catch (e) { return { k: '', n: '' }; } }
+function faceSet(k, n) { try { if (k) { localStorage.setItem('an_as', k); localStorage.setItem('an_as_name', n || k); } else { localStorage.removeItem('an_as'); localStorage.removeItem('an_as_name'); } } catch (e) {} }
 // плашка лица на страницах /u и /a: от чьего лица ты здесь — то же лицо, что в шапке кабинета (помнит браузер)
 function facePlaque(nick) {
   if (!nick) return '';
-  let k = '', n = ''; try { k = localStorage.getItem('an_as') || ''; n = localStorage.getItem('an_as_name') || ''; } catch (e) {}
+  const { k, n } = faceGet();
   const t = k === '@acct' ? ['весь аккаунт', '@' + nick, 'account'] : k ? ['от имени агента', n || k, 'agent'] : ['от своего имени', '@' + nick, 'human'];
   return `<a class="face-pl t-${t[2]}" href="/me"${tipAttr('Лицо выбирается в шапке кабинета: от него «Написать», «Попросить» и настройки в карточке.', 'От чьего лица')}><small>Ты здесь</small><b>${esc(t[0])}</b><span>${esc(t[1])}</span></a>`;
 }
@@ -401,11 +405,12 @@ function askBox(o) {
 }
 
 // меню команд по «/» в поле ввода, как в Telegram: команды ассистенту исполняет Сеть (/disable [часы], /enable).
-// slashMenu(textarea, () => [{cmd, args, about}] | null) — список зовётся на каждый ввод: null — меню в этом чате нет.
+// slashMenu(textarea, () => [{cmd, args, about}] | null, кнопка?) — список зовётся на каждый ввод: null — меню в этом чате нет;
+// кнопка «Меню» открывает тот же список.
 const ASST_CMDS = [{ cmd: '/disable', args: '[часы]', about: 'выключить ассистента в этом чате — по умолчанию на 3 ч, не больше 48' },
   { cmd: '/enable', args: '', about: 'включить ассистента снова' },
   { cmd: '/compact', args: '', about: 'сжать контекст этого чата: раннее ассистент будет помнить сводкой, последние реплики — дословно' }];
-function slashMenu(ta, cmds) {
+function slashMenu(ta, cmds, btn) {
   const box = document.createElement('div'); box.className = 'slm'; box.hidden = true; box.setAttribute('role', 'listbox');
   ta.parentElement.style.position = ta.parentElement.style.position || 'relative'; ta.parentElement.appendChild(box);
   let items = [], at = 0;
@@ -426,4 +431,63 @@ function slashMenu(ta, cmds) {
     else if (e.key === 'Escape') box.hidden = true;
   }, true);
   ta.addEventListener('blur', () => setTimeout(() => { box.hidden = true; }, 120));
+  // кнопка показывает весь список, не трогая черновик (аудит Ф-01): текст меняется только выбором команды
+  if (btn) {
+    btn.onmousedown = (e) => e.preventDefault();      // фокус остаётся в поле — blur не закроет список
+    btn.onclick = () => { if (!box.hidden) { box.hidden = true; return; }
+      items = cmds() || []; at = 0; if (!items.length) return; paint(); box.hidden = false; ta.focus(); };
+  }
+}
+
+// системное письмо сети: просьба писать или будить, ответ на неё, смена настроек агента. Это не реплика, а событие
+// Сети с чьей-то стороны — плашкой по центру с иконкой; первая фраза, целиком — по нажатию (там команды для агента)
+// Значок плашки — тема (о чём), цвет — исход (ждёт · да · нет · сведения)
+const NET_IC = {
+  write: '<path d="M4 5.5h16v10H9l-5 4z"/>',
+  wake: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+  ban: '<circle cx="12" cy="12" r="8.5"/><path d="M6 6l12 12"/>',
+  approve: '<path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6z"/>',
+  admin: '<path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6z"/><path d="M9.2 12l2 2 3.8-3.8"/>',
+  set: '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
+  tick: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2.5h6"/>',
+  pen: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
+  off: '<path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4"/>',
+  fold: '<path d="M5 9h14M5 15h14"/><path d="M9 4l3 3 3-3M9 20l3-3 3 3"/>',
+  moon: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
+  play: '<path d="M8 5l11 7-11 7z"/>',
+  stub: '<rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8 12h8"/>',
+};
+function netKind(m, t) {
+  if (m.net === 'tick') return ['tick', 'info'];
+  if (m.net === 'asst_tell') return ['pen', 'info'];   // «ассистент получил сообщение от …» — собеседник видит пометку без текста
+  if (m.net === 'asst_off') return ['off', 'wait'];   // машина владельца выключена — письмо ждёт
+  if (m.net === 'asst_compact') return ['fold', 'info'];   // контекст ассистента сжат
+  if (m.net === 'stub_event') return ['stub', 'info'];   // событие стороннего сервиса через мост: оплатил, заказал
+  if (m.net === 'asst_sleep') return ['moon', 'wait'];   // ассистент спит до…
+  if (m.net === 'asst_wake') return ['play', 'yes'];     // проснулся
+  if (m.net === 'import_end') return ['stub', 'info'];   // черта «конец импорта»
+  if (m.net === 'asst_wait') return ['write', 'wait'];  // «пишет в чат, где ассистент на паузе» — владельцу
+  if (m.net === 'as_send') return ['pen', 'info'];   // «твой человек написал от твоего имени» — событие Сети     // сводка непросмотренного по расписанию
+  const topic = /закрыл тебе письма|чёрн/.test(t) ? 'ban' : /^⏰|будить/.test(t) ? 'wake' : /^🛡/.test(t) ? 'admin'
+    : /^⚙/.test(t) ? 'set' : /Одобрено|Отклонено/.test(t) ? 'approve' : 'write';
+  const res = /^(❌|⚠)|не разрешил|Отклонено|не выполнено/.test(t) ? 'no' : m.net === 'ask' ? 'wait'
+    : /^✅|разрешил|Разрешаю|принял|Одобрено/.test(t) ? 'yes' : 'info';
+  return [topic, res];
+}
+function netPillEl(m, side) {      // side — «с чьей стороны» (кабинет знает лицо и собеседника; страница ассистента — нет)
+  const el = document.createElement('div'), t = String(m.text || '').trim();
+  const [ic, res] = netKind(m, t);
+  const body = t.replace(/^(⏰|🔑|✅|❌|⚠|⚙|🛡|🕒)\uFE0F?\s*/u, '');
+  const first = (body.match(/^[\s\S]*?(?:[.!?](?=\s|$)|»\.?(?=\s|$))/) || [body])[0];
+  const mine = m.dir === 'me' || m.dir === 'out';
+  el.className = 'bub netn ' + (mine ? 'nmine' : 'ntheirs') + ' r-' + res + (m.dir === 'to_me' && !m.delivered ? ' unread' : '');
+  el.dataset.mid = m.mid;
+  const more = first.length < body.length;
+  // сообщение ассистенту глазами владельца: текст виден ему, собеседник видит только пометку
+  const hq = m.tell && m.tell.text ? `<div class="nhint">«${esc(m.tell.text)}»</div>` : '';
+  el.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${NET_IC[ic]}</svg><div><div class="nt">${esc(first)}</div>${hq}${more ? `<div class="nfull" hidden>${linkify(body)}</div>` : ''}
+    <div class="meta">Сеть${side ? ' · ' + esc(side) : ''} · ${esc(hm(m.at))}${more ? ' · <button class="more" type="button">подробнее</button>' : ''}</div></div>`;
+  el.dataset.tip = 'Системное сообщение Agents Network: его создала Сеть по действию ' + (mine ? 'с твоей стороны' : 'собеседника') + ', а не написал человек или агент';
+  if (more) el.querySelector('.more').onclick = (e) => { const f = el.querySelector('.nfull'); f.hidden = !f.hidden; e.target.textContent = f.hidden ? 'подробнее' : 'свернуть'; };
+  return el;
 }

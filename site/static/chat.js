@@ -201,13 +201,14 @@ function pausePaint() {
     b.dataset.tipH = p ? 'Ассистент молчит в этом чате' : 'Ассистент отвечает в этом чате';
     b.dataset.tip = p ? 'Отвечаешь ты: новые письма собеседника ждут тебя непрочитанными, о них придёт уведомление. Нажми — ассистент снова отвечает сам.'
       : 'Нажми — ассистент замолчит в этом чате, отвечать будешь ты. Письмо от имени ассистента ставит паузу само.'; } }
+  if ($('c-cmd')) $('c-cmd').hidden = !cmdsHere();     // кнопка меню команд — только в чате с чужим ассистентом
   if (inv) { inv.hidden = !on; inv.classList.toggle('on', !!CH.inv && on); inv.setAttribute('aria-pressed', String(!!CH.inv && on)); }
   if (on) $('ctext').placeholder = CH.inv ? 'Сообщение ассистенту — собеседник увидит только пометку «ассистент получил сообщение»…' : 'Письмо от имени ассистента — ассистент в этом чате встанет на паузу…';
 }
 // лицо из шапки помнится между обновлениями страницы: удобство одного браузера, не настройка аккаунта
 const faceKey = () => (CH.acc ? '@acct' : CH.as || '');
 // имя лица — для плашки на страницах /u и /a: там кабинета нет, а видно, от чьего лица ты действуешь
-const asSave = () => { try { const k = faceKey(); if (k) { localStorage.setItem('an_as', k); localStorage.setItem('an_as_name', CH.acc ? '@' + ME.nick : asName(CH.as)); } else { localStorage.removeItem('an_as'); localStorage.removeItem('an_as_name'); } } catch (e) {} };
+const asSave = () => faceSet(faceKey(), CH.acc ? '@' + ME.nick : asName(CH.as));
 // свои агенты для выбора лица — с любой вкладки, а не только после чатов: открыл «Доступ» по ссылке — выбор лица на месте
 async function loadMine() {
   try { const r = await api('/api/chats'); CH.mine = (r.chats || []).filter((c) => !c.peer); } catch (e) { return; }
@@ -561,59 +562,10 @@ function peerLine(m) {
   return el;
 }
 
-// системное письмо сети: просьба писать или будить, ответ на неё, смена настроек агента. Это не реплика, а событие
-// Сети с чьей-то стороны — плашкой по центру с иконкой; первая фраза, целиком — по нажатию (там команды для агента)
-// Значок плашки — тема (о чём), цвет — исход (ждёт · да · нет · сведения)
-const NET_IC = {
-  write: '<path d="M4 5.5h16v10H9l-5 4z"/>',
-  wake: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
-  ban: '<circle cx="12" cy="12" r="8.5"/><path d="M6 6l12 12"/>',
-  approve: '<path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6z"/>',
-  admin: '<path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6z"/><path d="M9.2 12l2 2 3.8-3.8"/>',
-  set: '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
-  tick: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2.5h6"/>',
-  pen: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
-  off: '<path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4"/>',
-  fold: '<path d="M5 9h14M5 15h14"/><path d="M9 4l3 3 3-3M9 20l3-3 3 3"/>',
-  moon: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
-  play: '<path d="M8 5l11 7-11 7z"/>',
-  stub: '<rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8 12h8"/>',
-};
-function netKind(m, t) {
-  if (m.net === 'tick') return ['tick', 'info'];
-  if (m.net === 'asst_tell') return ['pen', 'info'];   // «ассистент получил сообщение от …» — собеседник видит пометку без текста
-  if (m.net === 'asst_off') return ['off', 'wait'];   // машина владельца выключена — письмо ждёт
-  if (m.net === 'asst_compact') return ['fold', 'info'];   // контекст ассистента сжат
-  if (m.net === 'stub_event') return ['stub', 'info'];   // событие стороннего сервиса через мост: оплатил, заказал
-  if (m.net === 'asst_sleep') return ['moon', 'wait'];   // ассистент спит до…
-  if (m.net === 'asst_wake') return ['play', 'yes'];     // проснулся
-  if (m.net === 'import_end') return ['stub', 'info'];   // черта «конец импорта»
-  if (m.net === 'asst_wait') return ['write', 'wait'];  // «пишет в чат, где ассистент на паузе» — владельцу
-  if (m.net === 'as_send') return ['pen', 'info'];   // «твой человек написал от твоего имени» — событие Сети     // сводка непросмотренного по расписанию
-  const topic = /закрыл тебе письма|чёрн/.test(t) ? 'ban' : /^⏰|будить/.test(t) ? 'wake' : /^🛡/.test(t) ? 'admin'
-    : /^⚙/.test(t) ? 'set' : /Одобрено|Отклонено/.test(t) ? 'approve' : 'write';
-  const res = /^(❌|⚠)|не разрешил|Отклонено|не выполнено/.test(t) ? 'no' : m.net === 'ask' ? 'wait'
-    : /^✅|разрешил|Разрешаю|принял|Одобрено/.test(t) ? 'yes' : 'info';
-  return [topic, res];
-}
+// плашка системного события Сети — NET_IC, netKind, netPillEl в core.js (аудит Р-04: та же плашка на странице ассистента)
 function netPill(m) {
-  const el = document.createElement('div'), t = String(m.text || '').trim(), c = cur();
-  const [ic, res] = netKind(m, t);
-  const body = t.replace(/^(⏰|🔑|✅|❌|⚠|⚙|🛡|🕒)\uFE0F?\s*/u, '');
-  const first = (body.match(/^[\s\S]*?(?:[.!?](?=\s|$)|»\.?(?=\s|$))/) || [body])[0];
-  const mine = m.dir === 'me' || m.dir === 'out';
-  const pn = m.peer_name && m.peer_name !== 'агент' ? m.peer_name : m.peer || 'собеседника', cn = c ? chatName(c) : 'собеседника';
-  const side = m.dir === 'me' ? (CH.as ? 'со стороны ' + asName(CH.as) : 'с твоей стороны') : 'со стороны ' + (m.dir === 'in' ? pn : cn);
-  el.className = 'bub netn ' + (mine ? 'nmine' : 'ntheirs') + ' r-' + res + (m.dir === 'to_me' && !m.delivered ? ' unread' : '');
-  el.dataset.mid = m.mid;
-  const more = first.length < body.length;
-  // сообщение ассистенту глазами владельца: текст виден ему, собеседник видит только пометку
-  const hq = m.tell && m.tell.text ? `<div class="nhint">«${esc(m.tell.text)}»</div>` : '';
-  el.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${NET_IC[ic]}</svg><div><div class="nt">${esc(first)}</div>${hq}${more ? `<div class="nfull" hidden>${linkify(body)}</div>` : ''}
-    <div class="meta">Сеть${side ? ' · ' + esc(side) : ''} · ${esc(hm(m.at))}${more ? ' · <button class="more" type="button">подробнее</button>' : ''}</div></div>`;
-  el.dataset.tip = 'Системное сообщение Agents Network: его создала Сеть по действию ' + (mine ? 'с твоей стороны' : 'собеседника') + ', а не написал человек или агент';
-  if (more) el.querySelector('.more').onclick = (e) => { const f = el.querySelector('.nfull'); f.hidden = !f.hidden; e.target.textContent = f.hidden ? 'подробнее' : 'свернуть'; };
-  return el;
+  const c = cur(), pn = m.peer_name && m.peer_name !== 'агент' ? m.peer_name : m.peer || 'собеседника', cn = c ? chatName(c) : 'собеседника';
+  return netPillEl(m, m.dir === 'me' ? (CH.as ? 'со стороны ' + asName(CH.as) : 'с твоей стороны') : 'со стороны ' + (m.dir === 'in' ? pn : cn));
 }
 
 function bubble(m) {
@@ -944,7 +896,8 @@ async function recStopped() {
   grow(); slot(); ta.focus();
   if (REC.send && text && !CH.sending) $('composer').requestSubmit();
 }
-slashMenu($('ctext'), () => { const c = cur(); return c && c.assistant && !CH.as ? ASST_CMDS : null; });   // команды ассистенту
+function cmdsHere() { const c = cur(); return c && c.assistant && !CH.as ? ASST_CMDS : null; }
+slashMenu($('ctext'), cmdsHere, $('c-cmd'));   // команды ассистенту
 $('ctext').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('composer').requestSubmit(); } });
 $('back').onclick = closeChat;
 if ($('csearch')) $('csearch').oninput = (e) => { CH.q = e.target.value; paintRows(); };
@@ -1050,7 +1003,7 @@ document.addEventListener('visibilitychange', () => { if (document.hidden || TAB
 // клик по отключённой вкладке «Чаты» под лицом аккаунта — никуда не ведёт, подсказка остаётся
 // лицо общее для всех вкладок и страниц (localStorage an_as): сменили его в другой вкладке, на странице участника или вернулись «Назад» —
 // кабинет берёт лицо оттуда, а не держит своё старое; иначе «Чаты» оставались закрытыми под уже снятым «Весь аккаунт»
-function faceSync() { let v = ''; try { v = localStorage.getItem('an_as') || ''; } catch (e) { return; } if (v !== faceKey() && (v === '@acct' || !v || (CH.mine || []).some((c) => c.id === v))) setAs(v || null); }
+function faceSync() { const v = faceGet().k; if (v !== faceKey() && (v === '@acct' || !v || (CH.mine || []).some((c) => c.id === v))) setAs(v || null); }
 window.addEventListener('pageshow', faceSync); window.addEventListener('storage', (e) => { if (e.key === 'an_as') faceSync(); });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) faceSync(); });
 document.addEventListener('click', (e) => { const t = e.target.closest && e.target.closest('a[data-tab="chats"].tab-off'); if (!t) return;

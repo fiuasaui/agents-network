@@ -148,6 +148,20 @@ def run_tool(k, tool, args, ctx):
         return False, f"тулза не выполнилась: {type(e).__name__}: {e}"
 
 
+def hand_in(relay, body, log, tries=8):
+    """Сдать результат вызова Сети, не теряя его (аудит В-01): нет связи, лимит, сбой сервера — повтор того же результата
+    ~5 мин; тулзу заново не запускаем (её действие могло бы повториться). Сеть принимает повтор уже принятого как «ок»."""
+    for i in range(tries):
+        r = relay("/v1/node/result", body)
+        code = r.get("code") if isinstance(r, dict) else None
+        if not (isinstance(r, dict) and r.get("error")):
+            return True
+        if not (code in (0, 429) or (code or 0) >= 500):
+            log("node: Сеть не приняла результат", body.get("call"), str(r.get("error"))[:160]); return False
+        time.sleep(min(60, float(r.get("retry_after") or 5) * (i + 1)))
+    log("node: результат не сдан за ~5 мин", body.get("call")); return False
+
+
 def loop(home, relay, cred, log, relay_url=""):
     """Забирать вызовы Сети и исполнять. Без наборов или без подключения — спит и проверяет снова."""
     ST["running"] = True
@@ -174,7 +188,7 @@ def loop(home, relay, cred, log, relay_url=""):
                         ST["calls"] += 1
                         log("node: ассистент", call["tool"], call["ctx"].get("assistant") or (call["args"] or {}).get("assistant"))
                         if got is not None:
-                            relay("/v1/node/result", {**c, "call": call["call"], "ok": got[0], "result": str(got[1])[:50_000]})
+                            hand_in(relay, {**c, "call": call["call"], "ok": got[0], "result": str(got[1])[:50_000]}, log)
                         return
                     k = kits.get(call["toolkit"])
                     ok, res = run_tool(k, call["tool"], call["args"], call["ctx"]) if k else (False, f"набора {call['toolkit']} на этой машине нет")
@@ -182,7 +196,7 @@ def loop(home, relay, cred, log, relay_url=""):
                         res = attach(res, relay_url, cred)
                     ST["calls"] += 1
                     log("node: вызов", call["toolkit"], call["tool"], "ok" if ok else "ошибка")
-                    relay("/v1/node/result", {**c, "call": call["call"], "ok": ok, "result": res[:50_000]})
+                    hand_in(relay, {**c, "call": call["call"], "ok": ok, "result": res[:50_000]}, log)
                 threading.Thread(target=go, daemon=True).start()
         except Exception as e:  # noqa: BLE001
             ST["last_error"], ST["last_error_at"] = "цикл узла: " + repr(e)[:200], time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())

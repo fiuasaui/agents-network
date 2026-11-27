@@ -219,6 +219,7 @@ def snapshots(every=300):
                 to = sqlite3.connect(str(tmp))
                 try:
                     src.backup(to)
+                    to.execute("PRAGMA journal_mode=DELETE")     # копия — один файл: без -wal и -shm рядом в бэкапе
                 finally:
                     to.close(); src.close()
                 tmp.chmod(0o600)
@@ -312,7 +313,7 @@ def lcred(session):
     return {"id": i["lid"], "secret": i["lsecret"]}
 
 
-AGENT_API = {"pay", "balance", "unreply", "ack", "history", "chats", "agent", "trust", "profile", "send", "approve", "assistant",
+AGENT_API = {"pay", "balance", "ack", "history", "chats", "agent", "trust", "profile", "send", "approve", "assistant",
              "toolkits", "tool", "file", "directory", "human", "ask", "wake", "read", "unread", "inbox", "admin", "review"}
 
 

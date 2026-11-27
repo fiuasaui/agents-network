@@ -92,53 +92,92 @@ def post(url, token, payload):
             raise RuntimeError(f"вебхук ответил {r.status}")
 
 
+def _save(path: Path, text: str):
+    """Атомарная запись (аудит В-03): обрыв посреди записи не оставит полфайла курсора или очереди."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text); os.replace(tmp, path)
+
+
+def _routes(home: Path):
+    live = [b for b in load(home).values() if b.get("webhook")]
+    # у одного ассистента бывает несколько мостов (веб-чат, бот, тест) — письмо уходит мосту своего источника
+    bridges = {(b["assistant"], b.get("source")): b for b in live}
+    bridges.update({(b["assistant"], None): b for b in live if (b["assistant"], None) not in bridges})
+    return bridges
+
+
+def _flush(q: list, home: Path, log) -> list:
+    """Доставить очередь: по каждому мосту — по порядку до первого отказа; лёгший мост не задерживает соседей (аудит В-02).
+    Письмо, не доставленное за час, пропускаем с записью в журнал. Возвращает остаток очереди."""
+    by = {b["name"]: b for b in load(home).values() if b.get("webhook")}
+    stuck, rest = set(), []
+    for it in q:
+        b = by.get(it["bridge"])
+        if not b or it["bridge"] in stuck:
+            if b:
+                rest.append(it)
+            continue
+        try:
+            post(b["webhook"], b.get("token"), it["payload"])
+            ST["sent"] += 1
+        except Exception as e:      # noqa: BLE001 — сервис лёг: ждём его, письма не теряем, пока не прошёл час
+            ST["last_error"] = f"{b['name']}: {str(e)[:160]}"
+            if time.time() - it["first"] > 3600:
+                ST["failed"] += 1
+                log("мост", b["name"], "письмо", it["payload"].get("mid"), "не доставлено за час — пропускаю:", e)
+            else:
+                stuck.add(it["bridge"]); rest.append(it)
+    return rest
+
+
 def loop(home: Path, relay, owner_cred, log):
-    """Сеть → сервис: длинный опрос /v1/stub/out, каждое письмо — на webhook своего моста; курсор — в bridges/.cursor."""
-    cur = bdir(home) / ".cursor"
+    """Сеть → сервис: длинный опрос /v1/stub/out, каждое письмо — в очередь своего моста (bridges/.pending), доставка — на
+    webhook по порядку внутри моста; курсор (bridges/.cursor) двигается, когда письма уже в очереди на диске. Получатель
+    различает повторы по `mid`: после падения воркера письмо может прийти второй раз."""
+    cur, pend = bdir(home) / ".cursor", bdir(home) / ".pending"
     try:
         ST["after"] = float(cur.read_text())
     except (OSError, ValueError):
         ST["after"] = time.time()
+    try:
+        q = json.loads(pend.read_text())
+    except (OSError, ValueError):
+        q = []
     ST["running"] = True
     while True:
-        live = [b for b in load(home).values() if b.get("webhook")]
-        # у одного ассистента бывает несколько мостов (веб-чат, бот, тест) — письмо уходит мосту своего источника
-        bridges = {(b["assistant"], b.get("source")): b for b in live}
-        bridges.update({(b["assistant"], None): b for b in live if (b["assistant"], None) not in bridges})
-        o = owner_cred()
-        if not bridges or not o:
-            time.sleep(15)
-            continue
-        r = relay("/v1/stub/out", {**o, "after": ST["after"], "wait": 25}, 40)
-        if r.get("error"):
-            ST["last_error"] = str(r["error"])[:200]
+        try:
+            if q:
+                n = len(q); q = _flush(q, home, log)
+                if len(q) != n:
+                    _save(pend, json.dumps(q, ensure_ascii=False))
+            o = owner_cred()
+            if not _routes(home) or not o:
+                time.sleep(15); continue
+            r = relay("/v1/stub/out", {**o, "after": ST["after"], "wait": 10 if q else 25}, 40)
+            if r.get("error"):
+                ST["last_error"] = str(r["error"])[:200]
+                time.sleep(10); continue
+            # мосты — заново после опроса: мост, заведённый или поправленный за эти 25 с, иначе терял свои первые ответы (симуляция 22.11)
+            bridges = _routes(home)
+            msgs = r.get("msgs") or []
+            for m in msgs:
+                b = bridges.get((m.get("assistant_id"), m.get("source")))
+                if not b and not any(x.get("assistant") == m.get("assistant_id") and x.get("source") == m.get("source") for x in load(home).values()):
+                    b = bridges.get((m.get("assistant_id"), None))     # источник без своего моста (переименовали) — первому мосту ассистента
+                if b:
+                    q.append({"bridge": b["name"], "first": time.time(), "payload": {
+                        "type": "reply", "bridge": b["name"], "assistant": m["assistant"], "user": m["user"],
+                        **{k: m[k] for k in ("text", "blocks", "files", "by_human", "system", "thread", "at", "mid") if k in m}}})
+            if msgs:
+                _save(pend, json.dumps(q, ensure_ascii=False))          # сначала очередь на диске, потом курсор
+                ST["after"] = msgs[-1]["at"]
+                _save(cur, str(ST["after"]))
+                q = _flush(q, home, log)
+                _save(pend, json.dumps(q, ensure_ascii=False))
+            else:
+                ST["after"] = max(ST["after"], float(r.get("after") or 0))
+            ST["queued"] = len(q)
+        except Exception as e:      # noqa: BLE001 — сбой диска или разбора не останавливает мост до перезапуска (В-03)
+            ST["last_error"] = f"цикл моста: {repr(e)[:160]}"
+            log("мост: сбой цикла", repr(e)[:200])
             time.sleep(10)
-            continue
-        # мосты — заново после опроса: мост, заведённый или поправленный за эти 25 с, иначе терял свои первые ответы (симуляция 22.11)
-        live = [b for b in load(home).values() if b.get("webhook")]
-        bridges = {(b["assistant"], b.get("source")): b for b in live}
-        bridges.update({(b["assistant"], None): b for b in live if (b["assistant"], None) not in bridges})
-        for m in r.get("msgs") or []:
-            b = bridges.get((m.get("assistant_id"), m.get("source")))
-            if not b and not any(x.get("assistant") == m.get("assistant_id") and x.get("source") == m.get("source") for x in load(home).values()):
-                b = bridges.get((m.get("assistant_id"), None))     # источник без своего моста (переименовали) — первому мосту ассистента
-            if b:
-                payload = {"type": "reply", "bridge": b["name"], "assistant": m["assistant"], "user": m["user"],
-                           **{k: m[k] for k in ("text", "blocks", "files", "by_human", "system", "thread", "at", "mid") if k in m}}
-                t0 = time.time()
-                while True:
-                    try:
-                        post(b["webhook"], b.get("token"), payload)
-                        ST["sent"] += 1
-                        break
-                    except Exception as e:      # сервис лёг — ждём его, письма не теряем, пока не прошёл час
-                        ST["last_error"] = f"{b['name']}: {str(e)[:160]}"
-                        if time.time() - t0 > 3600:
-                            ST["failed"] += 1
-                            log("мост", b["name"], "письмо", m.get("mid"), "не доставлено за час — пропускаю:", e)
-                            break
-                        time.sleep(10)
-            ST["after"] = m["at"]
-            cur.write_text(str(ST["after"]))
-        if not r.get("msgs"):
-            ST["after"] = max(ST["after"], float(r.get("after") or 0))
