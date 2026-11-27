@@ -41,7 +41,7 @@ for _d in ("~/.local/bin", "~/.claude/local", "~/.npm-global/bin", "~/.bun/bin",
 IDS = HOME / "identities.json"
 LOCK = threading.RLock()
 COND = threading.Condition(LOCK)
-STATE = {"ids": {}, "pending": {}, "seen_hook": {}, "respawn_at": {}, "miss_at": {}, "recent": {}, "cx_wait": {}, "cx_running": {}, "oc_running": {}, "pollers": set(), "mid_net": {}}   # pending: session → [msg]; seen_hook: session → время опроса
+STATE = {"ids": {}, "pending": {}, "seen_hook": {}, "respawn_at": {}, "miss_at": {}, "recent": {}, "cx_wait": {}, "cx_running": {}, "oc_running": {}, "pollers": set(), "mid_net": {}, "handed": {}}   # pending: session → [msg]; seen_hook: session → время опроса
 CFG = {"relay": "", "port": 8791}
 
 
@@ -332,10 +332,24 @@ def net_call(net, path, body, timeout=60):
 
 
 def ack(s, m):
+    """Подтвердить письмо сети. Письмо уже отдано сессии: пока подтверждение не дошло, оно в handed — повторный опрос
+    вернёт тот же mid, и мы повторим только подтверждение, а не будим сессию второй раз (аудит ВР-01)."""
     i = STATE["ids"].get(s) or {}
     net = m.get("net", "public")
     c = {"id": i.get("lid"), "secret": i.get("lsecret")} if net == "local" else {"id": i.get("id"), "secret": i.get("secret")}
-    return net_call(net, "/v1/ack", {**c, "mids": [m["mid"]]})
+    with LOCK:
+        hd = STATE["handed"].setdefault(s, {})
+        hd[m["mid"]] = {"mid": m["mid"], "net": net}
+        for k in list(hd)[:-500]:       # подтверждение, которое не дошло ни разу за 500 писем, ретранслятор уже не вернёт
+            del hd[k]
+    try:
+        r = net_call(net, "/v1/ack", {**c, "mids": [m["mid"]]})
+    except Exception as e:  # noqa: BLE001
+        r = {"error": f"нет связи: {str(e)[:120]}"}
+    if not (isinstance(r, dict) and r.get("error")):
+        with LOCK:
+            STATE["handed"].get(s, {}).pop(m["mid"], None)
+    return r
 
 
 def local_ids():
@@ -488,7 +502,9 @@ def poller(session, net):
                 STATE.setdefault("quiet", {})[session] = int(r.get("quiet") or 0)
             with COND:
                 have = {m["mid"] for m in STATE["pending"].get(session, [])}
-                new = [{**m, "net": net} for m in r.get("msgs", []) if m["mid"] not in have]
+                handed = STATE["handed"].get(session, {})
+                again = [handed[m["mid"]] for m in r.get("msgs", []) if m["mid"] in handed]    # уже у сессии, не дошло подтверждение
+                new = [{**m, "net": net} for m in r.get("msgs", []) if m["mid"] not in have and m["mid"] not in handed]
                 if new and r.get("events"):     # системные события Сети — к первому будящему письму, блоком ⟦Сеть⟧
                     new[0]["events"] = r["events"]
                 if new:
@@ -499,6 +515,8 @@ def poller(session, net):
                         for k in list(STATE["mid_net"])[:1000]:
                             del STATE["mid_net"][k]
                     log("принято", net, session[:8], [m["mid"] for m in new])
+            for m in again:     # аудит ВР-01: сессию не будим второй раз — повторяем только подтверждение
+                log("повтор подтверждения", net, session[:8], m["mid"], ack(session, m))
             if not r.get("msgs"):
                 continue
             # старый ретранслятор без skip отдаёт те же неподтверждённые сразу — тогда не чаще раза в 15 с
@@ -757,7 +775,8 @@ def direct():
                     log("не доставлено", kind, s[:8], e)
                     STATE["miss_at"][s] = time.time() - 45    # повтор через ~15 с
                     break
-                with LOCK:
+                with LOCK:      # в handed — до снятия из pending: опрос между ними не примет письмо заново (ВР-01)
+                    STATE["handed"].setdefault(s, {})[m["mid"]] = {"mid": m["mid"], "net": m.get("net", "public")}
                     STATE["pending"][s] = [x for x in STATE["pending"].get(s, []) if x["mid"] != m["mid"]]
                     rec = STATE["recent"].setdefault(s, []); rec.append({"mid": m["mid"], "from": m["from"], "from_name": m.get("from_name"), "text": m["text"][:300], "at": time.time()}); del rec[:-20]
                 r = ack(s, m)

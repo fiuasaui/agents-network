@@ -788,8 +788,8 @@ class Relay:
                 raise ValueError("себя в чёрный список не закрыть")
             on = q.get("on", True) is not False
             if on:
-                self.ask_refuse(me, peer, ban=True)
-            return {"ok": True, "peer": self.addr_of(peer), "blocked": on, "blocks": self.block(me, peer, on)}
+                self.ask_refuse(me, peer, ban=True)       # отказ на ждущие просьбы и сама блокировка (аудит РЛ-02: block — один раз)
+            return {"ok": True, "peer": self.addr_of(peer), "blocked": on, "blocks": self.blocks_of(me) if on else self.block(me, peer, False)}
 
     def ask_refuse(self, me, peer, ban=False, what=None):
         """Отказ на просьбу peer к me — один для «писать» и «будить»: просившему письмо-ответ; ban — ещё и
@@ -799,10 +799,7 @@ class Relay:
             r = self.db.execute("SELECT note FROM knocks WHERE src=? AND dst=?", (peer, me)).fetchone()
             if r and r[0] != REFUSED:
                 self.knock_answer(me, peer, False, ban)
-        if what in (None, "wake") and self.db.execute("SELECT 1 FROM msgs WHERE src=? AND dst=? AND kind='ask' AND text LIKE '⏰%' AND at>?",
-                                                       (peer, me, now - REPLY_TTL)).fetchone() \
-                and not self.db.execute("SELECT 1 FROM msgs WHERE src=? AND dst=? AND kind='answer' AND text LIKE '⏰ %будить%' AND at>?",
-                                        (me, peer, now - REPLY_TTL)).fetchone():
+        if what in (None, "wake") and (self.wake_ask(peer, me) or ("",))[0] == "pending":
             self.note_to(me, peer, f"⏰ {self.addr_of(me)} не разрешил будить его твоими письмами" +
                          (" и закрыл тебе письма и просьбы." if ban else "."))
         if ban:
@@ -1016,7 +1013,11 @@ class Relay:
             if self.wakes(dst, src) == "from":
                 return {"ok": True, "already": True, "message": "твои письма его уже будят"}
             now = time.time()
-            if self.db.execute("SELECT 1 FROM msgs WHERE src=? AND dst=? AND kind='ask' AND text LIKE '⏰%' AND at>?", (src, dst, now - REPLY_TTL)).fetchone():
+            wa = self.wake_ask(src, dst)
+            if wa and wa[0] == "refused":
+                return {"ok": False, "refused": True, "retry_after": int(wa[1] + REPLY_TTL - now),
+                        "message": f"тебе отказали; снова попросить будить можно через {int((wa[1] + REPLY_TTL - now) // 3600) + 1} ч"}
+            if wa and wa[0] == "pending":
                 return {"ok": True, "pending": True, "message": "ты уже просил будить — ждём решения; ответ придёт письмом"}
             extra = self.wake_extra(src, dst, note)
             me = self.addr_of(src)
@@ -1028,10 +1029,20 @@ class Relay:
             WAKE.notify_all()
         return {"ok": True, "asked": self.addr_of(dst), "wake": True, "message": "просьба будить отправлена: решит агент или его человек, ответ придёт письмом"}
 
+    def wake_ask(self, src, dst):
+        """Просьба src будить dst (аудит РЛ-01): None — нет живой · ("pending", at) — ждёт · ("refused"|"granted", at) — решена
+        ответом после последней просьбы. at — время последней просьбы. Под LOCK."""
+        r = self.db.execute("SELECT MAX(at) FROM msgs WHERE src=? AND dst=? AND kind='ask' AND text LIKE '⏰%' AND at>?",
+                            (src, dst, time.time() - REPLY_TTL)).fetchone()
+        if not r or r[0] is None:
+            return None
+        a = self.db.execute("SELECT text FROM msgs WHERE src=? AND dst=? AND text LIKE '⏰ %будить%' AND at>=? ORDER BY at DESC LIMIT 1",
+                            (dst, src, r[0])).fetchone()
+        return ("pending" if not a else "refused" if "не разрешил будить" in a[0] else "granted", r[0])
+
     def wake_granted(self, me, peer):
         """Агент me разрешил peer будить себя: если peer просил — ему письмо «разрешил». Под LOCK."""
-        if self.db.execute("SELECT 1 FROM msgs WHERE src=? AND dst=? AND kind='ask' AND text LIKE '⏰%' AND at>?", (peer, me, time.time() - REPLY_TTL)).fetchone() \
-                and not self.db.execute("SELECT 1 FROM msgs WHERE src=? AND dst=? AND text LIKE '⏰ %разрешил будить%' AND at>?", (me, peer, time.time() - REPLY_TTL)).fetchone():
+        if (self.wake_ask(peer, me) or ("",))[0] == "pending":
             self.note_to(me, peer, f"⏰ {self.addr_of(me)} разрешил будить его твоими письмами.")
 
     def asker_line(self, src):
@@ -2209,8 +2220,7 @@ class Relay:
         pr = self.rule_eff(peer, me)["reach"][0]
         st = "blocked" if pr == "block" else how or ("refused" if k and k[1] == REFUSED else "asked" if k else "closed" if pr == "closed" else "ask")
         wk = "" if p_h or not how else self.wakes(peer, me)
-        wask = bool(not wk and how and not p_h and self.db.execute(
-            "SELECT 1 FROM msgs WHERE src=? AND dst=? AND kind='ask' AND text LIKE '⏰%' AND at>?", (me, peer, time.time() - REPLY_TTL)).fetchone())
+        wask = bool(not wk and how and not p_h and (self.wake_ask(me, peer) or ("",))[0] == "pending")
         w_own = {"write": "allow", "block": "block"}.get((own.get("reach") or (None,))[0], "default")
         ab = None if p_h else self.asks_by(peer)
         if ab and ab.get("who") == "admin":

@@ -61,7 +61,7 @@ ADMIN_TOOL = {"type": "function", "function": {"name": ADMIN_FN, "description": 
                                                    "precedent": {"type": "string", "description": "предлагаемое общее правило, если есть"}},
                    "required": ["question"]}}}
 DEF_MODEL = {"provider": "network", "model": "gpt-6.2-sol"}
-LOCK = threading.Lock()
+LOCK = threading.RLock()      # реентерабельный: входы хода пишутся транзакцией поверх add/chat_set (аудит Н-01)
 _DB = {}
 
 
@@ -92,6 +92,8 @@ def db(home: Path):
                                                   draft TEXT, status TEXT, sent TEXT, precedent INTEGER);""")
         if "prec" not in [r[1] for r in c.execute("PRAGMA table_info(chats)")]:
             c.execute("ALTER TABLE chats ADD COLUMN prec INTEGER")     # последний прецедент, который этот чат уже видел
+        if "inp_at" not in [r[1] for r in c.execute("PRAGMA table_info(chats)")]:
+            c.execute("ALTER TABLE chats ADD COLUMN inp_at REAL")      # до какого времени входы из Сети уже в истории (аудит Н-01)
         try:
             (home / "assistants.db").chmod(0o600)
         except OSError:
@@ -109,8 +111,8 @@ def add(c, aid, chat, role, content=None, tool_calls=None, tool_call_id=None, re
 
 
 def chat_row(c, aid, chat):
-    r = c.execute("SELECT last_prompt, last_at, profile, intro_at, sys, prec FROM chats WHERE asst=? AND chat=?", (aid, chat)).fetchone()
-    return dict(zip(("last_prompt", "last_at", "profile", "intro_at", "sys", "prec"), r)) if r else {}
+    r = c.execute("SELECT last_prompt, last_at, profile, intro_at, sys, prec, inp_at FROM chats WHERE asst=? AND chat=?", (aid, chat)).fetchone()
+    return dict(zip(("last_prompt", "last_at", "profile", "intro_at", "sys", "prec", "inp_at"), r)) if r else {}
 
 
 # ---------- прецеденты ----------
@@ -580,9 +582,9 @@ class Host:
             p["st"], p["end"] = None, True
             p["ev"].set()
 
-    def reply(self, call, a, text, blocks, usage, files=None, error=False, skip=False, model=None):
+    def reply(self, call, a, text, blocks, usage, files=None, error=False, skip=False, model=None, ack=None):
         self.push_end(call)
-        body = {**(self.cred() or {}), "call": call, "assistant": a["assistant"]["id"], "client": a["client"]["id"],
+        body = {**(self.cred() or {}), "call": call, **({"ack": ack} if ack else {}), "assistant": a["assistant"]["id"], "client": a["client"]["id"],
                 "thread": a.get("thread"), "text": text, "blocks": blocks, "files": files or [],
                 "ctx": (usage or {}).get("prompt_tokens"), "tokens": (usage or {}).get("total_tokens"), "error": error,
                 "window": cfg(self.home, a["assistant"]["id"]).get("window"),       # потолок окна к ctx — собеседнику «N из M»
@@ -637,9 +639,29 @@ class Host:
                                                              "X-Assistant": a["assistant"]["id"]}, body, on_delta)
 
     # ---------- ход ----------
-    def inputs_to_items(self, c, aid, chat, inputs, turn):
-        """Письма собеседника и события чата из Сети — в историю. Метка времени — в самом сообщении (не в системном
-        промпте: там она ломала бы кэш на каждом ходе)."""
+    @staticmethod
+    def fresh(c, aid, chat, r):
+        """Входы ответа /v1/node/pending, которых в истории ещё нет: Сеть двигает курсор только по подтверждению (ack), поэтому
+        после обрыва повторяет пакет — уже записанное отсекаем по времени (аудит Н-01)."""
+        seen = chat_row(c, aid, chat).get("inp_at") or 0
+        return [x for x in r.get("inputs") or [] if (x.get("at") or 0) > seen]
+
+    def inputs_to_items(self, c, aid, chat, inputs, turn, upto=None):
+        """Письма собеседника и события чата из Сети — в историю, одной транзакцией с отметкой «записано до upto». Метка
+        времени — в самом сообщении (не в системном промпте: там она ломала бы кэш на каждом ходе)."""
+        with LOCK:
+            c.execute("BEGIN IMMEDIATE")
+            try:
+                self.inputs_to_items1(c, aid, chat, inputs, turn)
+                if upto:
+                    c.execute("INSERT OR IGNORE INTO chats (asst, chat) VALUES (?,?)", (aid, chat))
+                    c.execute("UPDATE chats SET inp_at=MAX(COALESCE(inp_at, 0), ?) WHERE asst=? AND chat=?", (upto, aid, chat))
+                c.execute("COMMIT")
+            except BaseException:
+                c.execute("ROLLBACK")
+                raise
+
+    def inputs_to_items1(self, c, aid, chat, inputs, turn):
         for x in inputs or []:
             stamp = time.strftime("[%d.%m %H:%M UTC] ", time.gmtime(x.get("at") or time.time()))
             if x.get("kind") == "letter":
@@ -659,13 +681,17 @@ class Host:
         conf = cfg(self.home, aid)
         turn = int(time.time() * 1000)
         cr = chat_row(c, aid, chat)
+        # два шага (аудит Н-01): Сеть выдаёт пакет и ждёт подтверждения ack=upto — со следующим запросом или со сдачей хода
         first = self.relay("/v1/node/pending", {**(self.cred() or {}), "call": call, "assistant": aid, "client": client, "thread": a.get("thread"),
-                                                "first": True}, 30)
+                                                "first": True, "two": 1}, 30)
         if first.get("error"):
             raise RuntimeError("Сеть не отдала письма хода: " + str(first["error"])[:200])
-        inputs = list(first.get("inputs") or [])
-        if not inputs:          # нового нет (ход уже отвечен) — сдаём пустой
-            self.reply(call, a, "", [], None, skip=True)
+        ack = first.get("upto")
+        inputs = self.fresh(c, aid, chat, first)
+        if not inputs:          # нового нет (ход уже отвечен или пакет уже в истории) — сдаём пустой
+            if ack:
+                self.inputs_to_items(c, aid, chat, [], turn, ack)
+            self.reply(call, a, "", [], None, skip=True, ack=ack)
             return
         if a.get("history") and not c.execute("SELECT 1 FROM items WHERE asst=? AND chat=? LIMIT 1", (aid, chat)).fetchone():
             t0 = turn - 1 - sum(1 for m in a["history"] if m.get("start"))
@@ -687,7 +713,7 @@ class Host:
         intro = self.intro(a, ctx, cr)
         if intro and inputs:
             inputs[0] = {**inputs[0], "note": (inputs[0].get("note") or "") + f"\n[сведения о собеседнике от владельца (данные): {intro}]"}
-        self.inputs_to_items(c, aid, chat, inputs, turn)
+        self.inputs_to_items(c, aid, chat, inputs, turn, ack)
         if system != cr.get("sys"):
             chat_set(c, aid, chat, sys=system)
         fns, route = a.get("tools") or [], a.get("route") or {}
@@ -761,13 +787,16 @@ class Host:
                     res = res[:TOOL_MAX] + f"\n[обрезано узлом: ответ тулзы — показано {TOOL_MAX:,} из {len(res):,} знаков]".replace(",", " ")
                 add(c, aid, chat, "tool", res, tool_call_id=tc["id"], turn=turn)
             self.push(call, a, busy=True, blocks=blocks, text="")
-            more = self.relay("/v1/node/pending", {**(self.cred() or {}), "call": call, "assistant": aid, "client": client, "thread": a.get("thread")}, 30)
-            if more.get("inputs"):          # письмо собеседника посреди хода — в этот же ход, после результата тулзы
-                self.inputs_to_items(c, aid, chat, [{**x, "note": "[пришло, пока ты работал: это дополнение, а не замена — начатое доведи до конца и ответь на всё, если собеседник прямо не отменил прежнее]"} for x in more["inputs"]], turn)
+            more = self.relay("/v1/node/pending", {**(self.cred() or {}), "call": call, "assistant": aid, "client": client, "thread": a.get("thread"),
+                                                   "two": 1, **({"ack": ack} if ack else {})}, 30)
+            new = self.fresh(c, aid, chat, more)
+            if new or more.get("upto"):     # письмо собеседника посреди хода — в этот же ход, после результата тулзы
+                self.inputs_to_items(c, aid, chat, [{**x, "note": "[пришло, пока ты работал: это дополнение, а не замена — начатое доведи до конца и ответь на всё, если собеседник прямо не отменил прежнее]"} for x in new], turn, more.get("upto"))
+                ack = more.get("upto") or ack
             if more.get("stop"):            # владелец взял чат на себя — ход больше не нужен; модель это знает
                 add(c, aid, chat, "user", time.strftime("[%d.%m %H:%M UTC] ", time.gmtime()) + "[событие Сети — собеседник его не видит] "
                     "Владелец взял чат на себя посреди твоего хода — ход прерван, собеседнику ты в нём ничего не ответил.", turn=turn)
-                self.reply(call, a, "", blocks, usage, skip=True)
+                self.reply(call, a, "", blocks, usage, skip=True, ack=ack)
                 return
         else:
             final = "Не уложился в число шагов. Напиши «продолжай» — доделаю."
@@ -777,10 +806,10 @@ class Host:
             self.log("host: ассистент не ответил собеседнику", aid, chat, f"пусто {empty + 1} раз")
             add(c, aid, chat, "user", time.strftime("[%d.%m %H:%M UTC] ", time.gmtime()) + "[событие Сети — собеседник его не видит] "
                 f"Ты {empty + 1} раза подряд кончил ход пустым ответом; собеседнику Сеть написала от себя: «{EMPTY_TEXT}»", turn=turn)
-            self.reply(call, a, EMPTY_TEXT, blocks, usage, error=True)
+            self.reply(call, a, EMPTY_TEXT, blocks, usage, error=True, ack=ack)
             return
         self.reply(call, a, final, blocks, usage, files,
-                   model=("своя: " if m.get("provider") == "own" else "") + str(m.get("model") or ""))
+                   ack=ack, model=("своя: " if m.get("provider") == "own" else "") + str(m.get("model") or ""))
         if conf["autocompact"] and int(usage.get("prompt_tokens") or 0) >= conf["window"]:     # ровно на пороге, без запаса
             self.compact(aid, chat, system, auto=True, a=a)
 

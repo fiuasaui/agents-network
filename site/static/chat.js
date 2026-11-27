@@ -357,6 +357,7 @@ async function openChat(id) {
     if (c0) { if (CH.own && !mineOf(c0)) { if (CH.own.was) CH.flt.add('human'); CH.own = null; } CH.flt.add(kindOf(c0)); saveFlt(); } }
   else { const c0 = CH.list.find((c) => c.id === id); const sg = id === SYS || !c0 ? 'mine' : segOf(c0); if ((c0 || id === SYS) && CH.seg !== 'all') { CH.seg = sg; } }
   if (CH.sel !== id) { seenFlush(); lpReset(); CH.sel = id; CH.last = 0; CH.msgs = []; $('msgs').innerHTML = ''; if (SEEN.io) SEEN.io.disconnect(); SEEN.io = null; }
+  draftSwap();
   document.body.classList.add('in-chat');
   if (window.cardFollow) window.cardFollow(id);      // открытая карточка справа идёт за чатом
   if ($('c-panel')) $('c-panel').hidden = id === SYS;
@@ -407,7 +408,7 @@ function closeChat() {
   if (window.SVF) window.SVF.close(); $('conv').classList.remove('asvc', 'sysv');
   document.body.classList.remove('in-chat');
   if (window.cardFollow) window.cardFollow(null);
-  lpReset(); CH.sel = null; CH.extra = null; paintRows();
+  lpReset(); CH.sel = null; CH.extra = null; draftSwap(); paintRows();
   $('conv-empty').hidden = false; $('chead').hidden = true; $('msgs').hidden = true; $('composer').hidden = true;
   try { history.replaceState(null, '', '#chats'); } catch (e) {}
 }
@@ -751,7 +752,17 @@ function chatFiles(fs) {
   const sz = (n) => n > 2 ** 20 ? (n / 2 ** 20).toFixed(1) + ' МБ' : Math.max(1, Math.round(n / 1024)) + ' КБ';
   return '<div class="cfiles">' + fs.map((f) => `<a class="cfile" href="/f/${encodeURIComponent(f.id)}" target="_blank" rel="noopener">📄 ${esc(f.name)} <small>${sz(f.size)}</small></a>`).join('') + '</div>';
 }
-CH.files = [];
+// черновик — свой у каждой пары «лицо · собеседник» (аудит К-01): текст, файлы и загрузки не переходят в другой чат
+CH.files = []; CH.drafts = {}; CH.dk = null;
+function draftKey() { return (CH.as || '') + '|' + (CH.sel || ''); }
+function draft(k) { return CH.drafts[k] || (CH.drafts[k] = { text: '', files: [] }); }
+function draftSwap() {
+  const k = draftKey(); if (k === CH.dk) return;
+  const ta = $('ctext');
+  if (CH.dk !== null) draft(CH.dk).text = ta.value;
+  CH.dk = k; const d = draft(k); ta.value = d.text; CH.files = d.files; paintAtt(); grow();
+}
+function draftHere(d) { return CH.dk !== null && CH.drafts[CH.dk] === d; }
 function paintAtt() {
   if (!$('catt')) return;
   $('catt').innerHTML = CH.files.map((f, i) => `<span class="cchip">📄 ${esc(f.name)}<button type="button" data-rmf="${i}" aria-label="Убрать файл">×</button></span>`).join('');
@@ -761,48 +772,57 @@ if ($('cfile')) $('cfile').addEventListener('change', async () => {
   const f = $('cfile').files[0]; $('cfile').value = '';
   if (!f) return;
   if (f.size > 20 * 2 ** 20) { askBox({ info: true, title: 'Файл слишком большой', text: 'В сеть можно отправить файл до 20 МБ.' }); return; }
+  const dr = draft(CH.dk !== null ? CH.dk : draftKey());      // загрузка вернётся в черновик того чата, где её начали
   try {
     const r = await fetch('/api/file', { method: 'POST', headers: { 'X-File-Name': encodeURIComponent(f.name), 'Content-Type': f.type || 'application/octet-stream' }, body: f });
     const d = await r.json(); if (!r.ok) throw new Error(d.error || 'не загрузилось');
-    CH.files.push(d); paintAtt();
+    dr.files.push(d); if (draftHere(dr)) { CH.files = dr.files; paintAtt(); }
   } catch (e) { askBox({ info: true, title: 'Файл не отправился', text: e.message }); }
 });
 if ($('catt')) $('catt').addEventListener('click', (e) => { const b = e.target.closest('[data-rmf]'); if (b) { CH.files.splice(+b.dataset.rmf, 1); paintAtt(); } });
 
 async function sendChat(e) {
   e.preventDefault();
-  const ta = $('ctext'), text = ta.value.trim(), files = CH.files.slice();
-  if ((!text && !files.length) || CH.sending || !CH.sel) return;
+  const ta = $('ctext'), text = ta.value.trim();
+  if ((!text && !CH.files.length) || CH.sending || !CH.sel) return;
+  // снимок письма (аудит К-02): «Повторить» шлёт именно его тому же адресату, текущий черновик не трогает
+  const snap = { to: CH.sel, as: CH.as, text, files: CH.files.slice(), asst: !CH.as && !!(window.SVF && window.SVF.active()),
+    tell: asAsst() && CH.inv };
+  const d = draft(CH.dk !== null ? CH.dk : draftKey()); d.text = ''; d.files = [];
+  ta.value = ''; CH.files = d.files; paintAtt(); grow(); slot();
+  await deliver(snap);
+}
+
+async function deliver(snap) {
+  const { text, files } = snap;
   CH.sending = true; $('csend').disabled = true;
   const tmp = { mid: 'tmp-' + Date.now(), dir: 'me', text: text || '(файл)', at: Date.now() / 1000, delivered: false, files };
   const el = bubble(tmp); el.classList.add('pending'); el.querySelector('.meta').innerHTML = '<span class="spin sm" aria-hidden="true"></span> отправляю';
   const box = $('msgs'); const te = box.querySelector('.thread-empty'); if (te) te.remove();
   box.appendChild(el); box.scrollTop = box.scrollHeight;
-  ta.value = ''; CH.files = []; paintAtt(); grow(); slot();
+  const here = () => CH.sel === snap.to && (CH.as || null) === (snap.as || null);
   try {
-    const asst = !CH.as && window.SVF && window.SVF.active();
-    if (CH.as && files.length) throw new Error('файлы от имени агента пока не отправляются');
-    const tellMode = asAsst() && CH.inv;
-    const r = asst ? await window.SVF.send(text, files.map((f) => f.id)) : tellMode ? await api('/api/asst-tell', { as: CH.as, to: CH.sel, text })
-      : CH.as ? await api('/api/as-send', { as: CH.as, to: CH.sel, text })
-      : await api('/api/chat-send', { agent: CH.sel, text, files: files.map((f) => f.id) });
-    if (tellMode) {     // сообщение ассистенту — одна плашка с текстом от сервера, черновик-пузырь убираем
-      await pullThread(false); el.remove();
+    if (snap.as && files.length) throw new Error('файлы от имени агента пока не отправляются');
+    const r = snap.asst ? await window.SVF.send(text, files.map((f) => f.id)) : snap.tell ? await api('/api/asst-tell', { as: snap.as, to: snap.to, text })
+      : snap.as ? await api('/api/as-send', { as: snap.as, to: snap.to, text })
+      : await api('/api/chat-send', { agent: snap.to, text, files: files.map((f) => f.id) });
+    if (snap.tell) {     // сообщение ассистенту — одна плашка с текстом от сервера, черновик-пузырь убираем
+      if (here()) await pullThread(false); el.remove();
       CH.sending = false; $('csend').disabled = false; return; }
-    if (r.paused && !CH.asPause) { CH.asPause = true; pausePaint(); }
+    if (r.paused && !CH.asPause && here()) { CH.asPause = true; pausePaint(); }
     if (!r.mid) {       // письмо не ушло, а стало просьбой адресату (нет права писать)
       el.classList.remove('pending'); el.querySelector('.meta').innerHTML = `<span class="fail">${esc(r.reply || r.message || 'не отправлено: стало просьбой адресату')}</span>`;
       CH.sending = false; $('csend').disabled = false; return;
     }
     el.dataset.mid = r.mid;
-    if (asst) {         // письмо ассистенту рисует лента (afeed.js); черновик уходит, как только она его покажет
+    if (snap.asst) {         // письмо ассистенту рисует лента (afeed.js); черновик уходит, как только она его покажет
       if (window.SVF.has && window.SVF.has(r.mid)) el.remove();
       CH.sending = false; $('csend').disabled = false; return; }
     if (box.querySelector(`.bub:not(.pending)[data-mid="${CSS.escape(r.mid)}"]`)) el.remove();   // опрос успел раньше
-    await pullThread(false);
+    if (here()) await pullThread(false);
   } catch (err) {
     el.classList.add('failed'); el.querySelector('.meta').innerHTML = `<span class="fail">не отправлено: ${esc(err.message)}</span> <button class="retry" type="button">Повторить</button>`;
-    el.querySelector('.retry').onclick = () => { el.remove(); ta.value = text; grow(); slot(); ta.focus(); };
+    el.querySelector('.retry').onclick = () => { if (CH.sending || !here()) return; el.remove(); deliver(snap); };
   }
   CH.sending = false; $('csend').disabled = false;
 }
@@ -826,7 +846,7 @@ $('cmic').onclick = async () => {
   try { REC.stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) { hint('Нет доступа к микрофону — разреши его в браузере'); return; }
   const type = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4', 'audio/webm'].find((t) => MediaRecorder.isTypeSupported(t)) || '';
   REC.mr = new MediaRecorder(REC.stream, type ? { mimeType: type } : {});
-  REC.chunks = []; REC.cancel = false; REC.send = false; REC.t0 = Date.now(); REC.top = 0;
+  REC.chunks = []; REC.dk = CH.dk; REC.cancel = false; REC.send = false; REC.t0 = Date.now(); REC.top = 0;
   REC.mr.ondataavailable = (e) => { if (e.data.size) REC.chunks.push(e.data); };
   REC.mr.onstop = recStopped;
   REC.mr.start(1000);
@@ -892,6 +912,7 @@ async function recStopped() {
   } catch (e) { hint(e.message || 'Не удалось расшифровать'); }
   recClose(); $('rec-max').hidden = false;
   const ta = $('ctext');
+  if (text && REC.dk !== undefined && REC.dk !== CH.dk) { const o = draft(REC.dk); o.text = (o.text.trim() ? o.text.trimEnd() + ' ' : '') + text; hint('Расшифровка легла в черновик чата, где начата запись'); return; }
   if (text) ta.value = (ta.value.trim() ? ta.value.trimEnd() + ' ' : '') + text;
   grow(); slot(); ta.focus();
   if (REC.send && text && !CH.sending) $('composer').requestSubmit();
