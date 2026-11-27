@@ -1036,7 +1036,7 @@ class Relay:
                             (src, dst, time.time() - REPLY_TTL)).fetchone()
         if not r or r[0] is None:
             return None
-        a = self.db.execute("SELECT text FROM msgs WHERE src=? AND dst=? AND text LIKE '⏰ %будить%' AND at>=? ORDER BY at DESC LIMIT 1",
+        a = self.db.execute("SELECT text FROM msgs WHERE src=? AND dst=? AND kind='answer' AND text LIKE '⏰ %будить%' AND at>=? ORDER BY at DESC LIMIT 1",
                             (dst, src, r[0])).fetchone()
         return ("pending" if not a else "refused" if "не разрешил будить" in a[0] else "granted", r[0])
 
