@@ -431,7 +431,7 @@ def render(tpl, vals):
 def llm_stream(url, headers, body, on_delta, timeout=180):
     """Один вызов модели со стримингом (OpenAI-совместимый): (текст, мышление, вызовы тулз, usage)."""
     req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={"Content-Type": "application/json", **headers})
-    text, think, calls, usage, last, partial = "", "", {}, {}, 0.0, []
+    text, think, calls, usage, last, partial, fin = "", "", {}, {}, 0.0, [], False
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             for raw in r:
@@ -440,7 +440,7 @@ def llm_stream(url, headers, body, on_delta, timeout=180):
                     continue
                 data = line[5:].strip()
                 if data == "[DONE]":
-                    break
+                    fin = True; break
                 try:
                     ch = json.loads(data)
                 except ValueError:
@@ -452,6 +452,7 @@ def llm_stream(url, headers, body, on_delta, timeout=180):
                 newtc = False
                 for c in ch.get("choices") or []:
                     d = c.get("delta") or {}
+                    fin = fin or bool(c.get("finish_reason"))
                     newtc = newtc or bool(d.get("tool_calls"))
                     think += d.get("reasoning_content") or d.get("reasoning") or ""
                     text += d.get("content") or ""
@@ -471,6 +472,8 @@ def llm_stream(url, headers, body, on_delta, timeout=180):
         except Exception:  # noqa: BLE001
             msg = e.reason
         raise RuntimeError(f"модель ответила {e.code}: {str(msg)[:200]}")
+    if not fin:     # соединение закрылось без [DONE] и finish_reason: обрывок — не ответ, недописанный вызов не исполняем (аудит Х-02)
+        raise RuntimeError("поток модели оборвался до конца ответа")
     out = [calls[i] for i in sorted(calls)]
     on_delta(text, think, out)
     for i, c in enumerate(out):
@@ -597,7 +600,9 @@ class Host:
                         "ответ собеседнику НЕ ушёл: " + str(r["dropped"]), turn=int(time.time() * 1000))
                 return
             self.log("host: Сеть не приняла ответ", call, err[:200], f"попытка {i + 1}")
-            if not (r.get("retry") or r.get("retry_after") or "слишком" in err or "нет связи" in err or "недоступ" in err):
+            code = r.get("code")      # временный HTTP-код — тоже повтор, как у node.hand_in (аудит Х-03)
+            if not (r.get("retry") or r.get("retry_after") or code in (0, 429) or (code or 0) >= 500
+                    or "слишком" in err or "нет связи" in err or "недоступ" in err):
                 return
             time.sleep(min(60, float(r.get("retry_after") or 5) * (i + 1)))
 
@@ -615,7 +620,7 @@ class Host:
                 return self.model_call1(a, conf, msgs, fns, d)
             except Exception as e:  # noqa: BLE001
                 err = str(e)
-                transient = isinstance(e, (urllib.error.URLError, TimeoutError, ConnectionError)) or re.search(r"ответила (429|50[0234])\b", err)
+                transient = isinstance(e, (urllib.error.URLError, TimeoutError, ConnectionError)) or re.search(r"ответила (429|50[0234])\b|оборвался", err)
                 if got or not transient or i == MODEL_RETRY:
                     raise
                 self.log("host: сбой модели, повтор", i + 1, err[:120])
@@ -873,7 +878,7 @@ class Host:
         aa = a or {"assistant": {"id": aid}}
         # сводку пишет дешёвая модель Сети, а не модель ассистента; "summarizer": "same" в настройке — та же модель
         sconf = conf if conf.get("summarizer") == "same" else {**conf, "model": {"provider": "network", "model": SUMMARIZER}}
-        summary, _, _, usage = self.model_call(aa, sconf, head, [], lambda t, th: None)
+        summary, _, _, usage = self.model_call(aa, sconf, head, [], lambda *_: None)     # поток шлёт (текст, мышление, вызовы) — аудит Х-01
         if not summary.strip():
             return {"ok": False, "why": "модель вернула пустую сводку — история не тронута"}
         with LOCK:
